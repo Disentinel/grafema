@@ -203,6 +203,7 @@ const BUILTINS: &[&str] = &[
     "strip_prefix",
     "strip_suffix",
     "last_segment",
+    "first_segment",
     "replace_all",
     "path_resolve",
     "edge_attr",

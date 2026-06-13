@@ -966,6 +966,32 @@ fn eval_last_segment(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> B
     Ok(())
 }
 
+/// `first_segment(S, Sep, Seg)` — the substring before the FIRST occurrence of the bound
+/// separator `Sep` (`first_segment("github.com/user/proj", "/", X)` → `"github.com"`);
+/// identity when `S` contains no `Sep` (the dual of `last_segment`'s no-separator stance —
+/// a one-segment path IS its own first segment). NO row when the produced segment is
+/// empty — a leading separator (`"/a"`), or the degenerate empty `Sep` (which "matches"
+/// at the very start): an empty segment names nothing (the `last_segment` discipline).
+/// Built for the Go packs: the EXACT spelling of Go's `isStdLib` test ("first path
+/// segment contains a dot", GoImportResolution.hs:86-89) and the left-peel that derives
+/// the '/'-boundary SUFFIXES of an import path (the no-go.mod fallback arm — the
+/// right-peel `last_segment` idiom mirrored). Free arg2 binds; bound arg2
+/// equality-filters.
+fn eval_first_segment(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    let (Some(s), Some(sep)) = (bound_str(&spec.args[0]), bound_str(&spec.args[1])) else {
+        return Ok(());
+    };
+    let produced = match s.find(sep.as_str()) {
+        Some(i) => &s[..i],
+        None => s.as_str(),
+    };
+    if produced.is_empty() {
+        return Ok(());
+    }
+    bind_or_check(out, spec, 2, produced);
+    Ok(())
+}
+
 /// `replace_all(S, From, To, Out)` — `Out` is `S` with EVERY occurrence of `From`
 /// replaced by `To`, non-overlapping left-to-right (`replace_all("foo/bar", "/", "::",
 /// X)` → `"foo::bar"`; the file-path → Rust-module-path separator rewrite,
@@ -1153,9 +1179,9 @@ const METHOD_SUFFIX_MODES: &[Mode] = &[Mode { args: &[B, F] }, Mode { args: &[B,
 /// the same discipline as [`METHOD_SUFFIX_MODES`].
 const STR_FN2_MODES: &[Mode] = &[Mode { args: &[B, F] }, Mode { args: &[B, B] }];
 
-/// `concat/3`/`strip_prefix/3`/`strip_suffix/3`/`last_segment/3`/`path_resolve/3`
-/// modes: both inputs bound; the output (last position) is free (bind) or bound
-/// (equality check).
+/// `concat/3`/`strip_prefix/3`/`strip_suffix/3`/`last_segment/3`/`first_segment/3`/
+/// `path_resolve/3` modes: both inputs bound; the output (last position) is free (bind)
+/// or bound (equality check).
 const CONCAT_MODES: &[Mode] = &[Mode { args: &[B, B, F] }, Mode { args: &[B, B, B] }];
 
 /// `replace_all/4` modes: the three inputs (subject, pattern, replacement) bound; the
@@ -1342,6 +1368,13 @@ pub fn registry() -> Vec<BuiltinDef> {
             eval: eval_last_segment,
         },
         BuiltinDef {
+            name: "first_segment",
+            arity: 3,
+            modes: CONCAT_MODES,
+            kind: BuiltinKind::Function,
+            eval: eval_first_segment,
+        },
+        BuiltinDef {
             name: "replace_all",
             arity: 4,
             modes: REPLACE_ALL_MODES,
@@ -1486,6 +1519,7 @@ mod tests {
             "strip_prefix",
             "strip_suffix",
             "last_segment",
+            "first_segment",
             "replace_all",
             "path_resolve",
             "edge_attr",
@@ -2455,6 +2489,61 @@ mod tests {
         let err = def.check_mode(&spec).unwrap_err();
         assert_eq!(err.code.as_str(), "E-PLAN-001");
         assert!(err.required_bindings.contains(&0), "must name the free input");
+    }
+
+    // ── first_segment ──────────────────────────────────────────────
+
+    #[test]
+    fn first_segment_before_first_separator_identity_and_empty_skip() {
+        // [B, B, F] — the Go isStdLib shape: the first '/'-segment of an import path.
+        let path = ArgSpec::new(vec![
+            ArgValue::Bound(s("github.com/user/proj")),
+            ArgValue::Bound(s("/")),
+            ArgValue::Free { slot: 0 },
+        ]);
+        let out = run("first_segment", path);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s("github.com"));
+
+        // No separator occurrence → identity ("fmt" IS its own first segment).
+        let flat = ArgSpec::new(vec![
+            ArgValue::Bound(s("fmt")),
+            ArgValue::Bound(s("/")),
+            ArgValue::Free { slot: 0 },
+        ]);
+        let out = run("first_segment", flat);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s("fmt"));
+
+        // Leading separator → empty segment → NO row.
+        let leading = ArgSpec::new(vec![
+            ArgValue::Bound(s("/abs/path")),
+            ArgValue::Bound(s("/")),
+            ArgValue::Free { slot: 0 },
+        ]);
+        assert_eq!(run("first_segment", leading).rows.len(), 0);
+
+        // Empty separator "matches" at the very start → empty segment → NO row.
+        let empty_sep = ArgSpec::new(vec![
+            ArgValue::Bound(s("Bar")),
+            ArgValue::Bound(s("")),
+            ArgValue::Free { slot: 0 },
+        ]);
+        assert_eq!(run("first_segment", empty_sep).rows.len(), 0);
+
+        // [B, B, B] — equality check: pass and non-match.
+        let hit = ArgSpec::new(vec![
+            ArgValue::Bound(s("a/b/c")),
+            ArgValue::Bound(s("/")),
+            ArgValue::Bound(s("a")),
+        ]);
+        assert_eq!(run("first_segment", hit).rows.len(), 1);
+        let miss = ArgSpec::new(vec![
+            ArgValue::Bound(s("a/b/c")),
+            ArgValue::Bound(s("/")),
+            ArgValue::Bound(s("b")),
+        ]);
+        assert_eq!(run("first_segment", miss).rows.len(), 0);
     }
 
     // ── last_segment ───────────────────────────────────────────────

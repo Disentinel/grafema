@@ -1,0 +1,68 @@
+% go_imports_nomod.dl — the NO-go.mod VARIANT of go_imports: the legacy
+% empty-module-path suffix fallback (GoImportResolution.hs findBySuffix
+% :152-163), selected by the ORCHESTRATOR (precondition P3): a pack cannot
+% test "the GO module-path fact does NOT exist" — a `has_go_mod()`-style
+% global literal shares no variable with the body, the §3 cross-join the
+% planner refuses (and per verdict C2 the filter-connected `ends_with(P, D)`
+% spelling of the suffix match is equally rejected). The orchestrator, which
+% knows whether go.mod resolved, runs this pack ONLY when it did not — the
+% faithful translation of legacy's global `T.null modulePath` branch. BOTH
+% variants are registered (registry order is pinned); selection is a runtime
+% skip in the orchestrator's pack loop (`run_stdlib_rule_packs`).
+%
+% LEGACY ALGORITHM (resolveOneImport :131-135 + findBySuffix :152-163, only
+% when the module path is empty): skip stdlib (isStdLib :86-89), then emit an
+% edge to the first MODULE of the alphabetically-first non-empty directory
+% that is a SUFFIX of the import path (Map.toList order).
+%
+% PLANNER-LEGAL SPELLING (verdict C2): the suffix match must be an EQUALITY
+% join — derive the '/'-boundary SUFFIXES of the import path by LEFT-peel
+% (`first_segment` + strip — the missing capability M1, now shipped; the dual
+% of the spec_pfx right-peel) and join `module_in_dir` on the bound suffix.
+%
+% NUMBERED DELTAS vs the resolver (everything not listed is exact):
+%   DELTA G2-3a (SUPERSET, bounded by #dirs sharing a suffix): legacy picks
+%     the alphabetically-first suffix-matching dir (Map.toList :152-163) and
+%     the first MODULE in it; set semantics derives ALL '/'-boundary suffix
+%     matches, one edge per MODULE in each (the G2-2 multiplicity compounds
+%     here). Every extra edge traces to the documented first-match tie-break.
+%   DELTA G2-3b (REFINED subset, ~0): legacy `T.isSuffixOf` is a RAW string
+%     suffix — directory "auth" matches import path "example.com/pkg/oauth".
+%     The left-peel derives only '/'-BOUNDARY suffixes, dropping that legacy
+%     false-positive class. Diverges only when a local dir is a non-boundary
+%     suffix of an import path (0 expected anywhere real).
+%   DELTA G2-1 (CLOSED): the isStdLib gate is exact via `first_segment`
+%     (see go_imports.dl).
+%   File gate: ends_with(F, ".go") on every base relation (the orchestrator's
+%     Language::Go stream filter, rust_imports DELTA-5 class).
+%
+% MAINTAIN ENVELOPE: negation (\+ mod_subdir) + node_attr ⇒ scratch floor.
+%
+% ORDERING (PRODUCER): produces IMPORTS_FROM — before depends (verdict C4).
+% Registered immediately after go_imports; never runs in the same selection
+% (go.mod either resolved or it did not).
+
+% ── Package-directory kernel (duplicated prelude, js packs precedent) ───────
+go_module(M, F)      :- node(M, "MODULE"), attr(M, "file", F), ends_with(F, ".go").
+mod_dir(M, D)        :- go_module(M, F), basename(F, B), concat("/", B, SB),
+                        strip_suffix(F, SB, D).
+mod_subdir(M)        :- mod_dir(M, _).
+module_in_dir(D, M)  :- mod_dir(M, D).
+module_in_dir("", M) :- go_module(M, _), \+ mod_subdir(M).
+
+% ── Importer side (exact stdlib gate, as go_imports.dl) ─────────────────────
+go_import(I, P) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".go"),
+                   node_attr(I, "path", P).
+go_import_nonstd(I, P) :- go_import(I, P), first_segment(P, "/", S1),
+                          string_contains(S1, ".").
+
+% '/'-boundary SUFFIXES of each import path (left-peel via first_segment;
+% strictly shrinking ⇒ terminates; the empty suffix is excluded — legacy
+% requires a non-empty dir, findBySuffix :157).
+p_sfx(P, P) :- go_import_nonstd(_, P).
+p_sfx(P, S2) :- p_sfx(P, S), first_segment(S, "/", Seg),
+                concat(Seg, "/", SegS), strip_prefix(S, SegS, S2), neq(S2, "").
+
+% ── The materialized edge ────────────────────────────────────────────────────
+@materialize(edge_type = "IMPORTS_FROM", mode = "additive")
+go_import_suffix(I, M) :- go_import_nonstd(I, P), p_sfx(P, D), module_in_dir(D, M).

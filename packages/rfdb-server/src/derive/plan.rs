@@ -635,7 +635,8 @@ fn positive_can_place_and_provides(
         // genuinely underivable stays unplaceable here (E-PLAN-002 unsafe rule) instead of
         // reaching eval and tripping a confusing E-PLAN-001.
         "concat" | "str_lower" | "basename" | "strip_quotes" | "strip_prefix" | "strip_suffix"
-        | "method_suffix" | "last_segment" | "replace_all" | "path_resolve" | "edge_attr"
+        | "method_suffix" | "last_segment" | "first_segment" | "replace_all" | "path_resolve"
+        | "edge_attr"
         | "node_attr" => {
             if args.is_empty() {
                 return (true, HashSet::new());
@@ -701,6 +702,7 @@ fn is_filter_or_function(pred: &str) -> bool {
             | "strip_suffix"
             | "method_suffix"
             | "last_segment"
+            | "first_segment"
             | "replace_all"
             | "path_resolve"
             | "edge_attr"

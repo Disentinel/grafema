@@ -3262,3 +3262,205 @@ fn java_packs_shadow_differential() {
     );
     eprintln!("=== java packs shadow differential: slices printed; witness extras before accepting ===\n");
 }
+
+// ── Go wave: pack-vs-legacy differential on a real analyzed Go module ──────
+
+/// The Go packs' REPO-STRATUM differential (the spec's mandatory live
+/// confirmation — the dogfood graph has ZERO Go nodes, so this runs against a
+/// caller-built analyze of a real Go module, canonically `packages/go-parser`,
+/// a 4-file single-package module).
+///
+/// Dataset: `GRAFEMA_GO_DIFF_DB` (default `/tmp/go-diff.rfdb`) — a DB produced
+/// by `grafema-orchestrator analyze` over a Go module with the LEGACY
+/// go-resolve daemon ON, copied here (NEVER the live store). Provenance
+/// discrimination (re-run-safety, the wave3c precedent): legacy edges are
+/// stamped `_source = "go-resolution"` by the orchestrator's gc stamp at
+/// commit time (or carry no stamp on pre-stamp graphs); pack-written edges
+/// carry a rule-hash `_source` and are excluded from the legacy slice. The
+/// `.go`-file gate on the src node also excludes the synthetic
+/// unresolved-diagnostics nodes (verdict C5).
+///
+/// PREDICTIONS, declared BEFORE the diff (the §3 harness discipline):
+/// - legacy-only rows = 0 on EVERY edge type (the packs cover everything
+///   legacy resolved; every divergence class is pack-⊇-legacy);
+/// - pack-only rows classify into the numbered SUPERSET deltas (G2-2 / G3-1 /
+///   G5-1 / G6-2 / G6-3 / G7-1) — printed with names for classification;
+/// - PROPAGATES_CONTEXT: legacy = 0 EXACTLY (DELTA G9-3 — the wire node ids
+///   are percent-encoded URIs, so the legacy `[in:` parse never matches; and
+///   even unencoded, the parsed name keeps the ",h:xxxx" hash); the pack
+///   derives the intended edges (corpus-proven: legacy=0, pack=5);
+/// - IMPLEMENTS: legacy ≈ 0 on post-URI graphs (DELTA G6-1 — the same
+///   `[in:` parse class is dead under percent-encoding; corpus-proven:
+///   legacy=0, pack=1 correct edge) — reported, not hard-asserted (an
+///   unencoded-id-era graph could legitimately carry legacy rows);
+/// - SPAWNS/DEFERS: exact (caller-independent, unaffected by G9-3).
+///
+///   GRAFEMA_GO_DIFF_DB=/tmp/go-diff.rfdb \
+///   cargo test --release --lib go_packs_differential_against_real_go_module -- --ignored --nocapture
+#[test]
+#[ignore = "manual real-data differential; needs an analyzed Go-module DB — run with --ignored"]
+fn go_packs_differential_against_real_go_module() {
+    use crate::derive::stdlib::{
+        GO_CALLS_DL, GO_CONTEXT_DL, GO_IMPORTS_DL, GO_IMPORTS_NOMOD_DL, GO_INTERFACES_DL,
+        GO_TYPES_DL,
+    };
+    use std::collections::HashMap;
+
+    let dataset = std::env::var("GRAFEMA_GO_DIFF_DB")
+        .unwrap_or_else(|_| "/tmp/go-diff.rfdb".to_string());
+    let dataset = PathBuf::from(dataset);
+    if !dataset.join("db_config.json").exists() {
+        panic!(
+            "dataset not found at {} — analyze a Go module first (legacy go-resolve ON), \
+             e.g. grafema-orchestrator analyze over packages/go-parser into a /tmp DB, \
+             then point GRAFEMA_GO_DIFF_DB at the copied graph dir",
+            dataset.display()
+        );
+    }
+
+    let tmp = tempfile::tempdir().expect("temp");
+    let work = tmp.path().join("graph.rfdb");
+    copy_dir_all(&dataset, &work).expect("copy dataset");
+    let _ = std::fs::remove_file(work.join("LOCK"));
+    let manifest = ManifestStore::open(&work).expect("manifest");
+    let store = MultiShardStore::open(&work, &manifest).expect("store");
+    let store = Arc::new(store);
+    let view = LsmStorageView::capture(store.clone(), &manifest);
+
+    let snap = store.snapshot(&manifest);
+    let all_nodes = store.find_nodes_at(&snap, None, None);
+    let mut nodes_by_type: HashMap<String, u64> = HashMap::new();
+    for n in &all_nodes {
+        *nodes_by_type.entry(n.node_type.clone()).or_insert(0) += 1;
+    }
+    let stats = Stats {
+        total_nodes: all_nodes.len() as u64,
+        total_edges: store.iter_all_edges_at(&snap).len() as u64,
+        nodes_by_type: nodes_by_type.clone(),
+    };
+
+    // id → (name, file, type) for row classification + the .go src gate.
+    let mut info: HashMap<u128, (String, String, String)> = HashMap::new();
+    for n in &all_nodes {
+        info.insert(n.id, (n.name.clone(), n.file.clone(), n.node_type.clone()));
+    }
+    let is_go_src = |id: &u128| info.get(id).map(|(_, f, _)| f.ends_with(".go")).unwrap_or(false);
+
+    // The P1 fact decides the variant (the orchestrator's P3 selection mirrored).
+    let has_go_mod_fact = all_nodes.iter().any(|n| {
+        n.node_type == "WORKSPACE_PACKAGE"
+            && view
+                .node_metadata(n.id)
+                .map(|m| m.contains("\"language\":\"go\""))
+                .unwrap_or(false)
+    });
+    eprintln!(
+        "\n=== go packs differential (nodes={}, edges={}, go.mod fact={}) ===",
+        stats.total_nodes, stats.total_edges, has_go_mod_fact
+    );
+
+    // ── LEGACY slices: committed edges per type, src in a .go file,
+    //    provenance ∈ {go-resolution, unstamped} (NOT pack rule-hashes). ──
+    let legacy_slice = |edge_type: &str| -> BTreeSet<(u128, u128)> {
+        store
+            .iter_all_edges_at(&snap)
+            .into_iter()
+            .filter(|e| e.edge_type == edge_type && is_go_src(&e.src))
+            .filter(|e| match view.edge_metadata(e.src, e.dst, edge_type) {
+                None => true,
+                Some(blob) => match serde_json::from_str::<serde_json::Value>(&blob) {
+                    Ok(v) => match v.get("_source").and_then(|s| s.as_str()) {
+                        None => true,
+                        Some(src) => src == "go-resolution",
+                    },
+                    Err(_) => true,
+                },
+            })
+            .map(|e| (e.src, e.dst))
+            .collect()
+    };
+
+    // ── PACK slices: head facts of the go packs over the same view. ──
+    let pack_facts = |src: &str, preds: &[&str]| -> BTreeSet<(u128, u128)> {
+        let eval = evaluate(
+            &view,
+            src,
+            stats.clone(),
+            crate::datalog::EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .unwrap_or_else(|e| panic!("go pack evaluates: {e}"));
+        let mut out = BTreeSet::new();
+        for p in preds {
+            for r in eval.facts(p) {
+                out.insert((r[0].as_id().expect("src"), r[1].as_id().expect("dst")));
+            }
+        }
+        out
+    };
+
+    let mut pack_imports = pack_facts(GO_IMPORTS_DL, &["go_import_from"]);
+    if !has_go_mod_fact {
+        pack_imports.extend(pack_facts(GO_IMPORTS_NOMOD_DL, &["go_import_suffix"]));
+    }
+    let pack_calls = pack_facts(GO_CALLS_DL, &["go_call_s1", "go_call_s2", "go_call_s3"]);
+    let pack_impls = pack_facts(GO_INTERFACES_DL, &["go_implements"]);
+    let pack_typeof = pack_facts(GO_TYPES_DL, &["go_type_of"]);
+    let pack_returns = pack_facts(GO_TYPES_DL, &["go_returns"]);
+    let pack_prop = pack_facts(GO_CONTEXT_DL, &["go_prop", "go_prop_u"]);
+    let pack_spawn = pack_facts(GO_CONTEXT_DL, &["go_spawn", "go_spawn_u"]);
+    let pack_defer = pack_facts(GO_CONTEXT_DL, &["go_defer", "go_defer_u"]);
+
+    let name_of = |id: &u128| {
+        info.get(id)
+            .map(|(n, f, t)| format!("{t} {n} ({f})"))
+            .unwrap_or_else(|| format!("{id}"))
+    };
+    let mut hard_failures: Vec<String> = Vec::new();
+    let mut diff = |label: &str, pack: &BTreeSet<(u128, u128)>, legacy: &BTreeSet<(u128, u128)>, legacy_must_be_empty: bool| {
+        let both = pack.intersection(legacy).count();
+        let pack_only: Vec<_> = pack.difference(legacy).collect();
+        let legacy_only: Vec<_> = legacy.difference(pack).collect();
+        eprintln!(
+            "{label:<22} pack={:<5} legacy={:<5} both={both:<5} pack_only={:<4} legacy_only={}",
+            pack.len(),
+            legacy.len(),
+            pack_only.len(),
+            legacy_only.len()
+        );
+        for (s, d) in pack_only.iter().take(20) {
+            eprintln!("  PACK-ONLY  {} -> {}  (classify against the numbered SUPERSET deltas)", name_of(s), name_of(d));
+        }
+        for (s, d) in legacy_only.iter().take(20) {
+            eprintln!("  LEGACY-ONLY {} -> {}", name_of(s), name_of(d));
+        }
+        if !legacy_only.is_empty() {
+            hard_failures.push(format!(
+                "{label}: {} legacy-only rows — the pack must cover everything legacy resolved",
+                legacy_only.len()
+            ));
+        }
+        if legacy_must_be_empty && !legacy.is_empty() {
+            hard_failures.push(format!(
+                "{label}: predicted legacy = 0 (DELTA G9-3) but found {}",
+                legacy.len()
+            ));
+        }
+    };
+
+    diff("IMPORTS_FROM", &pack_imports, &legacy_slice("IMPORTS_FROM"), false);
+    diff("CALLS", &pack_calls, &legacy_slice("CALLS"), false);
+    diff("IMPLEMENTS", &pack_impls, &legacy_slice("IMPLEMENTS"), false);
+    diff("TYPE_OF", &pack_typeof, &legacy_slice("TYPE_OF"), false);
+    diff("RETURNS", &pack_returns, &legacy_slice("RETURNS"), false);
+    diff("PROPAGATES_CONTEXT", &pack_prop, &legacy_slice("PROPAGATES_CONTEXT"), true);
+    diff("SPAWNS_WITH_CONTEXT", &pack_spawn, &legacy_slice("SPAWNS_WITH_CONTEXT"), false);
+    diff("DEFERS_WITH_CONTEXT", &pack_defer, &legacy_slice("DEFERS_WITH_CONTEXT"), false);
+
+    assert!(
+        hard_failures.is_empty(),
+        "go differential predictions violated:\n{}",
+        hard_failures.join("\n")
+    );
+    eprintln!("=== go packs differential: predictions hold (pack ⊇ legacy everywhere; legacy PROPAGATES = 0) ===\n");
+}
