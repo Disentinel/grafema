@@ -1989,7 +1989,9 @@ async fn main() -> Result<()> {
                     }
                 };
 
-                let plugin_results = plugin::run_plugins_dag(
+                // A plugin failure aborts the analyze run (loud-failure policy,
+                // same as derive-pack failures) — but shut the pool down first.
+                let dag_result = plugin::run_plugins_dag(
                     &user_plugins,
                     &mut rfdb,
                     &socket_path,
@@ -1997,17 +1999,13 @@ async fn main() -> Result<()> {
                     generation,
                     resolve_pool.as_ref(),
                 )
-                .await?;
+                .await;
 
                 if let Some(pool) = resolve_pool {
                     pool.shutdown().await;
                 }
 
-                for pr in &plugin_results {
-                    if let Some(ref err) = pr.error {
-                        tracing::error!(plugin = %pr.plugin_name, "{err}");
-                    }
-                }
+                dag_result?;
             }
 
             let resolve_ms = resolve_timer.elapsed().as_millis() as u64;
@@ -2823,7 +2821,9 @@ async fn main() -> Result<()> {
                     }
                 };
 
-                let plugin_results = plugin::run_plugins_dag(
+                // A plugin failure aborts the analyze run (loud-failure policy,
+                // same as derive-pack failures) — but shut the pool down first.
+                let dag_result = plugin::run_plugins_dag(
                     &user_plugins,
                     &mut rfdb,
                     &socket_path,
@@ -2831,17 +2831,13 @@ async fn main() -> Result<()> {
                     generation,
                     resolve_pool.as_ref(),
                 )
-                .await?;
+                .await;
 
                 if let Some(pool) = resolve_pool {
                     pool.shutdown().await;
                 }
 
-                for pr in &plugin_results {
-                    if let Some(ref err) = pr.error {
-                        tracing::error!(plugin = %pr.plugin_name, "{err}");
-                    }
-                }
+                dag_result?;
             }
 
             // Rule-pack phase (Wave 6): the packs are the only producer of the
@@ -3354,14 +3350,16 @@ mod tests {
     ) -> std::path::PathBuf {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+        // Unique per call: pid + a process-wide counter. A timestamp alone is
+        // NOT unique — concurrent tests can land in the same SystemTime tick,
+        // collide on the socket name, and the second bind panics (flaky
+        // EADDRINUSE in pack_failure_fails_the_run_with_a_loud_summary).
+        static SOCK_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let dir = std::env::temp_dir();
         let sock = dir.join(format!(
             "grafema-fake-rfdb-{}-{}.sock",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            SOCK_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         let _ = std::fs::remove_file(&sock);
         let listener = std::os::unix::net::UnixListener::bind(&sock).expect("bind fake socket");
