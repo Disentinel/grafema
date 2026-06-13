@@ -356,7 +356,7 @@ echo ""
 echo -e "${BLUE}=== Updating Package Versions ===${NC}"
 
 # Update root package.json
-npm version "$NEW_VERSION" --no-git-tag-version
+npm version "$NEW_VERSION" --no-git-tag-version --allow-same-version
 echo -e "${GREEN}[x] Root package.json -> $NEW_VERSION${NC}"
 
 # Update all workspace packages (JS)

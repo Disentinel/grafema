@@ -1,0 +1,86 @@
+% js_property_access_ns.dl — in-engine replacement for the NAMESPACE-IMPORT arm of
+% the PropertyAccess.hs resolver (packages/grafema-resolve/src/PropertyAccess.hs:
+% tryCrossFile:145-156 → resolvePropertyAccess:160-187 → resolveInModule:177-187):
+% READS_FROM edges for `import * as utils; utils.config` property reads, resolving
+% the member among the target module's exports. Wave 1b — same HYBRID seam as
+% js_cross_file_calls.dl: the namespace binding's IMPORTS_FROM → MODULE edge is
+% the LEGACY import resolver's committed edge, consumed as EDB (the producer is
+% not migrated yet; analysis + legacy resolution run before the pack-runner).
+%
+% WHAT LEGACY EMITS for this arm — matched exactly: READS_FROM edges
+% PROPERTY_ACCESS → export target, meta resolvedVia="property-access"
+% (PropertyAccess.hs:150-155; V1 of the resolver handles ONLY namespace imports
+% cross-file — named-import members are skipped, Hs:171).
+%
+% The OTHER arms of PropertyAccess.hs (this/super/<obj> via metadata.base + class
+% line-containment, ClassName.staticProp via metadata.base) are node_attr-blocked
+% (metadata.base / className are metadata-only) — Wave 2, NOT this pack.
+%
+% "binding -IMPORTS_FROM-> MODULE" is the structural substitute for the
+% importedName == "*" metadata check (only namespace bindings get MODULE targets,
+% ImportResolution.hs:316-319). Multi-dot names are NOT a delta: the resolver
+% splits on the FIRST dot (T.breakOn ".", Hs:162); the concat-equality
+% construction reproduces it exactly (see js_cross_file_calls.dl header).
+%
+% READS_FROM is SHARED vocabulary ⇒ mode = "additive".
+%
+% NUMBERED DELTAS vs the resolver (everything not listed is exact):
+%   DELTA 1 (superset — fall-through priority not reproduced): the resolver tried
+%     the same-file class arms FIRST and consulted the namespace arm only on miss
+%     (resolvePropAccess:113-130). Those arms read metadata.base (unreadable), so
+%     the pack cannot know they would have won; when an uppercase receiver is BOTH
+%     a same-file class with that member AND a namespace import, the pack emits
+%     the namespace edge the resolver suppressed. Additive superset, rare.
+%   DELTA 2 (subset, node_attr-blocked — Wave 2): namespace members that are
+%     EXPORT_BINDING entries (`export { foo }` / aliased re-exports) are EXCLUDED
+%     from exported_in — EXPORT_BINDING.name is the LOCAL name, the exported
+%     alias is metadata-only (exportedName, Declarations.hs:726-731); matching by
+%     localName would emit WRONG edges for aliased exports (false positives are
+%     not acceptable; subset-by-omission is).
+%   DELTA 3 (superset): duplicate same-name exports — findMatchingExport took the
+%     FIRST entry (ImportResolution.hs:353-357); set semantics derives all.
+%   DELTA 4 (superset): namespace bindings from WORKSPACE packages — the
+%     resolver's binding index was relative-specifier-only (Hs:87); the legacy
+%     import resolver resolved workspace namespace imports too, so the binding's
+%     MODULE edge exists and the pack emits.
+%   DELTA 5 (metadata): resolvedVia="property-access" projected as a meta column;
+%     engine provenance (_source/_generation) added.
+%   DELTA 6 (file gate): the resolver's effective gate was the orchestrator's
+%     detect_language == JavaScript stream filter (8 extensions) — the js_pa
+%     clause set below (one clause per extension; a derived gate is
+%     planner-infeasible, see js_same_file_calls.dl ENCODING NOTES).
+
+% Every named PROPERTY_ACCESS in a JS/TS file — the 8-extension gate (DELTA 6).
+js_pa(PA, F, N) :- node(PA, "PROPERTY_ACCESS"), attr(PA, "file", F), ends_with(F, ".js"), attr(PA, "name", N), neq(N, "").
+js_pa(PA, F, N) :- node(PA, "PROPERTY_ACCESS"), attr(PA, "file", F), ends_with(F, ".jsx"), attr(PA, "name", N), neq(N, "").
+js_pa(PA, F, N) :- node(PA, "PROPERTY_ACCESS"), attr(PA, "file", F), ends_with(F, ".ts"), attr(PA, "name", N), neq(N, "").
+js_pa(PA, F, N) :- node(PA, "PROPERTY_ACCESS"), attr(PA, "file", F), ends_with(F, ".tsx"), attr(PA, "name", N), neq(N, "").
+js_pa(PA, F, N) :- node(PA, "PROPERTY_ACCESS"), attr(PA, "file", F), ends_with(F, ".mjs"), attr(PA, "name", N), neq(N, "").
+js_pa(PA, F, N) :- node(PA, "PROPERTY_ACCESS"), attr(PA, "file", F), ends_with(F, ".cjs"), attr(PA, "name", N), neq(N, "").
+js_pa(PA, F, N) :- node(PA, "PROPERTY_ACCESS"), attr(PA, "file", F), ends_with(F, ".mts"), attr(PA, "name", N), neq(N, "").
+js_pa(PA, F, N) :- node(PA, "PROPERTY_ACCESS"), attr(PA, "file", F), ends_with(F, ".cts"), attr(PA, "name", N), neq(N, "").
+
+% Namespace bindings: importer file × local name → target module file (the
+% structural importedName == "*" substitute — legacy IMPORTS_FROM edge as EDB).
+ns_module(F, NS, TF) :-
+    node(B, "IMPORT_BINDING"), attr(B, "file", F), attr(B, "name", NS), neq(NS, ""),
+    edge(B, M, "IMPORTS_FROM"), node(M, "MODULE"), attr(M, "file", TF).
+
+% A file's exports by name — EXPORT -EXPORTS-> target (the gnExported-flag
+% substitute); EXPORT_BINDING targets excluded (DELTA 2); the default export is
+% the EXPORT node itself under the name "default" (ImportResolution.hs:125-126).
+exported_in(TF, N, T) :-
+    node(E, "EXPORT"), attr(E, "file", TF),
+    edge(E, T, "EXPORTS"), \+ node(T, "EXPORT_BINDING"),
+    attr(T, "name", N), neq(N, "").
+exported_in(TF, "default", E) :-
+    node(E, "EXPORT"), attr(E, "name", "default"), attr(E, "file", TF).
+
+% The namespace-member read: Full == NS ++ "." ++ Prop (first-dot split via
+% concat-equality), member resolved among the target module's exports.
+@materialize(edge_type = "READS_FROM", mode = "additive", meta(resolvedVia))
+pa_ns_read(PA, T, "property-access") :-
+    js_pa(PA, F, Full),
+    ns_module(F, NS, TF),
+    exported_in(TF, PN, T),
+    concat(NS, ".", Pfx), concat(Pfx, PN, Full).

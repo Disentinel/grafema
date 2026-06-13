@@ -7,6 +7,155 @@ use clap::{Parser, Subcommand};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
+/// Canonical stdlib rule-pack execution order — pack-runner v0 (analyze phase 9).
+///
+/// ORDER IS A CONTRACT, not a convenience — producers run strictly before
+/// consumers:
+/// - the four RESOLVER packs (`js_local_refs`, `js_same_file_calls`,
+///   `js_this_method_calls`, `rust_calls` — the Wave-1 in-engine replacements for
+///   JsLocalRefs.hs / SameFileCalls.hs / JsThisMethodCalls.hs /
+///   RustCallResolution.hs) produce the READS_FROM/CALLS state the downstream
+///   packs consume;
+/// - the three Wave-1b packs run after them: `rust_cross_methods_ctor` reads the
+///   CALLS edges `rust_calls` committed as storage EDB (the resolved-constructor
+///   seam — MUST follow `rust_calls`); `js_cross_file_calls` and
+///   `js_property_access_ns` consume IMPORTS_FROM edges as EDB (produced by
+///   `js_module_imports`/`js_import_bindings` above them since Wave 3b/3c) and,
+///   as CALLS/READS_FROM producers, must precede the fuzzy fallback and the
+///   negators below;
+/// - the three JS Wave-2 packs (node_attr-unblocked) interleave by their seams:
+///   `js_import_bindings` PRODUCES IMPORTS_FROM (named/aliased/default binding →
+///   export target through the parent IMPORT's MODULE edge), so it runs
+///   BEFORE every IMPORTS_FROM consumer — `js_class_inheritance` (cross-file
+///   arm), `js_cross_file_calls`, `js_property_access_ns`, and depends;
+///   `js_class_inheritance` PRODUCES EXTENDS, consumed by
+///   `shape_verifier`'s inheritance closure; `js_property_access_full`
+///   (this/static arms) produces READS_FROM, so it precedes `method_calls` and
+///   `shape_verifier`;
+/// - `@stdlib/method_calls` (the fuzzy fallback) reads READS_FROM receiver chains
+///   as EDB, so it runs after `js_local_refs` has committed them;
+/// - `@stdlib/shape_verifier` NEGATES CALLS (`\+ edge(C, _, "CALLS")`, its
+///   skip-resolved filter) and READS_FROM (its PA-fallback guard) as EDB, so it
+///   MUST run after EVERY CALLS/READS_FROM producer above — running earlier would
+///   flag calls a later pack resolves.
+/// - `js_module_imports` (Wave 3b, the module-path kernel) PRODUCES the
+///   IMPORT→MODULE IMPORTS_FROM seam + RE_EXPORTS that `js_import_bindings`
+///   and the hybrid consumers read as committed EDB, so it runs strictly
+///   before them.
+/// Full canonical order is js_local_refs → js_same_file_calls →
+/// js_this_method_calls → rust_calls → rust_cross_methods_ctor →
+/// rust_trait_resolve → rust_receiver_typing → rust_imports → js_module_imports →
+/// js_import_bindings → js_class_inheritance → js_cross_file_calls →
+/// js_property_access_ns → js_property_access_full → js_builtins_nodes →
+/// js_builtins_edges → js_runtime_globals_nodes → js_runtime_globals_edges →
+/// java_imports → java_types → java_calls → java_annotations →
+/// kotlin_inheritance → go_imports → go_imports_nomod → go_calls →
+/// go_interfaces → go_types → go_context → depends → method_calls →
+/// shape_verifier → axum_routes → js_http_routes_nodes → js_http_routes_edges.
+/// The Java packs (java-resolve migration): `java_imports` PRODUCES java
+/// IMPORTS_FROM, so it runs strictly before `depends` (which consumes EVERY
+/// IMPORTS_FROM edge node-type-agnostically via the file join);
+/// `java_calls` PRODUCES CALLS, so it runs strictly before the CALLS
+/// negators `method_calls` / `shape_verifier`. `kotlin_inheritance` PRODUCES
+/// kotlin EXTENDS/IMPLEMENTS for `shape_verifier`'s inheritance closure, so it
+/// precedes the negator. The Go wave packs `go_imports`/`go_imports_nomod`
+/// PRODUCE IMPORTS_FROM before `depends`; `go_calls` PRODUCES CALLS for
+/// `go_context` and before the CALLS negators (the nomod variant is runtime-
+/// selected by the orchestrator but stays registered for the order pin). The
+/// feature-detection `js_http_routes_nodes` / `js_http_routes_edges` pair sits
+/// at the registry tail with axum_routes (analyzer-EDB-only producers nothing
+/// earlier reads).
+/// Wave 3c moved depends INTO this list, after every IMPORTS_FROM producer:
+/// with legacy import-resolution gated, the IMPORT-level edges depends
+/// consumes are produced by the packs above it (it ran separately FIRST while
+/// the legacy resolver pre-committed them). The server-side registry
+/// (`rfdb-server/src/derive/stdlib.rs` STDLIB_PACKS) documents the same
+/// order — the two are pinned against each other by
+/// `tests::stdlib_rule_packs_match_rfdb_registry_order` below.
+const STDLIB_RULE_PACKS: &[&str] = &[
+    "@stdlib/js_local_refs",
+    "@stdlib/js_same_file_calls",
+    "@stdlib/js_this_method_calls",
+    "@stdlib/rust_calls",
+    "@stdlib/rust_cross_methods_ctor",
+    // Rust Wave-2 packs: rust_receiver_typing reads rust_calls' CALLS as EDB
+    // (the same MUST-run-AFTER seam as rust_cross_methods_ctor) and produces
+    // CALLS, so it precedes the fuzzy fallback and the negators below;
+    // rust_trait_resolve consumes analyzer EDB only (IMPL_BLOCK metadata +
+    // TRAIT/STRUCT/CLASS nodes).
+    "@stdlib/rust_trait_resolve",
+    "@stdlib/rust_receiver_typing",
+    // Rust Wave-3b pack: rust_imports PRODUCES IMPORTS_FROM (module tree +
+    // both rust-imports phases) — strictly before the IMPORTS_FROM consumers
+    // (js_cross_file_calls / js_property_access_ns; and depends, once legacy
+    // rust-imports is gated off).
+    "@stdlib/rust_imports",
+    // JS Wave-3b module-path kernel: produces the IMPORT→MODULE IMPORTS_FROM
+    // seam + RE_EXPORTS that js_import_bindings (b_mod/resolved_at/star_src)
+    // and the hybrid consumers below read as committed EDB — strictly first.
+    "@stdlib/js_module_imports",
+    "@stdlib/js_import_bindings",
+    "@stdlib/js_class_inheritance",
+    "@stdlib/js_cross_file_calls",
+    "@stdlib/js_property_access_ns",
+    "@stdlib/js_property_access_full",
+    // Wave 2b builtins split: the nodes pack MINTS the EXTERNAL_* endpoints the
+    // edges pack joins as committed EDB (strict nodes→edges order); both are
+    // CALLS/IMPORTS_FROM producers — before method_calls/shape_verifier.
+    "@stdlib/js_builtins_nodes",
+    "@stdlib/js_builtins_edges",
+    // Wave 4 runtime-globals split: the nodes pack MINTS the GLOBAL_DEFINITION
+    // endpoints (GLOBAL::<seName>, "<runtime/js>") the edges pack joins as
+    // committed EDB (strict nodes→edges order); the edges pack is a CALLS
+    // producer — before method_calls/shape_verifier.
+    "@stdlib/js_runtime_globals_nodes",
+    "@stdlib/js_runtime_globals_edges",
+    // Java packs (java-resolve migration): java_imports PRODUCES java
+    // IMPORTS_FROM — strictly before depends; java_calls PRODUCES CALLS —
+    // strictly before the negators method_calls / shape_verifier.
+    "@stdlib/java_imports",
+    "@stdlib/java_types",
+    "@stdlib/java_calls",
+    "@stdlib/java_annotations",
+    // Kotlin wave: kotlin_inheritance PRODUCES EXTENDS (for shape_verifier's
+    // EXTENDS-closed member lookup) + IMPLEMENTS from the kotlin-analyzer's
+    // CLASS metadata stamps — consumes analyzer EDB only, precedes the
+    // negators below.
+    "@stdlib/kotlin_inheritance",
+    // Go wave: go_imports / go_imports_nomod PRODUCE IMPORTS_FROM — strictly
+    // before depends (verdict C4). The nomod entry is the orchestrator-selected
+    // VARIANT (P3): a pack cannot test "the go.mod fact is absent" (§3
+    // cross-join), so `run_stdlib_rule_packs` SKIPS it unless go files exist
+    // AND go.mod did not resolve — both names stay registered so the
+    // cross-registry order pin below holds. go_calls PRODUCES CALLS for
+    // go_context (P2 producer-before-consumer) and precedes the CALLS
+    // negators (method_calls / shape_verifier — C4). go_interfaces / go_types
+    // consume analyzer EDB only.
+    "@stdlib/go_imports",
+    "@stdlib/go_imports_nomod",
+    "@stdlib/go_calls",
+    "@stdlib/go_interfaces",
+    "@stdlib/go_types",
+    "@stdlib/go_context",
+    // Wave 3c: depends CONSUMES IMPORTS_FROM (every edge of the shared
+    // vocabulary, module- and binding-level). Legacy import-resolution /
+    // rust-imports are gated (GRAFEMA_SKIP_RESOLVE_STEPS), so depends must
+    // run after ALL in-engine IMPORTS_FROM producers above (rust_imports,
+    // js_module_imports, js_import_bindings, js_builtins_edges). It ran
+    // FIRST (the separate materialize_datalog("") call) while the legacy
+    // resolver pre-committed those edges at analysis time.
+    "@stdlib/depends",
+    "@stdlib/method_calls",
+    "@stdlib/shape_verifier",
+    "@stdlib/axum_routes",
+    // Wave 14 feature-detection vertical: the nodes pack MINTS the
+    // anchorCall-pinned http:route endpoints the edges pack joins as
+    // committed EDB (strict nodes→edges order — the js_builtins two-pack
+    // split); both consume analyzer EDB only.
+    "@stdlib/js_http_routes_nodes",
+    "@stdlib/js_http_routes_edges",
+];
+
 
 /// Tag virtual resolution output nodes with a synthetic file for cleanup.
 ///
@@ -195,6 +344,62 @@ fn resolve_jobs_notice(flag: &str, requested: Option<usize>) -> Option<String> {
     }
 }
 
+/// Language keys accepted by `GRAFEMA_SKIP_RESOLVERS` (per-language native
+/// resolve skip-flags for the resolve→derive differential harness,
+/// the resolve-migration synthesis doc in `_ai/research/`, Wave 0).
+const SKIP_RESOLVER_KEYS: [&str; 11] = [
+    "js", "rust", "haskell", "beam", "java", "kotlin", "python", "go", "cpp", "swift", "objc",
+];
+
+/// Parse a `GRAFEMA_SKIP_RESOLVERS` value (comma-separated language keys,
+/// case-insensitive, whitespace-tolerant) into the set of skipped keys.
+/// Unknown keys are surfaced loudly and dropped — a typo must not silently
+/// leave a native resolver running when the harness expects it disabled.
+fn parse_skip_resolvers(raw: &str) -> std::collections::HashSet<String> {
+    let mut keys = std::collections::HashSet::new();
+    for key in raw.split(',').map(|k| k.trim().to_ascii_lowercase()) {
+        if key.is_empty() {
+            continue;
+        }
+        if SKIP_RESOLVER_KEYS.contains(&key.as_str()) {
+            keys.insert(key);
+        } else {
+            tracing::warn!(
+                "GRAFEMA_SKIP_RESOLVERS: unknown language key '{key}' ignored (known keys: {})",
+                SKIP_RESOLVER_KEYS.join(", ")
+            );
+        }
+    }
+    keys
+}
+
+/// Whether the native resolve phase for `lang_key` is disabled via the
+/// `GRAFEMA_SKIP_RESOLVERS` env var (comma-separated keys, see
+/// [`SKIP_RESOLVER_KEYS`]). Used by the derive differential harness to run
+/// analyze WITHOUT a native resolver so a Datalog pack produces the edges
+/// instead. Unset / empty = never skip (no behavior change).
+///
+/// Cross-language phases are skipped when EITHER constituent language is
+/// listed (apple-cross = swift+objc, jvm-cross = java+kotlin); `objc` only
+/// affects apple-cross — there is no Obj-C-only resolve phase.
+///
+/// Returns `true` with a loud warning naming the flag when skipped.
+fn skip_resolver(lang_key: &str) -> bool {
+    static SKIPPED: std::sync::OnceLock<std::collections::HashSet<String>> =
+        std::sync::OnceLock::new();
+    let skipped = SKIPPED.get_or_init(|| {
+        parse_skip_resolvers(&std::env::var("GRAFEMA_SKIP_RESOLVERS").unwrap_or_default())
+    });
+    if skipped.contains(lang_key) {
+        tracing::warn!(
+            "GRAFEMA_SKIP_RESOLVERS: skipping the native {lang_key} resolve phase — \
+             its edges must come from a Datalog pack (differential-harness mode)"
+        );
+        return true;
+    }
+    false
+}
+
 /// Detect available system memory in GB.
 ///
 /// Linux: reads MemAvailable from /proc/meminfo (accounts for caches/buffers).
@@ -298,6 +503,251 @@ async fn build_file_to_module_map(rfdb: &mut rfdb::RfdbClient) -> HashMap<String
             Some((file, sid))
         })
         .collect()
+}
+
+/// Parse the user's GRAFEMA_SKIP_RESOLVE_STEPS value (comma-separated,
+/// whitespace-tolerant) into the resolve-step skip set. Pure for testability —
+/// the caller passes the env var's value.
+///
+/// Wave 6 dissolved the retired-step merging that used to live here
+/// (`RETIRED_FIRST_PASS_STEPS` / `RETIRED_SECOND_PASS_STEPS`): the
+/// derive-replaced legacy steps were DELETED from the resolver daemons, not
+/// gated, so there is nothing left to retire. Every step the daemons still
+/// serve is live native code with no pack replacement (js: `runtime-globals`,
+/// the REFERENCE→RESOLVES_TO arm; rust: `rust-cross-methods` — dyn-dispatch +
+/// self-field arms — and `rust-globals`), and the env var gates exactly what
+/// it names among them: js-daemon steps via the pinned child env
+/// (PoolConfig::skip_resolve_steps → the daemon's own `getSkipSteps` gate),
+/// rust steps by never sending the command.
+fn resolve_step_skips(env_value: Option<&str>) -> HashSet<String> {
+    env_value
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// Render a skip set as the comma-separated GRAFEMA_SKIP_RESOLVE_STEPS value pinned on a
+/// resolver daemon child (sorted for deterministic logs/tests).
+fn skip_steps_env_value(skips: &HashSet<String>) -> String {
+    let mut steps: Vec<&str> = skips.iter().map(String::as_str).collect();
+    steps.sort_unstable();
+    steps.join(",")
+}
+
+/// Wave 6 fail-fast gate: `analyze` requires the connected server to run the
+/// derive pack phase (`datalogDerive` in the Hello features). The
+/// legacy js/rust resolve steps and the in-orchestrator P3 DEPENDS_ON fallback
+/// were DELETED — on a server without the derive engine nothing is left to produce the resolved
+/// slices, so the only correct behavior is a clear, actionable refusal.
+fn require_derive_capability(
+    rfdb: &rfdb::RfdbClient,
+    socket_path: &std::path::Path,
+) -> Result<()> {
+    if rfdb.supports_derive_materialize() {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "rfdb-server at {} does not support derive engine materialize \
+         (no `datalogDerive` capability in Hello; server version: {}); \
+         analyze requires it — the legacy resolve fallback was removed. \
+         Upgrade the rfdb-server binary, and make sure its environment \
+         does not set RFDB_DERIVE_ENGINE=off",
+        socket_path.display(),
+        if rfdb.server_version.is_empty() { "unknown" } else { &rfdb.server_version },
+    )
+}
+
+/// Per-pack slice ownership, for the phase-9 failure report: with the legacy
+/// resolve pipeline deleted (Wave 6) there is NO fallback producer behind any
+/// of these packs — a failed pack means its slice is simply MISSING from the
+/// graph for this run. The summary names what was lost so the error is
+/// actionable instead of "a pack failed".
+fn pack_owned_slice(pack: &str) -> &'static str {
+    match pack {
+        "@stdlib/js_local_refs" => "js same-file READS_FROM (REFERENCE→declaration)",
+        "@stdlib/js_same_file_calls" => "js same-file CALLS",
+        "@stdlib/js_this_method_calls" => "js this.method() CALLS",
+        "@stdlib/rust_calls" => "rust same-file CALLS",
+        "@stdlib/rust_cross_methods_ctor" => "rust constructor-typed receiver CALLS",
+        "@stdlib/rust_trait_resolve" => "rust IMPLEMENTS (impl Trait for Type)",
+        "@stdlib/rust_receiver_typing" => "rust annotation/return-typed receiver CALLS",
+        "@stdlib/rust_imports" => "rust IMPORTS_FROM (module tree + bindings)",
+        "@stdlib/js_module_imports" => "js IMPORT→MODULE IMPORTS_FROM + star RE_EXPORTS",
+        "@stdlib/js_import_bindings" => "js IMPORT_BINDING→export IMPORTS_FROM",
+        "@stdlib/js_class_inheritance" => "js EXTENDS",
+        "@stdlib/js_cross_file_calls" => "js cross-file CALLS",
+        "@stdlib/js_property_access_ns" => "js namespace-import READS_FROM",
+        "@stdlib/js_property_access_full" => "js property-access READS_FROM",
+        "@stdlib/js_builtins_nodes" => "node-builtin EXTERNAL_MODULE/EXTERNAL_FUNCTION nodes",
+        "@stdlib/js_builtins_edges" => "node-builtin IMPORTS_FROM + CALLS",
+        "@stdlib/js_runtime_globals_nodes" => "js runtime-global GLOBAL_DEFINITION nodes",
+        "@stdlib/js_runtime_globals_edges" => "js runtime-global CALLS",
+        "@stdlib/java_imports" => "java IMPORTS_FROM (IMPORT + IMPORT_BINDING → declaration)",
+        "@stdlib/java_types" => "java RETURNS/TYPE_OF/EXTENDS/IMPLEMENTS/THROWS_TYPE",
+        "@stdlib/java_calls" => "java INSTANTIATES + CALLS (ctor/same-class/static/super-this)",
+        "@stdlib/java_annotations" => "java ANNOTATION_RESOLVES_TO",
+        "@stdlib/kotlin_inheritance" => "kotlin EXTENDS + IMPLEMENTS",
+        "@stdlib/go_imports" => "go same-module IMPORT→MODULE IMPORTS_FROM",
+        "@stdlib/go_imports_nomod" => "go no-go.mod suffix-fallback IMPORTS_FROM",
+        "@stdlib/go_calls" => "go CALLS (package-qualified / same-package / method)",
+        "@stdlib/go_interfaces" => "go structural IMPLEMENTS (duck typing)",
+        "@stdlib/go_types" => "go TYPE_OF + RETURNS",
+        "@stdlib/go_context" => "go PROPAGATES/SPAWNS/DEFERS context flow",
+        "@stdlib/depends" => "MODULE→MODULE DEPENDS_ON",
+        "@stdlib/method_calls" => "fuzzy method-call CALLS fallback",
+        "@stdlib/shape_verifier" => "shape-violation ISSUE diagnostics",
+        "@stdlib/axum_routes" => "axum ROUTES_TO",
+        "@stdlib/js_http_routes_nodes" => "js http:route nodes + ROUTES_TO (express/fastify/koa/hono)",
+        "@stdlib/js_http_routes_edges" => "js http:route EXPOSES + HANDLES",
+        _ => "(unregistered pack)",
+    }
+}
+
+/// Render the phase-9 pack-failure summary. One line per failed pack: name, the
+/// slice it owns (now missing), and the error. Pure for testability.
+fn pack_failure_summary(failures: &[(String, String)]) -> String {
+    let mut out = String::from(
+        "rule-pack phase FAILED — the derive packs are the ONLY producer of their \
+         slices (the legacy resolve pipeline was removed); the graph is missing:\n",
+    );
+    for (pack, err) in failures {
+        out.push_str(&format!(
+            "  {pack} — owns: {} — error: {err}\n",
+            pack_owned_slice(pack)
+        ));
+    }
+    out.push_str("fix the failing pack(s) and re-run analyze; the run is incomplete");
+    out
+}
+
+/// Phase 8n-go — commit (or tombstone) the GO module-path fact (go pack
+/// precondition P1).
+///
+/// The `go.mod` module path the legacy daemon consumed over the wire becomes a
+/// `WORKSPACE_PACKAGE` node with metadata `language="go"` that `go_imports.dl` /
+/// `go_calls.dl` join. Must land BEFORE the pack phase. The P3 variant selection
+/// (no-go.mod suffix fallback) keys off the same discovery — see
+/// [`run_stdlib_rule_packs`].
+///
+/// SELF-HEALING LIFECYCLE (the reason this is a function, not a bare commit):
+/// the fact rides the synthetic changed-file `go.mod`, so the server's deletion
+/// phase tombstones ANY prior-generation `WORKSPACE_PACKAGE` node on that file
+/// before re-adding the current one. The js workspace facts (8n) get away with
+/// an empty changed-file because they ride a REAL analyzed entry-point file the
+/// analysis phase already tombstones; `go.mod` is never analyzed, so without its
+/// own changed-file a stale fact survives forever. The commit ALWAYS fires —
+/// even when `go_module_path` is `None` (go.mod removed or unparsable) and no
+/// node is produced — so a removed or RENAMED module path cannot leave a stale
+/// `language="go"` fact behind. A stale fact would let `go_imports` (which joins
+/// the fact) AND `go_imports_nomod` (which runs when no fact resolved) BOTH
+/// fire, breaking the "never both fire" guarantee.
+///
+/// Mirrors the `__grafema_virtual/unresolved-diagnostics` precedent: the
+/// declaring file IS the GC unit.
+async fn commit_go_module_fact(
+    rfdb: &mut rfdb::RfdbClient,
+    go_module_path: Option<&str>,
+    root: &str,
+    authority: &str,
+    generation: u64,
+) -> Result<()> {
+    let go_changed_file = vec!["go.mod".to_string()];
+    let go_fact_nodes: Vec<rfdb::WireNode> = match go_module_path {
+        Some(go_mp) => {
+            let mut go_fact = analyzer::go_module_workspace_fact(go_mp, root, authority);
+            gc::stamp_node_metadata(&mut go_fact.metadata, generation, "workspace-packages");
+            vec![go_fact]
+        }
+        None => Vec::new(),
+    };
+    rfdb.commit_batch(&go_changed_file, &go_fact_nodes, &[], true)
+        .await
+        .context("Failed to commit GO module-path fact")?;
+    match go_module_path {
+        Some(go_mp) => tracing::info!(
+            module_path = %go_mp,
+            "GO module-path WORKSPACE_PACKAGE fact committed"
+        ),
+        None => tracing::info!(
+            "No GO module-path fact — go.mod tombstoned (removed or unparsable)"
+        ),
+    }
+    Ok(())
+}
+
+/// Phase 9 — the rule-pack phase: run the canonical stdlib rule packs in
+/// [`STDLIB_RULE_PACKS`] order (the ordering contract documented at the const).
+/// This is the ONLY producer of the resolved slices (DEPENDS_ON included; the
+/// legacy P3 in-orchestrator derivation was deleted in Wave 6).
+///
+/// FAILURE POLICY (Wave 6): a failed pack = its slice is MISSING with no
+/// fallback to re-derive it. All packs still run (maximal diagnostics per run —
+/// later packs depend on earlier ones only through committed edges, so a failed
+/// producer degrades but does not invalidate them), then the phase FAILS with
+/// [`pack_failure_summary`] naming every failed pack and its owned slice.
+///
+/// PACK-VARIANT SELECTION (go P3): `go_nomod_fallback` is the ONE runtime
+/// selection condition — `@stdlib/go_imports_nomod` (the legacy
+/// empty-module-path suffix fallback, GoImportResolution.hs findBySuffix) runs
+/// ONLY when go files exist and go.mod did NOT resolve. The condition lives
+/// here because a pack cannot test "the go.mod fact is absent" (a global
+/// has-fact literal is the §3 cross-join the planner refuses — and per the
+/// spec verdict C2 a filter-connected suffix spelling is equally rejected);
+/// the orchestrator, which discovered go.mod, owns the branch — the faithful
+/// translation of legacy's `T.null modulePath` global. The main `go_imports`
+/// pack always runs: without the P1 fact its module-prefix arms derive
+/// nothing (fixture-proven), so the two variants never both fire.
+async fn run_stdlib_rule_packs(
+    rfdb: &mut rfdb::RfdbClient,
+    prof: Option<&profiler::Profiler>,
+    imports_from_hint: usize,
+    go_nomod_fallback: bool,
+) -> Result<()> {
+    let mut failed_packs: Vec<(String, String)> = Vec::new();
+    for pack in STDLIB_RULE_PACKS {
+        if *pack == "@stdlib/go_imports_nomod" && !go_nomod_fallback {
+            continue;
+        }
+        let pack_start = std::time::Instant::now();
+        match rfdb.materialize_datalog(pack).await {
+            Ok(pack_edges) => {
+                let pack_ms = pack_start.elapsed().as_millis() as u64;
+                tracing::info!(pack = *pack, ms = pack_ms, edges = pack_edges, "Rule pack materialized");
+                if let Some(p) = prof {
+                    p.event("rule_pack_complete", &[
+                        ("pack", pack),
+                        ("ms", &pack_ms.to_string()),
+                        ("edges", &pack_edges.to_string()),
+                    ]);
+                }
+                if *pack == "@stdlib/depends" {
+                    tracing::info!(
+                        edges = pack_edges,
+                        from_imports = imports_from_hint,
+                        "DEPENDS_ON derived by RFDB derive engine @materialize"
+                    );
+                    if let Some(p) = prof {
+                        p.event("depends_on_complete_v2", &[("edges", &pack_edges.to_string())]);
+                    }
+                }
+            }
+            Err(err) => {
+                tracing::error!(
+                    pack = *pack,
+                    error = %format!("{err:#}"),
+                    "Rule pack @materialize FAILED — its slice is missing (no fallback); \
+                     remaining packs still run, the run fails at end of phase"
+                );
+                failed_packs.push((pack.to_string(), format!("{err:#}")));
+            }
+        }
+    }
+    if !failed_packs.is_empty() {
+        anyhow::bail!("{}", pack_failure_summary(&failed_packs));
+    }
+    Ok(())
 }
 
 /// Validate, stamp, tag virtual nodes, and commit a resolution output to RFDB.
@@ -438,6 +888,13 @@ async fn main() -> Result<()> {
                 .await
                 .with_context(|| format!("Failed to connect to RFDB at {}", socket_path.display()))?;
 
+            // Wave 6: analyze REQUIRES the server-side derive pack phase. The
+            // legacy resolve steps and the in-orchestrator P3 DEPENDS_ON fallback
+            // were deleted — on a server without the capability there is nothing
+            // left that could produce the resolved slices, so fail fast and loud
+            // instead of silently shipping an unresolved graph.
+            require_derive_capability(&rfdb, &socket_path)?;
+
             let db_name = "default";
             rfdb.create_database(db_name, false).await?;
             rfdb.open_database(db_name, "rw").await?;
@@ -462,6 +919,19 @@ async fn main() -> Result<()> {
             if changed_files.is_empty() {
                 tracing::info!("All files up to date, nothing to analyze");
                 return Ok(());
+            }
+
+            // RFDB MVCC C2/C3: a FULL analysis is a bulk ingest — defer per-commit
+            // fsync to a single barrier (EndBulkLoad) and let the server route
+            // CommitBatch through the serial auto-compacting path that bounds the
+            // live segment count. Incremental runs are small and deliberately skip
+            // compaction, so they stay on the normal concurrent path.
+            let use_bulk = changed_files.len() == files.len();
+            if use_bulk {
+                rfdb.begin_bulk_load()
+                    .await
+                    .context("Failed to enter RFDB bulk-load mode")?;
+                tracing::info!(files = changed_files.len(), "RFDB bulk-load mode armed (full analysis)");
             }
 
             // 3b. Partition by language
@@ -1033,8 +1503,26 @@ async fn main() -> Result<()> {
             // Build file → MODULE semantic ID map from RFDB (full graph)
             let file_to_module = build_file_to_module_map(&mut rfdb).await;
 
+            // Resolve-step gating: GRAFEMA_SKIP_RESOLVE_STEPS gates the REMAINING
+            // native steps (the derive-replaced ones were deleted in Wave 6) — js
+            // daemon steps via the pinned child env below, rust steps by never
+            // sending the command (8b). See `resolve_step_skips`.
+            let resolve_skips = resolve_step_skips(
+                std::env::var("GRAFEMA_SKIP_RESOLVE_STEPS").ok().as_deref(),
+            );
+            let resolve_skips_env = if resolve_skips.is_empty() {
+                None
+            } else {
+                let value = skip_steps_env_value(&resolve_skips);
+                tracing::info!(
+                    steps = %value,
+                    "Native resolve steps gated via GRAFEMA_SKIP_RESOLVE_STEPS"
+                );
+                Some(value)
+            };
+
             // 8. Run JS resolution with per-file streaming (build-index + resolve-file)
-            if js_file_count > 0 {
+            if js_file_count > 0 && !skip_resolver("js") {
                 let lang_start = std::time::Instant::now();
                 eprintln!("  Resolution: JS/TS (per-file streaming, 1 worker)...");
                 profile!("js_resolve_start", "workers" => 1);
@@ -1045,6 +1533,7 @@ async fn main() -> Result<()> {
                     max_message_size: 200 * 1024 * 1024,
                     request_timeout: std::time::Duration::from_secs(300),
                     effects_db_path: effects_db_path.clone(),
+                    skip_resolve_steps: resolve_skips_env.clone(),
                 };
 
                 match process_pool::ProcessPool::new(resolve_pool_config, 1) {
@@ -1070,30 +1559,12 @@ async fn main() -> Result<()> {
 
                         // resolve_per_file commits its own output incrementally
                         // (per-checkpoint), so no end-of-phase commit here.
-
-                        // Release the first-pass worker handle before the second pass acquires it.
-                        // acquire_all() holds all pool slots; stream_and_resolve_single_worker needs
-                        // to acquire one — both would deadlock if handles is still live.
+                        //
+                        // (The former SECOND pass — js-this-method-calls + runtime-
+                        // call-globals — was deleted in Wave 6: the js_this_method_calls
+                        // and js_runtime_globals_nodes/_edges packs own those slices,
+                        // proven set-identical — W9 432≡432, Wave 4 7,800≡7,800.)
                         drop(handles);
-
-                        // Second pass: graph-traversal resolvers (this.method() + CALL-based globals)
-                        let second_pass = plugin::stream_and_resolve_single_worker(
-                            &mut rfdb,
-                            &[config::Language::JavaScript],
-                            &[("js-this-method-calls", &[]), ("runtime-call-globals", &[])],
-                            &resolve_pool,
-                        ).await.unwrap_or_default();
-                        for (cmd, mut o) in second_pass {
-                            let commit_name = match cmd.as_str() {
-                                "js-this-method-calls" => "js-this-method-calls",
-                                "runtime-call-globals" => "js-call-globals",
-                                _ => &cmd,
-                            };
-                            commit_resolve_output(&mut o, commit_name, generation, &mut rfdb).await?;
-                            profile!("resolve_cmd_complete", "language" => "js", "cmd" => commit_name,
-                                "nodes" => o.nodes.len(), "edges" => o.edges.len(),
-                                "duration_ms" => 0);
-                        }
 
                         let lang_ms = lang_start.elapsed().as_millis();
                         profile!("js_resolve_complete",
@@ -1113,7 +1584,7 @@ async fn main() -> Result<()> {
             }
 
             // 8a. Run Haskell resolution (streaming)
-            if !hs_files.is_empty() {
+            if !hs_files.is_empty() && !skip_resolver("haskell") {
                 let lang_start = std::time::Instant::now();
                 profile!("haskell_resolve_start");
                 let hs_pool_config = process_pool::PoolConfig {
@@ -1161,30 +1632,45 @@ async fn main() -> Result<()> {
             }
 
             // 8b. Run Rust resolution (streaming)
-            if !rs_files.is_empty() {
+            if !rs_files.is_empty() && !skip_resolver("rust") {
                 let lang_start = std::time::Instant::now();
                 profile!("rust_resolve_start");
                 let rs_pool_config = process_pool::PoolConfig {
                     command: cfg.analyzers.rust_resolve_path(),
                     args: vec!["--daemon".to_string()],
                     effects_db_path: effects_db_path.clone(),
+                    skip_resolve_steps: resolve_skips_env.clone(),
                     ..process_pool::PoolConfig::default()
                 };
                 match process_pool::ProcessPool::new(rs_pool_config, 1) {
                     Ok(rs_pool) => {
+                        // The remaining NATIVE rust steps (no pack replacement):
+                        // rust-cross-methods (dyn-dispatch + self-field arms) and
+                        // rust-globals (effects-db). rust-imports / rust-calls /
+                        // rust-trait-resolve were deleted in Wave 6 — the
+                        // rust_imports / rust_calls / rust_trait_resolve packs own
+                        // those slices. Both remaining cmds stay env-skippable.
+                        let rust_cmds: Vec<(&str, &[plugin::WorkspacePackageWire])> =
+                            [("rust-cross-methods", &[] as &[plugin::WorkspacePackageWire]), ("rust-globals", &[])]
+                                .into_iter()
+                                .filter(|(name, _)| {
+                                    let keep = !resolve_skips.contains(*name);
+                                    if !keep {
+                                        tracing::warn!(step = name, "Native resolve step skipped (GRAFEMA_SKIP_RESOLVE_STEPS)");
+                                    }
+                                    keep
+                                })
+                                .collect();
                         let results = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::Rust],
-                            &[("rust-imports", &[]), ("rust-calls", &[]), ("rust-cross-methods", &[]), ("rust-trait-resolve", &[]), ("rust-globals", &[])],
+                            &rust_cmds,
                             &rs_pool,
                         ).await?;
                         for (cmd, mut output) in results {
                             let cmd_start = std::time::Instant::now();
                             let commit_name = match cmd.as_str() {
-                                "rust-imports" => "rust-import-resolution",
-                                "rust-calls"   => "rust-call-resolution",
                                 "rust-cross-methods" => "rust-cross-method-calls",
-                                "rust-trait-resolve" => "rust-trait-resolution",
                                 "rust-globals" => "rust-runtime-globals",
                                 _ => &cmd,
                             };
@@ -1210,7 +1696,7 @@ async fn main() -> Result<()> {
             }
 
             // 8c. Run Java resolution (streaming)
-            if !java_files.is_empty() {
+            if !java_files.is_empty() && !skip_resolver("java") {
                 let lang_start = std::time::Instant::now();
                 profile!("java_resolve_start");
                 let pool_cfg = process_pool::PoolConfig {
@@ -1246,7 +1732,7 @@ async fn main() -> Result<()> {
             }
 
             // 8d. Run Kotlin resolution (streaming)
-            if !kotlin_files.is_empty() {
+            if !kotlin_files.is_empty() && !skip_resolver("kotlin") {
                 let lang_start = std::time::Instant::now();
                 profile!("kotlin_resolve_start");
                 let pool_cfg = process_pool::PoolConfig {
@@ -1282,7 +1768,7 @@ async fn main() -> Result<()> {
             }
 
             // 8e. Run Python resolution (streaming)
-            if !py_files.is_empty() {
+            if !py_files.is_empty() && !skip_resolver("python") {
                 let lang_start = std::time::Instant::now();
                 profile!("python_resolve_start");
                 let pool_cfg = process_pool::PoolConfig {
@@ -1318,7 +1804,7 @@ async fn main() -> Result<()> {
             }
 
             // 8f. Run Go resolution (streaming)
-            if !go_files.is_empty() {
+            if !go_files.is_empty() && !skip_resolver("go") {
                 let lang_start = std::time::Instant::now();
                 profile!("go_resolve_start");
                 let go_module_path = config::discover_go_module_path(&cfg.root);
@@ -1363,7 +1849,7 @@ async fn main() -> Result<()> {
             }
 
             // 8g. Run Swift resolution (streaming)
-            if !swift_files.is_empty() {
+            if !swift_files.is_empty() && !skip_resolver("swift") {
                 let lang_start = std::time::Instant::now();
                 profile!("swift_resolve_start");
                 let pool_cfg = process_pool::PoolConfig {
@@ -1399,7 +1885,11 @@ async fn main() -> Result<()> {
             }
 
             // 8h. Run Apple cross-language resolution (streaming, Swift + Obj-C)
-            if !swift_files.is_empty() && !objc_files.is_empty() {
+            if !swift_files.is_empty()
+                && !objc_files.is_empty()
+                && !skip_resolver("swift")
+                && !skip_resolver("objc")
+            {
                 let lang_start = std::time::Instant::now();
                 profile!("apple_cross_resolve_start");
                 let pool_cfg = process_pool::PoolConfig {
@@ -1433,7 +1923,11 @@ async fn main() -> Result<()> {
             }
 
             // 8i. Run JVM cross-language resolution (streaming, Java + Kotlin)
-            if !java_files.is_empty() && !kotlin_files.is_empty() {
+            if !java_files.is_empty()
+                && !kotlin_files.is_empty()
+                && !skip_resolver("java")
+                && !skip_resolver("kotlin")
+            {
                 let lang_start = std::time::Instant::now();
                 profile!("jvm_cross_resolve_start");
                 let pool_cfg = process_pool::PoolConfig {
@@ -1472,7 +1966,7 @@ async fn main() -> Result<()> {
             }
 
             // 8j. Run C/C++ resolution (streaming)
-            if !cpp_files.is_empty() {
+            if !cpp_files.is_empty() && !skip_resolver("cpp") {
                 let lang_start = std::time::Instant::now();
                 profile!("cpp_resolve_start");
                 let pool_cfg = process_pool::PoolConfig {
@@ -1508,7 +2002,7 @@ async fn main() -> Result<()> {
             }
 
             // 8k. Run BEAM resolution (streaming)
-            if !beam_files.is_empty() {
+            if !beam_files.is_empty() && !skip_resolver("beam") {
                 let lang_start = std::time::Instant::now();
                 profile!("beam_resolve_start");
                 let pool_cfg = process_pool::PoolConfig {
@@ -1628,7 +2122,9 @@ async fn main() -> Result<()> {
                     }
                 };
 
-                let plugin_results = plugin::run_plugins_dag(
+                // A plugin failure aborts the analyze run (loud-failure policy,
+                // same as derive-pack failures) — but shut the pool down first.
+                let dag_result = plugin::run_plugins_dag(
                     &user_plugins,
                     &mut rfdb,
                     &socket_path,
@@ -1636,22 +2132,79 @@ async fn main() -> Result<()> {
                     generation,
                     resolve_pool.as_ref(),
                 )
-                .await?;
+                .await;
 
                 if let Some(pool) = resolve_pool {
                     pool.shutdown().await;
                 }
 
-                for pr in &plugin_results {
-                    if let Some(ref err) = pr.error {
-                        tracing::error!(plugin = %pr.plugin_name, "{err}");
-                    }
-                }
+                dag_result?;
             }
 
             let resolve_ms = resolve_timer.elapsed().as_millis() as u64;
 
-            // 8m. Generate unresolved diagnostics
+
+
+            // 8n. Commit WORKSPACE_PACKAGE facts (Wave 3c): the workspace map the
+            // legacy resolver consumed over the wire becomes graph facts, so the
+            // datalog packs (js_module_imports workspace arms) can join them.
+            // Must land BEFORE the pack phase below. Re-emitted every run: ids are
+            // stable (upsert dedups), and re-analysis of an entry-point file
+            // tombstones its fact until this re-commit restores it.
+            if !ws_packages.is_empty() {
+                let mut ws_nodes = analyzer::workspace_packages_to_wire(&ws_packages, &authority);
+                for node in &mut ws_nodes {
+                    gc::stamp_node_metadata(&mut node.metadata, generation, "workspace-packages");
+                }
+                let n_ws = ws_nodes.len();
+                rfdb.commit_batch(&[], &ws_nodes, &[], true)
+                    .await
+                    .context("Failed to commit WORKSPACE_PACKAGE facts")?;
+                tracing::info!(count = n_ws, "WORKSPACE_PACKAGE facts committed");
+            }
+
+            // 8n-go. Commit the GO module-path fact (go pack precondition P1):
+            // the go.mod module path the legacy daemon consumed over the wire
+            // (main.rs go_ws_packages above) becomes a WORKSPACE_PACKAGE node
+            // with metadata language="go" that go_imports.dl / go_calls.dl
+            // join. Must land BEFORE the pack phase below. The P3 variant
+            // selection (no-go.mod suffix fallback) keys off the same
+            // discovery — see `run_stdlib_rule_packs`.
+            let go_module_path_for_packs = if go_files.is_empty() {
+                None
+            } else {
+                config::discover_go_module_path(&cfg.root)
+            };
+            let go_nomod_fallback = !go_files.is_empty() && go_module_path_for_packs.is_none();
+            commit_go_module_fact(
+                &mut rfdb,
+                go_module_path_for_packs.as_deref(),
+                &cfg.root.display().to_string(),
+                &authority,
+                generation,
+            )
+            .await?;
+
+            // 9. Rule-pack phase. The server's capability was asserted at
+            // connect time (fail-fast above), so this phase ALWAYS runs — see
+            // `run_stdlib_rule_packs` for the ordering contract and the Wave-6
+            // failure policy (any failed pack fails the run at end of phase).
+            let depends_on_start = std::time::Instant::now();
+            profile!("depends_on_start", "imports_from_edges" => all_imports_from_edges.len());
+            run_stdlib_rule_packs(
+                &mut rfdb,
+                prof.as_ref(),
+                all_imports_from_edges.len(),
+                go_nomod_fallback,
+            )
+            .await?;
+            let depends_on_ms = depends_on_start.elapsed().as_millis() as u64;
+
+            // 10. Generate unresolved diagnostics — AFTER the pack phase (Wave 3c):
+            // with legacy resolve steps gated (GRAFEMA_SKIP_RESOLVE_STEPS), the
+            // CALLS/IMPORTS_FROM edges the negation queries below check for are
+            // produced by the datalog packs; running diagnostics before them
+            // would report every pack-resolved node as unresolved.
             let diagnostics_start = std::time::Instant::now();
             {
                 // RFD-65: the resolver commits CALLS/IMPORTS_FROM edges with
@@ -1724,70 +2277,6 @@ async fn main() -> Result<()> {
 
             let diagnostics_ms = diagnostics_start.elapsed().as_millis() as u64;
 
-            // 9. Derive MODULE→MODULE DEPENDS_ON edges from IMPORTS_FROM
-            let depends_on_start = std::time::Instant::now();
-            profile!("depends_on_start", "imports_from_edges" => all_imports_from_edges.len());
-            if !all_imports_from_edges.is_empty() {
-                let mut depends_on_pairs: HashSet<(String, String)> = HashSet::new();
-
-                // Pre-compute URI prefix for extracting file paths from grafema:// URIs
-                let uri_prefix = format!("grafema://{authority}/");
-
-                for (src_id, dst_id) in &all_imports_from_edges {
-                    // Extract file path from semantic ID.
-                    // URI format: "grafema://authority/path/to/file.ts#FRAGMENT" → "path/to/file.ts"
-                    // Legacy format: "path/to/file.ts->TYPE->name" → "path/to/file.ts"
-                    let src_file = if let Some(rest) = src_id.strip_prefix(&uri_prefix) {
-                        rest.split('#').next().unwrap_or("")
-                    } else {
-                        src_id.split("->").next().unwrap_or("")
-                    };
-                    let dst_file = if let Some(rest) = dst_id.strip_prefix(&uri_prefix) {
-                        rest.split('#').next().unwrap_or("")
-                    } else {
-                        dst_id.split("->").next().unwrap_or("")
-                    };
-
-                    if let (Some(src_mod), Some(dst_mod)) =
-                        (file_to_module.get(src_file), file_to_module.get(dst_file))
-                    {
-                        if src_mod != dst_mod {
-                            depends_on_pairs.insert((src_mod.clone(), dst_mod.clone()));
-                        }
-                    }
-                }
-
-                if !depends_on_pairs.is_empty() {
-                    let metadata_json = format!(
-                        r#"{{"_source":"module-dependencies","_generation":{generation}}}"#
-                    );
-
-                    let depends_on_wire_edges: Vec<rfdb::WireEdge> = depends_on_pairs
-                        .iter()
-                        .map(|(src, dst)| rfdb::WireEdge {
-                            src: src.clone(),
-                            dst: dst.clone(),
-                            edge_type: "DEPENDS_ON".to_string(),
-                            metadata: Some(metadata_json.clone()),
-                        })
-                        .collect();
-
-                    rfdb.commit_batch(&[], &[], &depends_on_wire_edges, true)
-                        .await
-                        .context("Failed to commit DEPENDS_ON edges")?;
-
-                    tracing::info!(
-                        edges = depends_on_wire_edges.len(),
-                        from_imports = all_imports_from_edges.len(),
-                        "Module dependency edges derived"
-                    );
-                    profile!("depends_on_complete",
-                        "edges" => depends_on_wire_edges.len(),
-                        "from_imports" => all_imports_from_edges.len());
-                }
-            }
-            let depends_on_ms = depends_on_start.elapsed().as_millis() as u64;
-
             // Compact to deduplicate segments after all commits.
             // This is needed because:
             // 1. Re-analyzed files create new segment versions alongside old ones.
@@ -1802,6 +2291,17 @@ async fn main() -> Result<()> {
             // remain queryable; full compaction runs on next full analysis or when
             // L0 accumulation triggers it. This avoids O(total_graph) compaction
             // cost for small changes.
+            // RFDB MVCC C2/C3: leave bulk-load mode before the post-analysis
+            // compaction — runs the single durable barrier (fsync the whole
+            // current version once) + bounded reclaim and restores per-commit
+            // durability, so the subsequent compact()/rebuild_indexes run Strict.
+            if use_bulk {
+                rfdb.end_bulk_load()
+                    .await
+                    .context("Failed to leave RFDB bulk-load mode (durable barrier)")?;
+                tracing::info!("RFDB bulk-load barrier complete (state durable)");
+            }
+
             let compact_start = std::time::Instant::now();
             profile!("compact_start", "analysis_nodes" => total_nodes, "analysis_edges" => total_edges);
             let is_incremental = changed_files.len() < files.len();
@@ -1964,6 +2464,10 @@ async fn main() -> Result<()> {
                 .await
                 .with_context(|| format!("Failed to connect to RFDB at {}", socket_path.display()))?;
 
+            // Wave 6: resolve-only passes need the derive pack phase too —
+            // the packs are the only producer of the resolved slices.
+            require_derive_capability(&rfdb, &socket_path)?;
+
             let db_name = "default";
             let open_resp = rfdb.open_database(db_name, "rw").await?;
             if open_resp.node_count == 0 {
@@ -1996,7 +2500,7 @@ async fn main() -> Result<()> {
             let mut all_imports_from_edges: Vec<(String, String)> = Vec::new();
 
             // --- JS resolution (per-file streaming) ---
-            if detected_langs.contains(&config::Language::JavaScript) {
+            if detected_langs.contains(&config::Language::JavaScript) && !skip_resolver("js") {
                 let lang_start = std::time::Instant::now();
                 eprintln!("  Resolve: JS/TS (per-file streaming, 1 worker)...");
 
@@ -2006,6 +2510,10 @@ async fn main() -> Result<()> {
                     max_message_size: 200 * 1024 * 1024,
                     request_timeout: std::time::Duration::from_secs(300),
                     effects_db_path: effects_db_path.clone(),
+                    // No pinned skip set: the daemon child inherits any user-set
+                    // GRAFEMA_SKIP_RESOLVE_STEPS from the parent env, which gates
+                    // the remaining native step (runtime-globals).
+                    skip_resolve_steps: None,
                 };
 
                 match process_pool::ProcessPool::new(resolve_pool_config, 1) {
@@ -2046,7 +2554,7 @@ async fn main() -> Result<()> {
             }
 
             // --- Haskell resolution ---
-            if detected_langs.contains(&config::Language::Haskell) {
+            if detected_langs.contains(&config::Language::Haskell) && !skip_resolver("haskell") {
                 let lang_start = std::time::Instant::now();
                 eprintln!("  Resolve: Haskell...");
                 let pool_cfg = process_pool::PoolConfig {
@@ -2087,7 +2595,7 @@ async fn main() -> Result<()> {
             }
 
             // --- Rust resolution ---
-            if detected_langs.contains(&config::Language::Rust) {
+            if detected_langs.contains(&config::Language::Rust) && !skip_resolver("rust") {
                 let lang_start = std::time::Instant::now();
                 eprintln!("  Resolve: Rust...");
                 let pool_cfg = process_pool::PoolConfig {
@@ -2098,18 +2606,18 @@ async fn main() -> Result<()> {
                 };
                 match process_pool::ProcessPool::new(pool_cfg, 1) {
                     Ok(pool) => {
+                        // Wave 6: only the remaining native rust steps — the
+                        // rust_imports / rust_calls / rust_trait_resolve packs own
+                        // the deleted steps' slices.
                         let results = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::Rust],
-                            &[("rust-imports", &[]), ("rust-calls", &[]), ("rust-cross-methods", &[]), ("rust-trait-resolve", &[]), ("rust-globals", &[])],
+                            &[("rust-cross-methods", &[]), ("rust-globals", &[])],
                             &pool,
                         ).await?;
                         for (cmd, mut output) in results {
                             let commit_name = match cmd.as_str() {
-                                "rust-imports" => "rust-import-resolution",
-                                "rust-calls"   => "rust-call-resolution",
                                 "rust-cross-methods" => "rust-cross-method-calls",
-                                "rust-trait-resolve" => "rust-trait-resolution",
                                 "rust-globals" => "rust-runtime-globals",
                                 _ => &cmd,
                             };
@@ -2129,7 +2637,7 @@ async fn main() -> Result<()> {
             }
 
             // --- Java resolution ---
-            if detected_langs.contains(&config::Language::Java) {
+            if detected_langs.contains(&config::Language::Java) && !skip_resolver("java") {
                 let lang_start = std::time::Instant::now();
                 eprintln!("  Resolve: Java...");
                 let pool_cfg = process_pool::PoolConfig {
@@ -2160,7 +2668,7 @@ async fn main() -> Result<()> {
             }
 
             // --- Kotlin resolution ---
-            if detected_langs.contains(&config::Language::Kotlin) {
+            if detected_langs.contains(&config::Language::Kotlin) && !skip_resolver("kotlin") {
                 let lang_start = std::time::Instant::now();
                 eprintln!("  Resolve: Kotlin...");
                 let pool_cfg = process_pool::PoolConfig {
@@ -2191,7 +2699,7 @@ async fn main() -> Result<()> {
             }
 
             // --- Python resolution ---
-            if detected_langs.contains(&config::Language::Python) {
+            if detected_langs.contains(&config::Language::Python) && !skip_resolver("python") {
                 let lang_start = std::time::Instant::now();
                 eprintln!("  Resolve: Python...");
                 let pool_cfg = process_pool::PoolConfig {
@@ -2222,7 +2730,7 @@ async fn main() -> Result<()> {
             }
 
             // --- Go resolution ---
-            if detected_langs.contains(&config::Language::Go) {
+            if detected_langs.contains(&config::Language::Go) && !skip_resolver("go") {
                 let lang_start = std::time::Instant::now();
                 eprintln!("  Resolve: Go...");
                 let go_module_path = config::discover_go_module_path(&cfg.root);
@@ -2262,7 +2770,7 @@ async fn main() -> Result<()> {
             }
 
             // --- Swift resolution ---
-            if detected_langs.contains(&config::Language::Swift) {
+            if detected_langs.contains(&config::Language::Swift) && !skip_resolver("swift") {
                 let lang_start = std::time::Instant::now();
                 eprintln!("  Resolve: Swift...");
                 let pool_cfg = process_pool::PoolConfig {
@@ -2295,6 +2803,8 @@ async fn main() -> Result<()> {
             // --- Apple cross-language resolution (Swift + Obj-C) ---
             if detected_langs.contains(&config::Language::Swift)
                 && detected_langs.contains(&config::Language::ObjectiveC)
+                && !skip_resolver("swift")
+                && !skip_resolver("objc")
             {
                 let lang_start = std::time::Instant::now();
                 eprintln!("  Resolve: Apple cross-language...");
@@ -2326,6 +2836,8 @@ async fn main() -> Result<()> {
             // --- JVM cross-language resolution (Java + Kotlin) ---
             if detected_langs.contains(&config::Language::Java)
                 && detected_langs.contains(&config::Language::Kotlin)
+                && !skip_resolver("java")
+                && !skip_resolver("kotlin")
             {
                 let lang_start = std::time::Instant::now();
                 eprintln!("  Resolve: JVM cross-language...");
@@ -2360,7 +2872,7 @@ async fn main() -> Result<()> {
             }
 
             // --- C/C++ resolution ---
-            if detected_langs.contains(&config::Language::Cpp) {
+            if detected_langs.contains(&config::Language::Cpp) && !skip_resolver("cpp") {
                 let lang_start = std::time::Instant::now();
                 eprintln!("  Resolve: C/C++...");
                 let pool_cfg = process_pool::PoolConfig {
@@ -2391,7 +2903,7 @@ async fn main() -> Result<()> {
             }
 
             // --- BEAM resolution ---
-            if detected_langs.contains(&config::Language::Beam) {
+            if detected_langs.contains(&config::Language::Beam) && !skip_resolver("beam") {
                 let lang_start = std::time::Instant::now();
                 eprintln!("  Resolve: BEAM...");
                 let pool_cfg = process_pool::PoolConfig {
@@ -2470,7 +2982,9 @@ async fn main() -> Result<()> {
                     }
                 };
 
-                let plugin_results = plugin::run_plugins_dag(
+                // A plugin failure aborts the analyze run (loud-failure policy,
+                // same as derive-pack failures) — but shut the pool down first.
+                let dag_result = plugin::run_plugins_dag(
                     &user_plugins,
                     &mut rfdb,
                     &socket_path,
@@ -2478,18 +2992,35 @@ async fn main() -> Result<()> {
                     generation,
                     resolve_pool.as_ref(),
                 )
-                .await?;
+                .await;
 
                 if let Some(pool) = resolve_pool {
                     pool.shutdown().await;
                 }
 
-                for pr in &plugin_results {
-                    if let Some(ref err) = pr.error {
-                        tracing::error!(plugin = %pr.plugin_name, "{err}");
-                    }
-                }
+                dag_result?;
             }
+
+            // Rule-pack phase (Wave 6): the packs are the only producer of the
+            // resolved CALLS/READS_FROM/IMPORTS_FROM/DEPENDS_ON slices (the
+            // legacy steps were deleted), so a resolve-only pass must run them
+            // too — and BEFORE the unresolved diagnostics below, whose negation
+            // queries would otherwise flag every pack-resolved node.
+            let depends_on_start = std::time::Instant::now();
+            // P3 selection in the resolve-only pass: the graph already holds
+            // (or lacks) the P1 fact from the prior analyze; re-discover
+            // go.mod for the variant condition (cheap file read). Go presence
+            // comes from the detected-language scan above.
+            let go_nomod_fallback = detected_langs.contains(&config::Language::Go)
+                && config::discover_go_module_path(&cfg.root).is_none();
+            run_stdlib_rule_packs(
+                &mut rfdb,
+                None,
+                all_imports_from_edges.len(),
+                go_nomod_fallback,
+            )
+            .await?;
+            let depends_on_ms = depends_on_start.elapsed().as_millis() as u64;
 
             // Unresolved diagnostics
             let diagnostics_start = std::time::Instant::now();
@@ -2558,60 +3089,9 @@ async fn main() -> Result<()> {
             }
             let diagnostics_ms = diagnostics_start.elapsed().as_millis() as u64;
 
-            // Derive MODULE→MODULE DEPENDS_ON edges from IMPORTS_FROM
-            let depends_on_start = std::time::Instant::now();
-            if !all_imports_from_edges.is_empty() {
-                let mut depends_on_pairs: HashSet<(String, String)> = HashSet::new();
-                let uri_prefix = format!("grafema://{authority}/");
-
-                for (src_id, dst_id) in &all_imports_from_edges {
-                    let src_file = if let Some(rest) = src_id.strip_prefix(&uri_prefix) {
-                        rest.split('#').next().unwrap_or("")
-                    } else {
-                        src_id.split("->").next().unwrap_or("")
-                    };
-                    let dst_file = if let Some(rest) = dst_id.strip_prefix(&uri_prefix) {
-                        rest.split('#').next().unwrap_or("")
-                    } else {
-                        dst_id.split("->").next().unwrap_or("")
-                    };
-
-                    if let (Some(src_mod), Some(dst_mod)) =
-                        (file_to_module.get(src_file), file_to_module.get(dst_file))
-                    {
-                        if src_mod != dst_mod {
-                            depends_on_pairs.insert((src_mod.clone(), dst_mod.clone()));
-                        }
-                    }
-                }
-
-                if !depends_on_pairs.is_empty() {
-                    let metadata_json = format!(
-                        r#"{{"_source":"module-dependencies","_generation":{generation}}}"#
-                    );
-
-                    let depends_on_wire_edges: Vec<rfdb::WireEdge> = depends_on_pairs
-                        .iter()
-                        .map(|(src, dst)| rfdb::WireEdge {
-                            src: src.clone(),
-                            dst: dst.clone(),
-                            edge_type: "DEPENDS_ON".to_string(),
-                            metadata: Some(metadata_json.clone()),
-                        })
-                        .collect();
-
-                    rfdb.commit_batch(&[], &[], &depends_on_wire_edges, true)
-                        .await
-                        .context("Failed to commit DEPENDS_ON edges")?;
-
-                    tracing::info!(
-                        edges = depends_on_wire_edges.len(),
-                        from_imports = all_imports_from_edges.len(),
-                        "Module dependency edges derived"
-                    );
-                }
-            }
-            let depends_on_ms = depends_on_start.elapsed().as_millis() as u64;
+            // (DEPENDS_ON is derived by the @stdlib/depends pack in the rule-pack
+            // phase above — the inline legacy sid-parse derivation was deleted in
+            // Wave 6 together with the analyze-side P3 fallback.)
 
             // Skip compact during resolve to avoid OOM on memory-constrained VMs.
             // Resolution adds edges via virtual files — no segment dedup strictly
@@ -2941,5 +3421,512 @@ mod tests {
         assert!(resolve_jobs_notice("--jobs", Some(0)).is_some());
         // The flag name is threaded through (resolve subcommand uses --jobs).
         assert!(resolve_jobs_notice("--jobs", Some(4)).unwrap().contains("--jobs"));
+    }
+
+    /// Wave-0 skip-flags (resolve→derive synthesis): unset/empty env value must
+    /// change nothing — no language is skipped.
+    #[test]
+    fn skip_resolvers_empty_means_no_skip() {
+        assert!(parse_skip_resolvers("").is_empty());
+        assert!(parse_skip_resolvers("  ").is_empty());
+        assert!(parse_skip_resolvers(",,").is_empty());
+    }
+
+    /// Comma-separated keys parse case-insensitively, whitespace-tolerant, and
+    /// every documented language key is accepted.
+    #[test]
+    fn skip_resolvers_parses_listed_keys() {
+        let set = parse_skip_resolvers(" js, RUST ,haskell");
+        assert!(set.contains("js") && set.contains("rust") && set.contains("haskell"));
+        assert_eq!(set.len(), 3);
+
+        // All 11 documented keys round-trip.
+        let all = SKIP_RESOLVER_KEYS.join(",");
+        let set = parse_skip_resolvers(&all);
+        for key in SKIP_RESOLVER_KEYS {
+            assert!(set.contains(key), "key '{key}' must be accepted");
+        }
+        assert_eq!(set.len(), SKIP_RESOLVER_KEYS.len());
+    }
+
+    /// A typo'd key must not poison the set: it is dropped (and warned about),
+    /// while valid keys in the same list still take effect.
+    #[test]
+    fn skip_resolvers_drops_unknown_keys() {
+        let set = parse_skip_resolvers("js,javascrpt,rust");
+        assert!(set.contains("js") && set.contains("rust"));
+        assert!(!set.contains("javascrpt"));
+        assert_eq!(set.len(), 2);
+    }
+
+    /// Wave 6: GRAFEMA_SKIP_RESOLVE_STEPS gates exactly what it names among the
+    /// REMAINING native steps (whitespace-tolerant, empty segments dropped); with
+    /// no env value nothing is skipped — there is no retired-set merging anymore
+    /// (the derive-replaced steps were deleted, not gated).
+    #[test]
+    fn resolve_step_skips_gates_only_what_env_names() {
+        assert!(resolve_step_skips(None).is_empty(), "no env → nothing skipped");
+
+        let skips = resolve_step_skips(Some("rust-globals, runtime-globals"));
+        assert!(skips.contains("rust-globals"), "env-listed step is gated");
+        assert!(skips.contains("runtime-globals"), "whitespace-tolerant split");
+        assert_eq!(skips.len(), 2, "exactly what the env names, nothing merged in");
+
+        let noisy = resolve_step_skips(Some(",, rust-cross-methods ,"));
+        assert_eq!(
+            noisy,
+            ["rust-cross-methods".to_string()].into_iter().collect::<HashSet<_>>(),
+            "empty segments are filtered"
+        );
+
+        // The rendered child-env value is deterministic (sorted, comma-joined).
+        let rendered =
+            skip_steps_env_value(&resolve_step_skips(Some("runtime-globals,rust-globals")));
+        assert_eq!(rendered, "runtime-globals,rust-globals");
+    }
+
+    /// Wave 6 failure policy: the pack-failure summary names every failed pack,
+    /// the slice it owns (so the operator knows what is MISSING from the graph),
+    /// and the underlying error — and every pack in the production list has a
+    /// registered slice description (a new pack without one fails here).
+    #[test]
+    fn pack_failure_summary_names_packs_and_owned_slices() {
+        let failures = vec![
+            ("@stdlib/depends".to_string(), "boom".to_string()),
+            ("@stdlib/js_local_refs".to_string(), "parse error".to_string()),
+        ];
+        let summary = pack_failure_summary(&failures);
+        assert!(summary.contains("@stdlib/depends"), "failed pack named");
+        assert!(summary.contains("MODULE→MODULE DEPENDS_ON"), "owned slice named");
+        assert!(summary.contains("boom"), "underlying error included");
+        assert!(summary.contains("@stdlib/js_local_refs"));
+        assert!(summary.contains("READS_FROM"), "js_local_refs slice named");
+        assert!(summary.contains("no fallback") || summary.contains("ONLY producer"),
+            "summary states there is no fallback");
+
+        for pack in STDLIB_RULE_PACKS {
+            assert_ne!(
+                pack_owned_slice(pack),
+                "(unregistered pack)",
+                "{pack} must have a slice description in pack_owned_slice"
+            );
+        }
+    }
+
+    /// Spawn a fake RFDB server on a temp Unix socket that answers the Hello
+    /// handshake with the given feature list and then serves `materializeDatalog`
+    /// requests: every pack succeeds (count=1) except those named in
+    /// `failing_packs`, which get a coded error response. Returns the socket path.
+    fn spawn_fake_rfdb_server(
+        features: Vec<String>,
+        failing_packs: Vec<String>,
+    ) -> std::path::PathBuf {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        // Unique per call: pid + a process-wide counter. A timestamp alone is
+        // NOT unique — concurrent tests can land in the same SystemTime tick,
+        // collide on the socket name, and the second bind panics (flaky
+        // EADDRINUSE in pack_failure_fails_the_run_with_a_loud_summary).
+        static SOCK_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let dir = std::env::temp_dir();
+        let sock = dir.join(format!(
+            "grafema-fake-rfdb-{}-{}.sock",
+            std::process::id(),
+            SOCK_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_file(&sock);
+        let listener = std::os::unix::net::UnixListener::bind(&sock).expect("bind fake socket");
+        listener.set_nonblocking(true).expect("nonblocking");
+        let listener = tokio::net::UnixListener::from_std(listener).expect("tokio listener");
+
+        tokio::spawn(async move {
+            let (mut stream, _) = match listener.accept().await {
+                Ok(x) => x,
+                Err(_) => return,
+            };
+            loop {
+                let mut len_buf = [0u8; 4];
+                if stream.read_exact(&mut len_buf).await.is_err() {
+                    return;
+                }
+                let len = u32::from_be_bytes(len_buf) as usize;
+                let mut buf = vec![0u8; len];
+                if stream.read_exact(&mut buf).await.is_err() {
+                    return;
+                }
+                let req: serde_json::Value = rmp_serde::from_slice(&buf).expect("decode request");
+                let request_id = req["requestId"].as_str().unwrap_or("r?").to_string();
+                let cmd = req["cmd"].as_str().unwrap_or("");
+                let resp = match cmd {
+                    "hello" => serde_json::json!({
+                        "requestId": request_id,
+                        "protocolVersion": 3u32,
+                        "serverVersion": "fake-rfdb-test",
+                        "features": features,
+                    }),
+                    "materializeDatalog" => {
+                        let source = req["source"].as_str().unwrap_or("");
+                        if failing_packs.iter().any(|p| p == source) {
+                            serde_json::json!({
+                                "requestId": request_id,
+                                "error": format!("forced test failure for {source}"),
+                                "code": "E-TEST-PACK",
+                            })
+                        } else {
+                            serde_json::json!({ "requestId": request_id, "count": 1u32 })
+                        }
+                    }
+                    other => serde_json::json!({
+                        "requestId": request_id,
+                        "error": format!("fake server does not implement {other}"),
+                        "code": "E-TEST-UNIMPLEMENTED",
+                    }),
+                };
+                let payload = rmp_serde::to_vec_named(&resp).expect("encode response");
+                let len = (payload.len() as u32).to_be_bytes();
+                if stream.write_all(&len).await.is_err() || stream.write_all(&payload).await.is_err() {
+                    return;
+                }
+                let _ = stream.flush().await;
+            }
+        });
+        sock
+    }
+
+    /// A commit recorded by [`spawn_recording_rfdb_server`]: the `changedFiles`
+    /// and the committed nodes (decoded as JSON) from one `commitBatch` request.
+    #[derive(Clone, Debug)]
+    struct RecordedCommit {
+        changed_files: Vec<String>,
+        nodes: Vec<serde_json::Value>,
+    }
+
+    /// Fake RFDB server that RECORDS every `commitBatch` request (its
+    /// `changedFiles` + node payloads) into a shared buffer, so a test can assert
+    /// the orchestrator's wire contract directly. `hello` advertises
+    /// `datalogDerive`; `commitBatch` is acked with a delta echoing node counts.
+    fn spawn_recording_rfdb_server() -> (std::path::PathBuf, std::sync::Arc<std::sync::Mutex<Vec<RecordedCommit>>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        static SOCK_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let dir = std::env::temp_dir();
+        let sock = dir.join(format!(
+            "grafema-rec-rfdb-{}-{}.sock",
+            std::process::id(),
+            SOCK_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_file(&sock);
+        let listener = std::os::unix::net::UnixListener::bind(&sock).expect("bind fake socket");
+        listener.set_nonblocking(true).expect("nonblocking");
+        let listener = tokio::net::UnixListener::from_std(listener).expect("tokio listener");
+
+        let recorded = std::sync::Arc::new(std::sync::Mutex::new(Vec::<RecordedCommit>::new()));
+        let recorded_srv = recorded.clone();
+
+        tokio::spawn(async move {
+            let (mut stream, _) = match listener.accept().await {
+                Ok(x) => x,
+                Err(_) => return,
+            };
+            loop {
+                let mut len_buf = [0u8; 4];
+                if stream.read_exact(&mut len_buf).await.is_err() {
+                    return;
+                }
+                let len = u32::from_be_bytes(len_buf) as usize;
+                let mut buf = vec![0u8; len];
+                if stream.read_exact(&mut buf).await.is_err() {
+                    return;
+                }
+                let req: serde_json::Value = rmp_serde::from_slice(&buf).expect("decode request");
+                let request_id = req["requestId"].as_str().unwrap_or("r?").to_string();
+                let cmd = req["cmd"].as_str().unwrap_or("");
+                let resp = match cmd {
+                    "hello" => serde_json::json!({
+                        "requestId": request_id,
+                        "protocolVersion": 3u32,
+                        "serverVersion": "fake-rfdb-rec",
+                        "features": ["datalogDerive"],
+                    }),
+                    "commitBatch" => {
+                        let changed_files: Vec<String> = req["changedFiles"]
+                            .as_array()
+                            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                            .unwrap_or_default();
+                        let nodes: Vec<serde_json::Value> = req["nodes"]
+                            .as_array()
+                            .cloned()
+                            .unwrap_or_default();
+                        let n_nodes = nodes.len() as u32;
+                        recorded_srv
+                            .lock()
+                            .unwrap()
+                            .push(RecordedCommit { changed_files, nodes });
+                        serde_json::json!({
+                            "requestId": request_id,
+                            "delta": { "nodesAdded": n_nodes, "nodesRemoved": 0u32,
+                                       "edgesAdded": 0u32, "edgesRemoved": 0u32 },
+                        })
+                    }
+                    other => serde_json::json!({
+                        "requestId": request_id,
+                        "error": format!("recording server does not implement {other}"),
+                        "code": "E-TEST-UNIMPLEMENTED",
+                    }),
+                };
+                let payload = rmp_serde::to_vec_named(&resp).expect("encode response");
+                let len = (payload.len() as u32).to_be_bytes();
+                if stream.write_all(&len).await.is_err() || stream.write_all(&payload).await.is_err() {
+                    return;
+                }
+                let _ = stream.flush().await;
+            }
+        });
+        (sock, recorded)
+    }
+
+    /// Loop-1 — the GO module-path fact's self-healing lifecycle
+    /// ([`commit_go_module_fact`]). The fact's staleness was the bug: it rode an
+    /// EMPTY changed-file, and the removal case skipped the commit entirely, so a
+    /// removed or renamed go.mod left a stale `language="go"` WORKSPACE_PACKAGE
+    /// node — letting `go_imports` AND `go_imports_nomod` both fire.
+    ///
+    /// The fix: ALWAYS commit on the synthetic changed-file `go.mod`, so the
+    /// server's per-file deletion phase tombstones the prior fact every run.
+    /// This asserts the orchestrator's WIRE CONTRACT (the deletion itself is the
+    /// server's job, exercised by its own tests): every call carries
+    /// `changedFiles == ["go.mod"]`, the happy path carries exactly one
+    /// `language="go"` WORKSPACE_PACKAGE node, a rename carries the NEW path (the
+    /// old node is left to the file-deletion phase, never re-added), and removal
+    /// carries ZERO nodes (pure tombstone) — the latter two are what a bare
+    /// `if let Some` commit could never express.
+    #[tokio::test]
+    async fn go_module_fact_self_heals_on_rename_and_removal() {
+        let (sock, recorded) = spawn_recording_rfdb_server();
+        let mut rfdb = rfdb::RfdbClient::connect(&sock).await.expect("connect recording server");
+
+        // Run 1 — happy path: go.mod present, module path A.
+        commit_go_module_fact(&mut rfdb, Some("github.com/acme/old"), "/proj", "github.com/acme/old", 1)
+            .await
+            .expect("happy-path commit");
+        // Run 2 — RENAME: same go.mod, new module path B.
+        commit_go_module_fact(&mut rfdb, Some("github.com/acme/new"), "/proj", "github.com/acme/old", 2)
+            .await
+            .expect("rename commit");
+        // Run 3 — REMOVAL: go.mod gone / unparsable → None.
+        commit_go_module_fact(&mut rfdb, None, "/proj", "github.com/acme/old", 3)
+            .await
+            .expect("removal commit");
+
+        let commits = recorded.lock().unwrap().clone();
+        assert_eq!(commits.len(), 3, "one commit fired per run — removal is NOT skipped");
+
+        // EVERY run rides the synthetic changed-file `go.mod` so the server's
+        // deletion phase tombstones the prior generation's fact before re-add.
+        for (i, c) in commits.iter().enumerate() {
+            assert_eq!(
+                c.changed_files,
+                vec!["go.mod".to_string()],
+                "run {} must declare go.mod as the changed-file (else stale fact survives)",
+                i + 1
+            );
+        }
+
+        // Helper: assert a commit carries exactly one language="go"
+        // WORKSPACE_PACKAGE node with the given module path as its name.
+        let assert_single_go_fact = |c: &RecordedCommit, expected_name: &str, run: &str| {
+            assert_eq!(c.nodes.len(), 1, "{run}: exactly one fact node");
+            let n = &c.nodes[0];
+            assert_eq!(n["nodeType"], "WORKSPACE_PACKAGE", "{run}: node type");
+            assert_eq!(n["name"], expected_name, "{run}: module path is the first-class name");
+            assert_eq!(n["file"], "go.mod", "{run}: declaring file");
+            let meta: serde_json::Value =
+                serde_json::from_str(n["metadata"].as_str().expect("metadata string"))
+                    .expect("metadata json");
+            assert_eq!(meta["language"], "go", "{run}: go discriminator on metadata");
+        };
+
+        // Happy path: exactly one fact, the OLD module path.
+        assert_single_go_fact(&commits[0], "github.com/acme/old", "happy-path");
+
+        // Rename: exactly one fact, the NEW module path. The old fact's
+        // semantic id differs (id embeds the module path), so without the
+        // go.mod changed-file the old node would linger; the deletion phase on
+        // `go.mod` is what reaps it. Here we assert the new fact is the only one
+        // committed (the orchestrator never re-emits the old name).
+        assert_single_go_fact(&commits[1], "github.com/acme/new", "rename");
+        let old_id = analyzer::go_module_workspace_fact(
+            "github.com/acme/old", "/proj", "github.com/acme/old",
+        ).id;
+        let new_id = commits[1].nodes[0]["id"].as_str().unwrap();
+        assert_ne!(old_id, new_id, "rename changes the node id — old must be tombstoned, not upserted");
+
+        // Removal: ZERO nodes — a pure tombstone commit. With no fact present,
+        // the changed-file `go.mod` still fires the deletion phase, so the
+        // stale fact from a prior run is removed and the `nomod` variant can
+        // run cleanly without `go_imports` also matching a ghost fact.
+        assert!(
+            commits[2].nodes.is_empty(),
+            "removal commits no node (pure tombstone via the go.mod changed-file)"
+        );
+
+        let _ = std::fs::remove_file(&sock);
+    }
+
+    /// Wave 6 fail-fast: against a server whose Hello does NOT advertise
+    /// `datalogDerive`, analyze must refuse with an actionable error
+    /// (upgrade the binary / un-set RFDB_DERIVE_ENGINE=off) — there is no legacy
+    /// fallback left to run. With the capability, the gate passes.
+    #[tokio::test]
+    async fn analyze_fails_fast_without_derive_capability() {
+        // No capability → clear, actionable refusal.
+        let sock = spawn_fake_rfdb_server(vec!["somethingElse".to_string()], vec![]);
+        let client = rfdb::RfdbClient::connect(&sock).await.expect("connect fake server");
+        assert!(!client.supports_derive_materialize());
+        let err = require_derive_capability(&client, &sock)
+            .expect_err("gate must refuse a server without the derive capability");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("datalogDerive"), "names the missing capability: {msg}");
+        assert!(msg.contains("Upgrade the rfdb-server binary"), "actionable: {msg}");
+        assert!(msg.contains("RFDB_DERIVE_ENGINE=off"), "names the kill switch: {msg}");
+        assert!(msg.contains("fake-rfdb-test"), "names the server version: {msg}");
+        let _ = std::fs::remove_file(&sock);
+
+        // With the capability → the gate passes.
+        let sock2 = spawn_fake_rfdb_server(vec!["datalogDerive".to_string()], vec![]);
+        let client2 = rfdb::RfdbClient::connect(&sock2).await.expect("connect fake server");
+        assert!(client2.supports_derive_materialize());
+        require_derive_capability(&client2, &sock2).expect("derive-capable server passes the gate");
+        let _ = std::fs::remove_file(&sock2);
+    }
+
+    /// Wave 6 failure policy, end-to-end through the production pack loop: a pack
+    /// forced to fail (fake server errors on it) makes `run_stdlib_rule_packs`
+    /// return Err naming the pack and its owned slice — while the remaining packs
+    /// still ran (the fake server saw materialize requests after the failing one;
+    /// proven by a LATER pack also being forced to fail and appearing in the
+    /// summary too). A fully-green run returns Ok.
+    #[tokio::test]
+    async fn pack_failure_fails_the_run_with_a_loud_summary() {
+        let features = vec!["datalogDerive".to_string()];
+
+        // Force an EARLY pack and a LATE pack to fail: both must appear in the
+        // summary, proving the loop continued past the first failure.
+        let sock = spawn_fake_rfdb_server(
+            features.clone(),
+            vec!["@stdlib/js_local_refs".to_string(), "@stdlib/axum_routes".to_string()],
+        );
+        let mut client = rfdb::RfdbClient::connect(&sock).await.expect("connect fake server");
+        let err = run_stdlib_rule_packs(&mut client, None, 0, false)
+            .await
+            .expect_err("a failed pack must fail the phase");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("@stdlib/js_local_refs"), "early failed pack named: {msg}");
+        assert!(msg.contains("@stdlib/axum_routes"), "late failed pack named — loop continued: {msg}");
+        assert!(msg.contains("axum ROUTES_TO"), "owned slice named: {msg}");
+        assert!(msg.contains("forced test failure"), "server error surfaced: {msg}");
+        let _ = std::fs::remove_file(&sock);
+
+        // All packs green → Ok.
+        let sock2 = spawn_fake_rfdb_server(features, vec![]);
+        let mut client2 = rfdb::RfdbClient::connect(&sock2).await.expect("connect fake server");
+        run_stdlib_rule_packs(&mut client2, None, 0, false)
+            .await
+            .expect("green pack phase passes");
+        let _ = std::fs::remove_file(&sock2);
+    }
+
+    /// Go P3 — the pack-VARIANT selection, end-to-end through the production
+    /// pack loop: `@stdlib/go_imports_nomod` (the no-go.mod suffix fallback)
+    /// runs ONLY when `go_nomod_fallback` is true. Proven via the fake-server
+    /// failure mechanism: the variant is FORCED to fail, so its presence in
+    /// the run is observable — skipped (Ok) when go.mod resolved, run (Err
+    /// naming it) when it did not.
+    #[tokio::test]
+    async fn go_imports_nomod_variant_is_selected_by_the_go_nomod_flag() {
+        let features = vec!["datalogDerive".to_string()];
+
+        // go.mod resolved (or no go files) → the variant must be SKIPPED:
+        // even though the fake server would fail it, the phase is green.
+        let sock = spawn_fake_rfdb_server(
+            features.clone(),
+            vec!["@stdlib/go_imports_nomod".to_string()],
+        );
+        let mut client = rfdb::RfdbClient::connect(&sock).await.expect("connect fake server");
+        run_stdlib_rule_packs(&mut client, None, 0, false)
+            .await
+            .expect("variant skipped when go.mod resolved — phase green");
+        let _ = std::fs::remove_file(&sock);
+
+        // go files present + no go.mod → the variant RUNS (and here fails,
+        // proving it was selected and that its owned slice is named).
+        let sock2 = spawn_fake_rfdb_server(
+            features,
+            vec!["@stdlib/go_imports_nomod".to_string()],
+        );
+        let mut client2 = rfdb::RfdbClient::connect(&sock2).await.expect("connect fake server");
+        let err = run_stdlib_rule_packs(&mut client2, None, 0, true)
+            .await
+            .expect_err("variant selected without go.mod — forced failure surfaces");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("@stdlib/go_imports_nomod"), "variant named: {msg}");
+        assert!(msg.contains("suffix-fallback"), "owned slice named: {msg}");
+        let _ = std::fs::remove_file(&sock2);
+    }
+
+    /// Wave 3c: production iterates THIS crate's `STDLIB_RULE_PACKS`, not the
+    /// server-side registry — and with legacy import-resolution gated the order is
+    /// load-bearing (producers before consumers/negators) while pack failures are
+    /// log-and-continue, so a silent reorder (e.g. depends before
+    /// js_import_bindings) under-derives DEPENDS_ON with zero signal. Pin the
+    /// orchestrator list against rfdb's `STDLIB_PACKS` registry order, read at
+    /// compile time from the server source (a moved/renamed registry file fails
+    /// the build; a reorder on either side fails this test).
+    #[test]
+    fn stdlib_rule_packs_match_rfdb_registry_order() {
+        let registry_src = include_str!("../../rfdb-server/src/derive/stdlib.rs");
+
+        // Extract pack names, in declaration order, from the const body: entries
+        // are lines of the form `("name", NAME_DL),`; `//` comment lines never
+        // start with `("` and are skipped.
+        let body = registry_src
+            .split_once("pub const STDLIB_PACKS")
+            .expect("rfdb stdlib.rs must declare `pub const STDLIB_PACKS`")
+            .1;
+        let body = body
+            .split_once("];")
+            .expect("STDLIB_PACKS must be terminated with `];`")
+            .0;
+        let registry_order: Vec<&str> = body
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with("(\""))
+            .map(|line| {
+                line.trim_start_matches("(\"")
+                    .split_once('"')
+                    .expect("pack entry must close its name quote")
+                    .0
+            })
+            .collect();
+        assert!(
+            registry_order.len() >= 10,
+            "parsed only {} pack names — STDLIB_PACKS layout changed; fix this parser, \
+             do not weaken the pin",
+            registry_order.len()
+        );
+
+        let orchestrator_order: Vec<&str> = STDLIB_RULE_PACKS
+            .iter()
+            .map(|pack| {
+                pack.strip_prefix("@stdlib/")
+                    .expect("every orchestrator pack name is @stdlib/-prefixed")
+            })
+            .collect();
+
+        assert_eq!(
+            orchestrator_order, registry_order,
+            "STDLIB_RULE_PACKS (orchestrator) must match rfdb's STDLIB_PACKS registry \
+             order exactly — see the canonical-order doc comment at the const"
+        );
     }
 }

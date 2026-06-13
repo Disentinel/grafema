@@ -42,6 +42,7 @@ pub mod storage;
 pub mod storage_v2;
 pub mod error;
 pub mod datalog;
+pub mod derive;
 pub mod cypher;
 pub mod database_manager;
 pub mod session;

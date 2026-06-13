@@ -1,0 +1,128 @@
+% js_runtime_globals_nodes.dl — node half of the in-engine replacement for the
+% legacy `runtime-call-globals` second-pass resolve step (orchestrator
+% main.rs second_pass_cmds → grafema-resolve Main.hs dispatch :261 →
+% Grafema.RuntimeGlobals.resolveAll with jsCallStrategy, Main.hs:116-124):
+% GLOBAL_DEFINITION node minting for JS CALL nodes that name a runtime/builtin
+% callable from the effects-db YAML registry. The EDGE half (CALLS, stamped
+% resolvedVia="runtime-globals" globalCategory="ecmascript") lives in
+% js_runtime_globals_edges.dl — the js_builtins two-pack split: a @materialize
+% edge endpoint must be a committed node-ID column, so the edges pack runs
+% strictly AFTER this one and joins these nodes as committed EDB.
+%
+% THE GROUND FACTS (rtg_key/rtg_eff) are PREPENDED at compile time from
+% js_runtime_globals_facts.dl (stdlib.rs concat! — regenerate with
+% scripts/generate-runtime-globals-facts.mjs when effects-db changes). They
+% mirror the SymbolDB flatten (RuntimeGlobals.hs:80-167): per module key
+% "node:fs" → modName "fs" (last ":"-segment), per fn key both the BARE key
+% (= seName, verbatim) and the QUALIFIED "mod.fn" key map to the entry. The
+% db is the union of ALL runtimes/ + packages/ yamls — a JS call named "len"
+% legitimately matches python.yaml's entry; that IS the legacy behavior (one
+% merged SymbolDB, loadEffectsDB Main.hs:128-133).
+%
+% LEGACY ALGORITHM REPRODUCED (resolveAll :294-304 / resolveOne :274-288):
+%   1. candidates = allSuffixes "." name (:197-200) — the dot-boundary suffix
+%      chain, longest first;
+%   2. skip locally-resolved calls (isLocallyResolved :203-208): (file, name)
+%      or (file, lastSegment) names a same-file JS FUNCTION;
+%   3. firstMatch (:219-233) = the LONGEST matching suffix wins — encoded as
+%      shadowed-by-a-longer-match negation (any two matching suffixes of one
+%      name are dot-suffix-comparable, so longest ≡ not-shadowed);
+%   4. matched entry mints GLOBAL_DEFINITION sid "GLOBAL::"<seName>
+%      (mkGlobalNode :236-255; byte-identical to the legacy convention —
+%      REQUIRED for dedup against the still-ON REFERENCE-side legacy step
+%      and against hybrid graphs).
+%
+% NUMBERED DELTAS vs the resolver (everything not listed is exact):
+%   DELTA 1 (metadata repr): `effects` is projected as a comma-joined STRING
+%     ("IO,MUTATION"); the legacy node carried a JSON array (MetaList,
+%     Hs:255). Present nodes are never rewritten, so the delta is visible
+%     only on nodes first minted by this pack. KNOWN CONSUMER: trace_effects
+%     (packages/util/src/queries/traceEffects.ts GLOBAL_DEFINITION metadata
+%     path) accepts BOTH shapes — array (legacy) and comma-joined string
+%     (this pack); pinned by test/unit/trace-effects.test.js
+%     "pack-minted node (comma-joined effects string)" cases.
+%   DELTA 2 (node surface): pack-minted nodes have no `exported` flag
+%     (legacy gnExported=True, Hs:246) — same recorded loss as
+%     js_builtins_nodes DELTA 2; no known consumer reads it.
+%   DELTA 3 (effects winner): for a seName reachable through entries with
+%     DIFFERENT effects lists (135 effects-only key collisions), the legacy
+%     node carried whichever entry matched FIRST in node-stream order
+%     (nondeterministic); the facts pin the BARE entry's effects
+%     (deterministic). seName itself is collision-invariant except the 16
+%     bare-vs-qualified conflicts, resolved bare-wins — pinned by the live
+%     oracle (production minted GLOBAL::process.exit with 41 CALLS edges,
+%     the rust.yaml bare entry, NOT GLOBAL::exit).
+%   DELTA 4 (suffix chain on consecutive dots): a name like "a..b" loses the
+%     ".b" candidate (last_segment refuses an empty segment); vacuous — no
+%     db key starts with ".".
+%   DELTA 5 (colonVariant): firstMatch's "."→"::" retry (:226-233) is
+%     omitted; vacuous — no db key contains "::" (generator-checked), so the
+%     retry can never hit.
+%   DELTA 6 (file gate): the legacy gate was the orchestrator's
+%     detect_language == JavaScript stream filter — reproduced as the
+%     8-extension clause set on CALL and FUNCTION files (js_builtins_nodes
+%     DELTA 4 precedent).
+%
+% MAINTAIN ENVELOPE: negation + node minting ⇒ scratch floor (accepted).
+%
+% ORDERING (PRODUCER): MUST run before js_runtime_globals_edges (which joins
+% these nodes as committed EDB). mode = "exclusive" is PROVENANCE-SCOPED:
+% only nodes stamped with THIS rule's _source are owned/retracted; the legacy
+% resolver's identically-sid'd nodes are foreign and never touched.
+
+% ── 8-extension JS gates (DELTA 6) ──────────────────────────────────────────
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".js"), attr(C, "name", N), neq(N, "").
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".jsx"), attr(C, "name", N), neq(N, "").
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".ts"), attr(C, "name", N), neq(N, "").
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".tsx"), attr(C, "name", N), neq(N, "").
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".mjs"), attr(C, "name", N), neq(N, "").
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".cjs"), attr(C, "name", N), neq(N, "").
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".mts"), attr(C, "name", N), neq(N, "").
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".cts"), attr(C, "name", N), neq(N, "").
+
+js_fn(F, N) :- node(D, "FUNCTION"), attr(D, "file", F), ends_with(F, ".js"), attr(D, "name", N), neq(N, "").
+js_fn(F, N) :- node(D, "FUNCTION"), attr(D, "file", F), ends_with(F, ".jsx"), attr(D, "name", N), neq(N, "").
+js_fn(F, N) :- node(D, "FUNCTION"), attr(D, "file", F), ends_with(F, ".ts"), attr(D, "name", N), neq(N, "").
+js_fn(F, N) :- node(D, "FUNCTION"), attr(D, "file", F), ends_with(F, ".tsx"), attr(D, "name", N), neq(N, "").
+js_fn(F, N) :- node(D, "FUNCTION"), attr(D, "file", F), ends_with(F, ".mjs"), attr(D, "name", N), neq(N, "").
+js_fn(F, N) :- node(D, "FUNCTION"), attr(D, "file", F), ends_with(F, ".cjs"), attr(D, "name", N), neq(N, "").
+js_fn(F, N) :- node(D, "FUNCTION"), attr(D, "file", F), ends_with(F, ".mts"), attr(D, "name", N), neq(N, "").
+js_fn(F, N) :- node(D, "FUNCTION"), attr(D, "file", F), ends_with(F, ".cts"), attr(D, "name", N), neq(N, "").
+
+% ── Local-resolution skip (isLocallyResolved :203-208): same-file FUNCTION by
+%    the full name, or by the last dot-segment (method_suffix: no row for a
+%    dotless name — the legacy `seg /= name` guard, exact). ─────────────────
+loc_res(C) :- jcall(C, F, N), js_fn(F, N).
+loc_res(C) :- jcall(C, F, N), method_suffix(N, Seg), js_fn(F, Seg).
+
+cand(C, N) :- jcall(C, _, N), \+ loc_res(C).
+
+% ── The suffix chain (allSuffixes :197-200): dot-boundary prefixes derived by
+%    shrinking from the right (the js_module_imports spec_pfx idiom), suffix =
+%    name minus "<prefix>." ────────────────────────────────────────────────
+dpfx(C, D) :- cand(C, N), last_segment(N, ".", L), concat(".", L, T), strip_suffix(N, T, D).
+dpfx(C, D) :- dpfx(C, P), last_segment(P, ".", L), concat(".", L, T), strip_suffix(P, T, D).
+
+sfx(C, N) :- cand(C, N).
+sfx(C, S) :- cand(C, N), dpfx(C, D), concat(D, ".", DP), strip_prefix(N, DP, S), neq(S, "").
+
+% ── firstMatch (:219-233) = longest matching suffix: any two matching
+%    suffixes of one name are comparable (the shorter IS a dot-suffix of the
+%    longer), so the winner is the un-shadowed one. ─────────────────────────
+msfx(C, S) :- sfx(C, S), rtg_key(S, _).
+msh(C, S) :- msfx(C, S), msfx(C, S2), concat(".", S, T), ends_with(S2, T).
+win(C, G) :- msfx(C, S), \+ msh(C, S), rtg_key(S, G).
+
+% ── The minted node set: one GLOBAL_DEFINITION per matched seName
+%    (mkGlobalNode :236-255; the seen-set dedup :284-287 is set semantics).
+%    effectsMeta is omitted when empty (:252-255) — two heads. ──────────────
+matched(GN) :- win(_, GN).
+has_eff(GN) :- matched(GN), rtg_eff(GN, _).
+
+@materialize_node(node_type = "GLOBAL_DEFINITION", mode = "exclusive", meta(category, source, effects))
+rtg_node_eff(Sid, GN, "<runtime/js>", "ecmascript", "effects-db", Eff) :-
+    rtg_eff(GN, Eff), matched(GN), concat("GLOBAL::", GN, Sid).
+
+@materialize_node(node_type = "GLOBAL_DEFINITION", mode = "exclusive", meta(category, source))
+rtg_node_plain(Sid, GN, "<runtime/js>", "ecmascript", "effects-db") :-
+    matched(GN), \+ has_eff(GN), concat("GLOBAL::", GN, Sid).

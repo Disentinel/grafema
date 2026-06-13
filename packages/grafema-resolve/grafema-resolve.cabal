@@ -3,22 +3,19 @@ name:          grafema-resolve
 version:       0.1.0
 synopsis:      Cross-file resolution plugins for Grafema
 
+-- Wave 6 (resolve→derive migration): the eight legacy resolve modules
+-- (ImportResolution, Builtins, CrossFileCalls, SameFileCalls, PropertyAccess,
+-- JsLocalRefs, JsThisMethodCalls, ClassInheritance + the shared ResolveUtil)
+-- were replaced by derive stdlib rule packs and DELETED. The remaining
+-- daemon serves only the runtime-globals step (Grafema.RuntimeGlobals from
+-- grafema-common). The test suite went with the deleted modules — it covered
+-- nothing else.
+
 executable grafema-resolve
   default-language: Haskell2010
   main-is: Main.hs
   hs-source-dirs: src
   ghc-options: -Wall -Wno-name-shadowing
-
-  other-modules:
-    ImportResolution
-    Builtins
-    CrossFileCalls
-    SameFileCalls
-    PropertyAccess
-    JsLocalRefs
-    JsThisMethodCalls
-    ClassInheritance
-    ResolveUtil
 
   build-depends:
     base                 >= 4.17 && < 5,
@@ -30,29 +27,4 @@ executable grafema-resolve
     containers           >= 0.6  && < 0.8,
     msgpack              >= 1.0  && < 1.1,
     optparse-applicative >= 0.17 && < 0.19,
-    time                 >= 1.11 && < 1.15,
     vector               >= 0.13 && < 0.14
-
-test-suite grafema-resolve-test
-  type: exitcode-stdio-1.0
-  default-language: Haskell2010
-  main-is: Spec.hs
-  hs-source-dirs: test, src
-  ghc-options: -Wall -Wno-name-shadowing
-
-  other-modules:
-    PropertyAccess
-    ImportResolution
-    SameFileCalls
-    JsThisMethodCalls
-    ClassInheritance
-    CrossFileCalls
-    ResolveUtil
-
-  build-depends:
-    base                 >= 4.17 && < 5,
-    grafema-common       >= 0.1  && < 0.2,
-    aeson                >= 2.1  && < 2.3,
-    text                 >= 2.0  && < 2.2,
-    bytestring           >= 0.11 && < 0.13,
-    containers           >= 0.6  && < 0.8

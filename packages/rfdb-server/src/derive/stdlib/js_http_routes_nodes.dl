@@ -1,0 +1,241 @@
+% js_http_routes_nodes.dl — node half of the JS HTTP-route feature vertical
+% (Wave 14, REG-1115 slice): Express / Fastify / Koa(+koa-router/@koa/router) /
+% Hono route registrations -> `http:route` nodes + ROUTES_TO edges, driven by
+% the effects-db callable registry (the `ecb_*` ground facts PREPENDED at
+% compile time from effects_callable_facts.dl; regenerate via
+% scripts/generate-effects-callable-facts.mjs). This is the derive-pack
+% REPLACEMENT for the HTTP slice of
+% packages/util/src/enrichers/libraryCallbackEnricher.ts: the 6 framework
+% entries (express/fastify/koa/koa-router/@koa/router/hono) were retired
+% from its LIBRARY_NODE_TYPE map in this wave, making this pack the SOLE
+% default producer of js http:route. (The enricher writes via
+% addNodes/addEdges — leaving both on would mint two http:route nodes per
+% registration: enricher id anchors the wire semantic id, pack sid anchors
+% the decimal u128 — plus duplicate EXPOSES/HANDLES and duplicate
+% SpecedContracts downstream in httpRouteExtractor.)
+%
+% WHAT THE ENRICHER DOES (the semantics being reproduced): for every CALL
+% whose name ends in ".<method>" where <method> carries an
+% ENTRY_POINT_CALLBACK arg role in effects-db, walk the RECEIVER_CALL chain
+% to its origin, resolve the receiver name to an import source (direct
+% IMPORT_BINDING `metadata.source`, or a CONSTANT/VARIABLE whose
+% ASSIGNED_FROM initializer chain originates in a constructor of an imported
+% class), match the source against the registry library (exact or
+% "<lib>/<subpath>"), then mint one domain node per registration call with
+% EXPOSES (call -> node) and HANDLES (node -> callback) edges. All shapes
+% live-verified on the dogfood copy 2026-06-12: IMPORT_BINDING
+% metadata.source, CALL metadata.kind="new", RECEIVER_CALL chains,
+% PASSES_ARGUMENT metadata.index, LITERAL `name` = RAW source text including
+% quotes ("'overview'").
+%
+% NUMBERED DELTAS vs libraryCallbackEnricher (all deliberate):
+%   1. Name decomposition is the FULL dot-suffix-strip chain (try/dnext probe
+%      the origin name plus every "strip one trailing .segment" variant); the
+%      enricher picks exactly one split (before-last-dot for receivers,
+%      first-segment for constructor names). Superset: a false hit needs a
+%      same-file binding named exactly one of the variants AND sourced from a
+%      registry lib.
+%   2. Factory initializers resolve: `const app = express(); app.get(...)`.
+%      The enricher's initializer arm requires a kind="new" chain origin, so
+%      it MISSES the primary express/fastify idiom (live-traced in its source,
+%      libraryCallbackEnricher.ts:404); this pack accepts ANY CALL origin and
+%      resolves its callee name. Superset, deliberate.
+%   3. "<obj>"-rooted chained-namespace receivers (the DERIVES_FROM[callee] /
+%      READS_FROM[receiver] metadata.base walk, enricher :295-330) are NOT
+%      implemented — subset; that arm exists for `vscode.commands.*`, and
+%      vscode is not in this pack's lib set. Placeholder names resolve to
+%      nothing naturally (no binding is named "<obj>...").
+%   4. Node identity: sid = "<file>::http:route::<name>::<callIdDecimal>" —
+%      the enricher anchors on the call's WIRE semantic id; the engine attr
+%      surface exposes the BLAKE3 u128 id only. Same per-registration-call
+%      granularity, different anchor encoding.
+%   5. Node metadata: meta(library, method, anchorCall) where method = the
+%      BARE method name. The enricher stored the FIRST matching rule's
+%      methodFullName ("Application.get" vs "Router.get" — object-iteration-
+%      order-dependent); the bare name makes the row set order-free.
+%   6. The node name / route path comes from the ROUTE_PATH-role argument's
+%      LITERAL only, quotes stripped (single/double/backtick matching pairs).
+%      The enricher probed COMMAND_NAME/TOOL_SCHEMA roles then arg 0
+%      regardless of role and accepted ANY node's `name` as a label; those
+%      junk name sources are deliberately dropped -> "<unnamed-http-route>".
+%   7. ROUTES_TO (CALL -> handler, meta(method, path)) is NEW vs the enricher
+%      (which emitted only EXPOSES/HANDLES; the wave mandates the axum_routes
+%      vocabulary here). Verbs map registration names (del -> DELETE,
+%      all -> ALL); non-verb registrations (use/on/register/addHook/...)
+%      derive no ROUTES_TO. Unlike axum_routes the path is NOT gated on a
+%      leading "/" (express accepts "*", regex-like strings, etc.).
+%   8. Handler-required gate: a node is minted only when the
+%      ENTRY_POINT_CALLBACK-index PASSES_ARGUMENT edge exists — enricher
+%      parity (it skipped calls without callbackArgId; note this DIFFERS from
+%      axum_routes delta 4, which mints handler-less nodes).
+%   9. Chained multi-route registrations `r.get('/a',h1).post('/b',h2)`: the
+%      enricher labeled EVERY route in the chain from the chain ORIGIN's
+%      arg 0; this pack reads each call's OWN ROUTE_PATH argument.
+%      Correctness divergence, deliberate.
+%
+% Meta-identity caveat (shared with axum_routes): if one call resolves to two
+% registry libs (same-file bindings to two frameworks under one name), the
+% node row set carries both library values for one sid — which lands is
+% set-order-defined. Not observed in any real corpus.
+%
+% `http:route` nodes: mode = "exclusive" is PROVENANCE-SCOPED (the engine
+% contract): only nodes stamped with THIS rule's _source are owned — the
+% axum_routes pack's nodes and the legacy enricher's nodes are never touched,
+% while a route removed from the code retracts its node on the next run.
+% ROUTES_TO is PRE-REGISTERED SHARED vocabulary (packages/types/src/edges.ts
+% RouteEdge) ⇒ mode = "additive" is MANDATORY.
+%
+% MAINTAIN ENVELOPE: negation + node minting ⇒ scratch-only under maintain
+% (accepted, same class as every resolver pack).
+%
+% ORDERING: consumes analyzer EDB only (CALL/IMPORT_BINDING/CONSTANT/VARIABLE
+% nodes; RECEIVER_CALL/ASSIGNED_FROM/PASSES_ARGUMENT edges + metadata) — no
+% pack-produced inputs. Registered at the registry tail after axum_routes;
+% js_http_routes_edges joins the nodes minted HERE as committed EDB, so this
+% pack MUST run strictly before it (the js_builtins two-pack split).
+
+% ── Registry slice: the libs that mint http:route (LIBRARY_NODE_TYPE's HTTP
+%    subset, libraryCallbackEnricher.ts:36-48) ────────────────────────────────
+hr_lib("express").
+hr_lib("fastify").
+hr_lib("koa").
+hr_lib("koa-router").
+hr_lib("@koa/router").
+hr_lib("hono").
+
+% Registration-method-name -> HTTP verb (ROUTES_TO meta; delta 7).
+hr_verb("get", "GET").
+hr_verb("post", "POST").
+hr_verb("put", "PUT").
+hr_verb("delete", "DELETE").
+hr_verb("del", "DELETE").
+hr_verb("patch", "PATCH").
+hr_verb("head", "HEAD").
+hr_verb("options", "OPTIONS").
+hr_verb("all", "ALL").
+
+% ── Rules from the generated facts: callback + path argument indexes ────────
+hr_rule(Lib, M, CbIdx) :-
+    hr_lib(Lib),
+    ecb_method(Lib, Full, M),
+    ecb_arg(Lib, Full, CbIdx, "ENTRY_POINT_CALLBACK").
+hr_pathidx(Lib, M, PIdx) :-
+    hr_lib(Lib),
+    ecb_method(Lib, Full, M),
+    ecb_arg(Lib, Full, PIdx, "ROUTE_PATH").
+hr_m(M) :- hr_rule(_, M, _).
+
+% ── Candidate calls: ".<method>" suffix in a JS-family file (8-ext gate) ────
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".js"),  attr(C, "name", N).
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".jsx"), attr(C, "name", N).
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".ts"),  attr(C, "name", N).
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".tsx"), attr(C, "name", N).
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".mjs"), attr(C, "name", N).
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".cjs"), attr(C, "name", N).
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".mts"), attr(C, "name", N).
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".cts"), attr(C, "name", N).
+
+% Two-step suffix gate: the builtin needs N bound, so the suffix rule is
+% planned off jcall alone; the registry gate joins the derived output
+% (the greedy planner would otherwise lead with the tiny hr_m relation
+% and strand method_suffix with both arguments free).
+msfx(C, F, M) :- jcall(C, F, N), method_suffix(N, M).
+cand(C, F, M) :- msfx(C, F, M), hr_m(M).
+
+% ── Receiver-chain machinery (RECEIVER_CALL closure; EDB-negation only) ─────
+rsrc(X)     :- edge(X, _, "RECEIVER_CALL").
+rpath(A, B) :- edge(A, B, "RECEIVER_CALL").
+rpath(A, B) :- rpath(A, X), edge(X, B, "RECEIVER_CALL").
+rorig(A, B) :- rpath(A, B), \+ rsrc(B).
+
+corig(C, O) :- cand(C, _, _), rorig(C, O).
+corig(C, C) :- cand(C, _, _), \+ rsrc(C).
+
+% ── Name variants probed at the call site (delta 1) ─────────────────────────
+try(C, F, N) :- corig(C, O), attr(O, "name", N), attr(O, "file", F).
+try(C, F, R) :- try(C, F, N), method_suffix(N, S), concat(".", S, DS), strip_suffix(N, DS, R).
+
+% ── Need-set-driven binding resolution (mutually recursive with the
+%    initializer hop — the enricher's bounded recursion as a fixpoint) ───────
+want(F, N) :- try(_, F, N).
+want(F, N) :- dnext(F, _, N).
+
+bnd(F, N, Src) :-
+    want(F, N),
+    node(B, "IMPORT_BINDING"), attr(B, "file", F), attr(B, "name", N),
+    node_attr(B, "source", Src).
+
+% const/var initializer hop: `const app = express()` / `= new Hono()` /
+% `= new Router().use(...)` — chain origin's callee name (+ variants) is the
+% next name to resolve (deltas 1, 2).
+dinit(F, N, I) :- want(F, N), node(D, "CONSTANT"), attr(D, "file", F), attr(D, "name", N), edge(D, I, "ASSIGNED_FROM"), node(I, "CALL").
+dinit(F, N, I) :- want(F, N), node(D, "VARIABLE"), attr(D, "file", F), attr(D, "name", N), edge(D, I, "ASSIGNED_FROM"), node(I, "CALL").
+dorig(F, N, O) :- dinit(F, N, I), rorig(I, O).
+dorig(F, N, I) :- dinit(F, N, I), \+ rsrc(I).
+dnext(F, N, ON) :- dorig(F, N, O), attr(O, "name", ON).
+dnext(F, N, R)  :- dnext(F, N, ON), method_suffix(ON, S), concat(".", S, DS), strip_suffix(ON, DS, R).
+
+src_of(F, N, Src) :- bnd(F, N, Src).
+src_of(F, N, Src) :- dnext(F, N, N2), src_of(F, N2, Src).
+
+res(C, Src) :- try(C, F, N), src_of(F, N, Src).
+
+% Library match: exact, or subpath import "<lib>/..." (enricher :114-117).
+% Subpath matching is the segment-shrink idiom (cf. js_runtime_globals dpfx):
+% every whole-"/"-segment prefix of the source is derived, then membership-
+% joined against hr_lib — the trailing-"/" boundary the enricher's
+% startsWith(lib + "/") enforces falls out of shrinking BY segments
+% ("@foo/barzooka" never shrinks to "@foo/bar").
+spfx(C, S) :- res(C, S).
+spfx(C, P) :- spfx(C, S), last_segment(S, "/", L), concat("/", L, T), strip_suffix(S, T, P).
+mlib(C, Lib) :- spfx(C, Lib), hr_lib(Lib).
+
+% ── Routed calls: lib-matched + the callback argument EXISTS (delta 8) ──────
+routed(C, Lib, M, H) :-
+    cand(C, _, M),
+    mlib(C, Lib),
+    hr_rule(Lib, M, CbIdx),
+    edge(C, H, "PASSES_ARGUMENT"),
+    edge_attr(C, H, "PASSES_ARGUMENT", "index", CbIdx).
+rnode(C) :- routed(C, _, _, _).
+
+% ── Route path: the ROUTE_PATH-role argument's LITERAL, quotes stripped
+%    (delta 6; live shape: LITERAL name keeps raw source quoting) ────────────
+praw(C, Raw) :-
+    routed(C, Lib, M, _),
+    hr_pathidx(Lib, M, PIdx),
+    edge(C, P, "PASSES_ARGUMENT"),
+    edge_attr(C, P, "PASSES_ARGUMENT", "index", PIdx),
+    node(P, "LITERAL"),
+    attr(P, "name", Raw).
+
+sq(C) :- praw(C, Raw), starts_with(Raw, "'").
+dq(C) :- praw(C, Raw), starts_with(Raw, "\"").
+bq(C) :- praw(C, Raw), starts_with(Raw, "`").
+pth(C, P)   :- praw(C, Raw), strip_prefix(Raw, "'", T),  strip_suffix(T, "'", P).
+pth(C, P)   :- praw(C, Raw), strip_prefix(Raw, "\"", T), strip_suffix(T, "\"", P).
+pth(C, P)   :- praw(C, Raw), strip_prefix(Raw, "`", T),  strip_suffix(T, "`", P).
+pth(C, Raw) :- praw(C, Raw), \+ sq(C), \+ dq(C), \+ bq(C).
+
+named(C) :- pth(C, _).
+nname(C, P) :- pth(C, P).
+nname(C, "<unnamed-http-route>") :- rnode(C), \+ named(C).
+
+% ── The materialized ROUTES_TO edge (verb methods with a path; delta 7) ─────
+@materialize(edge_type = "ROUTES_TO", mode = "additive", meta(method, path))
+http_routes_to(C, H, V, P) :-
+    routed(C, Lib, M, H),
+    hr_verb(M, V),
+    pth(C, P).
+
+% ── The materialized http:route NODE (deltas 4, 5, 8) ───────────────────────
+@materialize_node(node_type = "http:route", mode = "exclusive", meta(library, method, anchorCall))
+http_route_js(Sid, Name, F, Lib, M, Cid) :-
+    routed(C, Lib, M, _),
+    nname(C, Name),
+    attr(C, "file", F),
+    attr(C, "id", Cid),
+    concat(F, "::http:route::", S1),
+    concat(S1, Name, S2),
+    concat(S2, "::", S3),
+    concat(S3, Cid, Sid).

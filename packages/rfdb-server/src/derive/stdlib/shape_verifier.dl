@@ -1,0 +1,128 @@
+% shape_verifier.dl — in-engine replacement for plugins/shape-verifier.mjs
+% (the 60s-timeout N+1 IPC plugin → one bottom-up program).
+%
+% Flags dotted CALLs whose receiver's declared type (CLASS/INTERFACE, EXTENDS-closed)
+% lacks the called member, as SHAPE_VIOLATION edges CALL → type node PLUS one ISSUE
+% node per violating call (@materialize_node — the node half the plugin produced).
+% The violated method name rides on the edge via meta(method) and on the ISSUE node
+% via meta(method, receiverType).
+%
+% ORDERING CONTRACT: MUST run AFTER @stdlib/method_calls. The unresolved-call filter
+% below reads CALLS as EDB, so the calls method_calls resolves must already be
+% committed — running first would flag calls the resolver is about to resolve
+% (plugin parity: shape-verifier ran after method-call-resolver in the pipeline).
+% Unlike method_calls.dl, \+ edge(C,_,"CALLS") is stratifier-legal HERE because this
+% program does not materialize CALLS (no storage-level self-dependency).
+%
+% mode = "exclusive" is CORRECT: SHAPE_VIOLATION is a dedicated type owned solely by
+% this pack (zero other producers in the codebase), so a violation fixed in code (or
+% newly resolved) retracts on the next run.
+
+% A dotted CALL and its method-name suffix ("kb.queryNodes" -> "queryNodes").
+call_method(C, MName) :-
+    node(C, "CALL"),
+    attr(C, "name", FullName),
+    method_suffix(FullName, MName).
+
+% Plugin parity: only verify calls the resolver could not resolve.
+unresolved_call(C, MName) :-
+    call_method(C, MName),
+    \+ edge(C, _, "CALLS"),
+    \+ edge(C, _, "CALLS_REMOTE").
+
+% Receiver chain. PLUGIN PARITY: the PROPERTY_ACCESS path is a FALLBACK — the plugin
+% only consults it when the CALL has NO direct READS_FROM edge (shape-verifier.mjs:177
+% `if (readsFrom.length === 0)`). The \+ edge(C,_,"READS_FROM") guard reproduces that
+% ordering exactly; it is stratifier-clean because READS_FROM is not materialized by
+% this program. (Within the fallback the plugin takes the first PA with a READS_FROM;
+% set semantics union all PAs instead — order-independent, recorded delta.)
+receiver_var(C, V) :- node(C, "CALL"), edge(C, V, "READS_FROM").
+receiver_var(C, V) :-
+    node(C, "CALL"),
+    \+ edge(C, _, "READS_FROM"),
+    edge(C, PA, "DERIVES_FROM"),
+    node(PA, "PROPERTY_ACCESS"),
+    edge(PA, V, "READS_FROM").
+
+% Deref one REFERENCE hop to the declaration; identity otherwise. PLUGIN PARITY
+% (the rf2-undefined fallback, shape-verifier.mjs:191-196): a REFERENCE with NO
+% outgoing READS_FROM is itself the declaration — the plugin's `refEdges.find`
+% returning undefined leaves `node` as the REFERENCE, which is then checked for
+% INSTANCE_OF directly. The third rule reproduces that fallback (method_calls.dl
+% drops such receivers; this pack does not, because a missed deref here would both
+% suppress violations and remove shape_ok witnesses).
+receiver_decl(C, D) :- receiver_var(C, V), node(V, "REFERENCE"), edge(V, D, "READS_FROM").
+receiver_decl(C, D) :- receiver_var(C, D), \+ node(D, "REFERENCE").
+receiver_decl(C, V) :- receiver_var(C, V), node(V, "REFERENCE"), \+ edge(V, _, "READS_FROM").
+
+% Types whose shape the plugin indexed (a shape with zero members still counts).
+shape_known(T) :- node(T, "CLASS").
+shape_known(T) :- node(T, "INTERFACE").
+
+% Member names, EXTENDS-closed (the fixpoint subsumes the plugin's visited-set cycle
+% guard). Interfaces additionally contribute HAS_PROPERTY names.
+% RECORDED DELTA vs the plugin (deliberate widening, strictly more known members and
+% hence fewer false positives): the plugin follows only the FIRST EXTENDS edge per
+% level (`edges.find`, shape-verifier.mjs:51,164), never follows EXTENDS from
+% interfaces, and collects only HAS_METHOD (never HAS_PROPERTY) along the chain; this
+% closure follows ALL EXTENDS edges uniformly and carries interface ancestors'
+% HAS_PROPERTY names through the chain.
+member_name(T, MName) :- edge(T, M, "HAS_METHOD"), attr(M, "name", MName).
+member_name(T, MName) :- node(T, "INTERFACE"), edge(T, P, "HAS_PROPERTY"), attr(P, "name", MName).
+member_name(T, MName) :- edge(T, P, "EXTENDS"), member_name(P, MName).
+
+% The receiver's declared type, restricted to known shapes (the plugin's
+% classMethodIndex.get(...) miss → continue).
+receiver_shape(C, T) :- receiver_decl(C, D), edge(D, T, "INSTANCE_OF"), shape_known(T).
+
+% A call is shape-ok if ANY known receiver shape carries the member. RECORDED DELTA vs
+% the plugin: replaces the order-dependent first-INSTANCE_OF pick (shape-verifier.mjs
+% returns the FIRST receiver decl carrying INSTANCE_OF and silently skips when that
+% first target is not an indexed shape) — order-independent set semantics; in
+% multi-receiver corner cases this both SUPPRESSES and ADDS violations relative to
+% the plugin (NOT a strict subset).
+shape_ok(C) :- unresolved_call(C, MName), receiver_shape(C, T), member_name(T, MName).
+
+% The violation: CALL → type, with the missing method's name projected into the edge
+% metadata (meta(method) — head arity 3 = 2 endpoints + 1 meta column; MName is
+% functional in C via method_suffix, so the meta-identity caveat does not bite).
+@materialize(edge_type = "SHAPE_VIOLATION", mode = "exclusive", meta(method))
+shape_violation(C, T, MName) :-
+    unresolved_call(C, MName),
+    receiver_shape(C, T),
+    \+ member_name(T, MName),
+    \+ shape_ok(C).
+
+% The ISSUE node per violation — the node half of the plugin (shape-verifier.mjs:110-124).
+% Semantic id "issue::shape-violation::<decimal call id>" matches the plugin's
+% issue::shape-violation::<callId> convention (concat surfaces the bound CALL id as its
+% decimal u128 — deterministic, and the engine derives the node's u128 id from this
+% string by the production BLAKE3 convention, so a re-run of the plugin would collide
+% with = dedup against the same node). Name is the plugin's message verbatim:
+% "Method .<method> not found on <TypeName>".
+%
+% mode = "exclusive" is PROVENANCE-SCOPED for nodes (the engine contract, deliberately
+% unlike the type-wide edge exclusive): the owned set is ISSUE nodes whose
+% metadata._source equals THIS rule's hash — the orchestrator diagnostics phase's 18k+
+% ISSUE nodes carry a different _source and are never touched. A violation fixed in
+% code (or newly resolved) therefore retracts ITS ISSUE node on the next run without
+% disturbing any other producer's issues.
+%
+% RECORDED DELTAS vs the plugin's node (deliberate):
+%   - metadata: provenance is _source = <rule hash> + _generation (the engine
+%     convention) instead of _source = 'shape-verifier'; meta carries
+%     method + receiverType, while the plugin also stored severity/category/callName/
+%     line (all derivable from the CALL node the SHAPE_VIOLATION edge starts at — not
+%     duplicated here).
+%   - a call violating against MULTIPLE receiver types yields ONE node (the id is keyed
+%     on the call alone, exactly like the plugin's id) — which type's message/meta
+%     lands is set-order-defined (the plugin had the same last-write-wins collision).
+@materialize_node(node_type = "ISSUE", mode = "exclusive", meta(method, receiverType))
+shape_issue(Sid, Msg, File, MName, TName) :-
+    shape_violation(C, T, MName),
+    attr(C, "file", File),
+    attr(T, "name", TName),
+    concat("issue::shape-violation::", C, Sid),
+    concat("Method .", MName, Msg1),
+    concat(Msg1, " not found on ", Msg2),
+    concat(Msg2, TName, Msg).

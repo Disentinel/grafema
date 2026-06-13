@@ -2,13 +2,16 @@
 
 use std::collections::HashSet;
 
-/// A term in Datalog - variable, constant, or wildcard
+/// A term in Datalog - variable, constant, typed literal, or wildcard
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Term {
     /// Variable (starts with uppercase, e.g., X, Y, Queue)
     Var(String),
     /// Constant (string literal, e.g., "queue:publish")
     Const(String),
+    /// Typed numeric literal — a bare number in a rule (`0`, `3.14`), carrying its `Value`
+    /// directly so it is NOT conflated with a string const or a node id (spec §5).
+    Lit(crate::datalog::eval::Value),
     /// Wildcard (_) - matches anything, not captured
     Wildcard,
 }

@@ -74,7 +74,7 @@ export interface DataflowIndexCache {
   /**
    * Map<"file::receiverName", CALL node IDs> — method calls keyed by the
    * file + receiver-name pair. Built by traceForwardBFS for the method-call
-   * receiver heuristic when CALL→DERIVED_FROM→PA→READS_FROM edges are missing.
+   * receiver heuristic when CALL→DERIVES_FROM→PA→READS_FROM edges are missing.
    */
   callsByReceiver?: Map<string, string[]>;
   /**
@@ -327,7 +327,7 @@ export async function traceForwardBFS(
 
   /**
    * Build index of CALL nodes keyed by "file::receiverName".
-   * Used to find method calls on a declaration when CALL→DERIVED_FROM→PA→READS_FROM→REF
+   * Used to find method calls on a declaration when CALL→DERIVES_FROM→PA→READS_FROM→REF
    * edges are missing. CALL names encode the receiver: "db.getNode" → receiver "db".
    */
   async function getCallsByReceiver(): Promise<Map<string, string[]>> {
@@ -367,7 +367,7 @@ export async function traceForwardBFS(
         for (const ra of await db.getOutgoingEdges(ce.dst, ['RECEIVES_ARGUMENT'])) enq(ra.dst);
       }
       // Mutation on call result
-      for (const df of await db.getOutgoingEdges(pa.src, ['DERIVED_FROM'])) {
+      for (const df of await db.getOutgoingEdges(pa.src, ['DERIVES_FROM'])) {
         const dfN = await db.getNode(df.dst);
         if (dfN?.type === 'PROPERTY_ACCESS' && dfN.name && MUTATION_METHODS.has(dfN.name)) {
           for (const rf of await db.getOutgoingEdges(df.dst, ['READS_FROM'])) {
@@ -380,7 +380,7 @@ export async function traceForwardBFS(
     }
 
     // Chained calls: another CALL uses this as callee (fn()())
-    for (const df of await db.getIncomingEdges(callId, ['DERIVED_FROM'])) {
+    for (const df of await db.getIncomingEdges(callId, ['DERIVES_FROM'])) {
       const dfN = await db.getNode(df.src);
       if (dfN?.type === 'CALL') await enqueueCallConsumers(df.src);
     }
@@ -404,7 +404,7 @@ export async function traceForwardBFS(
       if (ceN?.type === 'FUNCTION') { hasStaticCallee = true; break; }
     }
     if (!hasStaticCallee) {
-      for (const df of await db.getOutgoingEdges(callId, ['DERIVED_FROM'])) {
+      for (const df of await db.getOutgoingEdges(callId, ['DERIVES_FROM'])) {
         const resolved = await resolveDynamicCallee(db, df.dst);
         if (resolved) {
           for (const ra of await db.getOutgoingEdges(resolved, ['RECEIVES_ARGUMENT'])) enq(ra.dst);
@@ -446,7 +446,7 @@ export async function traceForwardBFS(
         await enqueueCallConsumers(vc.src);
       }
     }
-    for (const df of await db.getIncomingEdges(fnId, ['DERIVED_FROM'])) {
+    for (const df of await db.getIncomingEdges(fnId, ['DERIVES_FROM'])) {
       const dfN = await db.getNode(df.src);
       if (dfN?.type === 'CALL') await enqueueCallConsumers(df.src);
     }
@@ -481,7 +481,7 @@ export async function traceForwardBFS(
     }
 
     // B. Mutation detection
-    for (const df of await db.getOutgoingEdges(callId, ['DERIVED_FROM'])) {
+    for (const df of await db.getOutgoingEdges(callId, ['DERIVES_FROM'])) {
       const dfN = await db.getNode(df.dst);
       if (dfN?.type === 'PROPERTY_ACCESS' && dfN.name && MUTATION_METHODS.has(dfN.name)) {
         for (const rf of await db.getOutgoingEdges(df.dst, ['READS_FROM'])) {
@@ -532,8 +532,8 @@ export async function traceForwardBFS(
         await enqueueClimb(se.src, 4);
       }
 
-      // 1e. DERIVED_FROM incoming on ref: EXPRESSION/CALL uses this ref
-      for (const df of await db.getIncomingEdges(refId, ['DERIVED_FROM'])) {
+      // 1e. DERIVES_FROM incoming on ref: EXPRESSION/CALL uses this ref
+      for (const df of await db.getIncomingEdges(refId, ['DERIVES_FROM'])) {
         const dfN = await db.getNode(df.src);
         if (dfN) {
           if (dfN.type === 'EXPRESSION') enq(df.src);
@@ -567,8 +567,8 @@ export async function traceForwardBFS(
         if (paN?.type === 'PROPERTY_ACCESS') enq(paRead.src);
       }
 
-      // 1j. DERIVED_FROM incoming (CALL consumers)
-      for (const df of await db.getIncomingEdges(refId, ['DERIVED_FROM'])) {
+      // 1j. DERIVES_FROM incoming (CALL consumers)
+      for (const df of await db.getIncomingEdges(refId, ['DERIVES_FROM'])) {
         const dfN = await db.getNode(df.src);
         if (dfN?.type === 'CALL') await enqueueCallConsumers(df.src);
       }
@@ -593,7 +593,7 @@ export async function traceForwardBFS(
     }
 
     // --- 2b. Method call receiver heuristic ---
-    // When graph lacks CALL→DERIVED_FROM→PA→READS_FROM→REF edges for method calls,
+    // When graph lacks CALL→DERIVES_FROM→PA→READS_FROM→REF edges for method calls,
     // use CALL naming convention ("db.getNode" → receiver "db") to find method calls
     // on this declaration and trace their consumers.
     if ((node.type === 'CONSTANT' || node.type === 'VARIABLE' || node.type === 'PARAMETER') && node.name && node.file) {
@@ -620,8 +620,8 @@ export async function traceForwardBFS(
       }
     }
 
-    // --- 4. DERIVED_FROM incoming on declaration ---
-    for (const df of await db.getIncomingEdges(declId, ['DERIVED_FROM'])) {
+    // --- 4. DERIVES_FROM incoming on declaration ---
+    for (const df of await db.getIncomingEdges(declId, ['DERIVES_FROM'])) {
       const dfN = await db.getNode(df.src);
       if (dfN?.type === 'CALL') await enqueueCallConsumers(df.src);
       else if (dfN?.type === 'EXPRESSION') enq(df.src);
@@ -748,7 +748,7 @@ export async function traceBackwardBFS(
         const argSrc = await resolveRef(db, pa.dst);
         enq(argSrc);
       }
-      for (const df of await db.getOutgoingEdges(nodeId, ['DERIVED_FROM'])) {
+      for (const df of await db.getOutgoingEdges(nodeId, ['DERIVES_FROM'])) {
         const dfN = await db.getNode(df.dst);
         if (dfN?.type === 'PROPERTY_ACCESS') {
           for (const rf of await db.getOutgoingEdges(df.dst, ['READS_FROM'])) {
@@ -757,7 +757,7 @@ export async function traceBackwardBFS(
           }
         }
       }
-      // 5b. Receiver heuristic: when CALL→DERIVED_FROM→PA→READS_FROM chain is missing,
+      // 5b. Receiver heuristic: when CALL→DERIVES_FROM→PA→READS_FROM chain is missing,
       // parse receiver name from CALL name ("db.getNode" → "db") and find its declaration.
       if (node.name?.includes('.')) {
         const dotIdx = node.name.indexOf('.');
@@ -838,8 +838,8 @@ export async function traceBackwardBFS(
       }
     }
 
-    // 10. DERIVED_FROM outgoing: trace expression operands
-    for (const df of await db.getOutgoingEdges(nodeId, ['DERIVED_FROM'])) {
+    // 10. DERIVES_FROM outgoing: trace expression operands
+    for (const df of await db.getOutgoingEdges(nodeId, ['DERIVES_FROM'])) {
       const resolved = await resolveRef(db, df.dst);
       enq(resolved);
     }

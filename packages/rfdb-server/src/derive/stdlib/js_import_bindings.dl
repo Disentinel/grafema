@@ -1,0 +1,227 @@
+% js_import_bindings.dl — in-engine replacement for the named/aliased/default
+% import-binding arms of the ImportResolution.hs resolver
+% (packages/grafema-resolve/src/ImportResolution.hs: resolveImport:279-298 →
+% resolveImportWithSource:301-321 → resolveFromFile:324-350 →
+% findMatchingExport:353-357): IMPORTS_FROM edges IMPORT_BINDING → export target.
+% Wave 2 — the arms Wave 1 deliberately HELD BACK (the binding_import
+% false-positive trap: matching by localName alone emits WRONG edges for
+% `import {foo as bar}` and `import Foo from './Foo'`). node_attr(B,
+% "importedName", IN) now distinguishes them: the analyzer stamps every binding
+% (named: the original exported name, Declarations.hs:499-510; default:
+% "default", :545; namespace: "*", :580).
+%
+% MODULE-PATH RESOLUTION IS HYBRID — no path kernel needed: the binding's parent
+% IMPORT (IMPORT -CONTAINS-> IMPORT_BINDING, Declarations.hs:514) carries the
+% LEGACY resolver's committed IMPORT -IMPORTS_FROM-> MODULE edge
+% (resolveModuleImports, ImportResolution.hs:526-552), and the MODULE's `file`
+% attr is the resolved target file. Both legacy paths run the same
+% resolveModulePath, so the file agrees with what the legacy binding arm used.
+%
+% ARMS:
+%   B1 named/aliased  `import {foo}` / `import {foo as bar}` — match the target
+%      file's exports by IN (the ORIGINAL exported name), NOT by localName.
+%   B2 default        `import Foo from './x'` — IN == "default" matches the
+%      EXPORT node named "default" (the resolver's own endpoint,
+%      ImportResolution.hs:125-126) or an `export { X as default }` binding.
+%   B3 namespace  `import * as X` (Wave 3c) — IN == "*" resolves to the parent
+%      IMPORT's MODULE through the b_mod seam (the legacy arm,
+%      ImportResolution.hs:316-319). Was excluded as pure overlap while the
+%      legacy producer stayed ON; legacy import-resolution is now gated.
+%      b_named still excludes "*" (B1/B2 match exports, not modules).
+%
+% EXPORT SIDE — exported_in, THREE clauses:
+%   1. EXPORT -EXPORTS-> declaration (the gnExported substitute, same shape +
+%      multi-declarator caveat as js_cross_file_calls), EXPORT_BINDING excluded;
+%   2. the default export = the EXPORT node itself under "default";
+%   3. NEW (node_attr unblock): EXPORT_BINDING entries by their EXPORTED name —
+%      node_attr(EB, "exportedName", N) is ALWAYS stamped (aliased or not,
+%      Declarations.hs:726-731), so `export { foo }` and `export { foo as bar }`
+%      now resolve with correct aliasing (the Wave-1b DELTA-4 subset closes for
+%      LOCAL export bindings). RE-EXPORT bindings (`export { x } from './y'`,
+%      source metadata present) stay EXCLUDED: the legacy resolver FOLLOWED the
+%      chain to the final declaration (handleExportEntry, Hs:363-386) and
+%      emitting the un-followed EXPORT_BINDING endpoint would be a wrong edge.
+%
+% IMPORTS_FROM is SHARED vocabulary ⇒ mode = "additive". The legacy binding
+% edges carry EMPTY metadata (emitImportsFrom, Hs:414-420) — no meta projected,
+% exact parity.
+%
+% NUMBERED DELTAS vs the resolver (everything not listed is exact):
+%   DELTA 1 (Wave 2b — re-export chains, PARTIALLY CLOSED): the binding now
+%     resolves through the visible() fixpoint (the in-pack port of
+%     handleExportEntry/tryStarReExports, ImportResolution.hs:363-407):
+%     named re-export EXPORT_BINDINGs are FOLLOWED (with local-name rebinding,
+%     Hs:373-386) and star re-exports recurse through their committed
+%     RE_EXPORTS edge (the legacy resolveStarReExports seam, Hs:563-606).
+%     The depth-10 cap and the visited set (Hs:84-85, :328-335) are subsumed
+%     by the set-semantics fixpoint (cycles converge; no cap needed).
+%     CLOSED (Wave 4): the formerly seam-less NAMED hop — no IMPORT node
+%     exists for `export { x } from './y'` (Declarations.hs:599-644 emits
+%     only the EXPORT_BINDING), so the hop used to resolve ONLY when the same
+%     file also imported the same specifier (the resolved_at arm) — is now
+%     covered by js_module_imports' eb_reexport_hop seam: the binding's OWN
+%     committed RE_EXPORTS → MODULE edge (the materialized handleExportEntry
+%     resolveModulePath winner, Hs:368-386), joined as the second reexp arm
+%     below. Both arms share one resolveModulePath winner where they overlap;
+%     the seam requires a MODULE node at the winner (js_module_imports
+%     DELTA 8, every analyzed file has one). Star hops were always covered
+%     (RE_EXPORTS is committed per star EXPORT).
+%   DELTA 1b (superset, set semantics — the two verdict-recorded preferences):
+%     the resolver probed stars only on a direct-match MISS (resolveFromFile,
+%     Hs:337-350) and took the FIRST of multiple star sources (Hs:404-407);
+%     visible() fires direct and star arms both, across ALL star sources —
+%     extra derivations where a name is reachable both ways.
+%   DELTA 2 (superset): duplicate same-name exports in one file — the
+%     resolver's findMatchingExport took the FIRST entry (Hs:353-357); set
+%     semantics derives an edge per candidate.
+%   DELTA 3 (existence-check nuance): the resolver checked ladder candidates
+%     against the export index (export-BEARING files); the hybrid seam requires
+%     the legacy IMPORT → MODULE edge instead — same resolveModulePath winner,
+%     plus a MODULE node (every analyzed file has one). Equal in practice;
+%     recorded for the differential.
+%   DELTA 4 (metadata/diagnostics): the resolver's stderr warnings (unresolvable
+%     module, missing importedName, cycle/depth caps) have no pack analog; the
+%     depth-10 cap and visited set are subsumed by the visible() fixpoint
+%     (DELTA 1) — a chain the resolver refused at depth 11 derives here.
+%   DELTA 5 (file gate): the resolver's effective gate was the orchestrator's
+%     detect_language == JavaScript stream filter (8 extensions) — the js_b
+%     clause set below (one clause per extension; a derived gate is
+%     planner-infeasible, see js_same_file_calls.dl ENCODING NOTES).
+%
+% MAINTAIN ENVELOPE: node_attr ⇒ maintain-incremental refuses this pack;
+% scratch floor (accepted).
+%
+% ORDERING (PRODUCER): this pack produces IMPORTS_FROM — the EDB seam consumed
+% by js_class_inheritance (cross-file arm), js_cross_file_calls,
+% js_property_access_ns and depends. It MUST run before those consumers, and
+% MUST run after js_module_imports (the b_mod / resolved_at / star_src seams
+% are its committed edges). Legacy import-resolution is gated (Wave 3c), so
+% this ordering IS load-bearing — depends moved after the IMPORTS_FROM
+% producers in both registries.
+
+% Every IMPORT_BINDING in a JS/TS file — the 8-extension gate (DELTA 5).
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".js").
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".jsx").
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".ts").
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".tsx").
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".mjs").
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".cjs").
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".mts").
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".cts").
+
+% The binding's resolved target FILE — through the parent IMPORT's legacy
+% IMPORTS_FROM → MODULE edge (the hybrid seam, see header).
+b_mod(B, TF) :-
+    js_b(B, F),
+    edge(I, B, "CONTAINS"), node(I, "IMPORT"),
+    edge(I, M, "IMPORTS_FROM"), node(M, "MODULE"), attr(M, "file", TF).
+
+% The importedName discriminator (the Wave-2 unblock). Namespace ("*") stays
+% the legacy producer's arm — excluded (see header).
+b_named(B, TF, IN) :-
+    b_mod(B, TF), node_attr(B, "importedName", IN), neq(IN, "*"), neq(IN, "").
+
+% ── A file's exports, by EXPORTED name ─────────────────────────────────────────
+
+% 1. Directly exported declarations: EXPORT -EXPORTS-> decl (EXPORT_BINDING
+%    handled separately with correct aliasing below).
+exported_in(TF, N, T) :-
+    node(E, "EXPORT"), attr(E, "file", TF),
+    edge(E, T, "EXPORTS"), \+ node(T, "EXPORT_BINDING"),
+    attr(T, "name", N), neq(N, "").
+% 2. The default export = the EXPORT node itself under the name "default"
+%    (the resolver's export-index entry shape, ImportResolution.hs:125-126).
+exported_in(TF, "default", E) :-
+    node(E, "EXPORT"), attr(E, "name", "default"), attr(E, "file", TF).
+% 3. LOCAL export bindings by exportedName (node_attr; always stamped,
+%    Declarations.hs:726-731). Re-export bindings excluded — DELTA 1.
+eb_reexport(EB) :- node(EB, "EXPORT_BINDING"), node_attr(EB, "source", S).
+exported_in(TF, N, EB) :-
+    node(EB, "EXPORT_BINDING"), attr(EB, "file", TF),
+    \+ eb_reexport(EB),
+    node_attr(EB, "exportedName", N), neq(N, "").
+% 4. gnExported declarations of the 8 legacy types (buildExportIndex class 3,
+%    ImportResolution.hs:137 — `__exported` is the stored metadata key, the
+%    js_module_imports exp_decl_file precedent). Wave 4: the legacy index
+%    resolved `export { X }` re-imports to the DECLARATION (live witness: the
+%    RFDBClient barrel hop landed on the CLASS, not the exported REFERENCE).
+%    Cost-gated by target_file (chain-reachable files only — the rs_macro ×3
+%    lesson: per-row metadata parses only where the chain can land).
+%    target_file is stratum-safe: b_named/reexp/star_src read committed EDB,
+%    never visible().
+target_file(TF) :- b_named(_, TF, _).
+target_file(TF) :- reexp(_, _, _, TF).
+target_file(TF) :- star_src(_, TF).
+% One typed scan per declaration type (NOT target_file-led: a small leading
+% generator turns each node() leg into per-row typed re-scans — 211 x 8 full
+% scans cost ~8.5s on the dogfood copy; one materialized scan + a hash join
+% against target_file is ~1s). node_attr stays AFTER the target_file join —
+% the metadata parse touches only chain-reachable files' declarations.
+exp_decl(D, TF, N) :- node(D, "FUNCTION"),   attr(D, "file", TF), attr(D, "name", N), neq(N, "").
+exp_decl(D, TF, N) :- node(D, "VARIABLE"),   attr(D, "file", TF), attr(D, "name", N), neq(N, "").
+exp_decl(D, TF, N) :- node(D, "CONSTANT"),   attr(D, "file", TF), attr(D, "name", N), neq(N, "").
+exp_decl(D, TF, N) :- node(D, "CLASS"),      attr(D, "file", TF), attr(D, "name", N), neq(N, "").
+exp_decl(D, TF, N) :- node(D, "INTERFACE"),  attr(D, "file", TF), attr(D, "name", N), neq(N, "").
+exp_decl(D, TF, N) :- node(D, "TYPE_ALIAS"), attr(D, "file", TF), attr(D, "name", N), neq(N, "").
+exp_decl(D, TF, N) :- node(D, "ENUM"),       attr(D, "file", TF), attr(D, "name", N), neq(N, "").
+exp_decl(D, TF, N) :- node(D, "NAMESPACE"),  attr(D, "file", TF), attr(D, "name", N), neq(N, "").
+exported_in(TF, N, D) :-
+    exp_decl(D, TF, N), target_file(TF), node_attr(D, "__exported", "true").
+
+% ── The re-export chain (Wave 2b): visible(TF, N, T) = name N is reachable
+%    among TF's exports, chain-collapsed to the FINAL node T ────────────────
+
+% A named re-export's target file: the re-exporting file's own legacy
+% IMPORT → MODULE edge where one exists (the bounded seam — DELTA 1).
+resolved_at(F, S, TF) :-
+    node(I, "IMPORT"), attr(I, "file", F), attr(I, "name", S),
+    edge(I, M, "IMPORTS_FROM"), node(M, "MODULE"), attr(M, "file", TF).
+
+% Named re-export step: `export { LN as EN } from S` in file F — follow into
+% TF2 under the LOCAL name (the Hs:373 rebinding; eb_reexport defined above).
+reexp(F, EN, LN, TF2) :-
+    node(EB, "EXPORT_BINDING"), attr(EB, "file", F), attr(EB, "name", LN), neq(LN, ""),
+    node_attr(EB, "source", S),
+    node_attr(EB, "exportedName", EN), neq(EN, ""),
+    resolved_at(F, S, TF2).
+% Wave 4 (closes DELTA 1): the binding's own committed RE_EXPORTS hop edge —
+% js_module_imports' eb_reexport_hop seam, the materialized handleExportEntry
+% resolveModulePath winner (Hs:368-386). Same winner as resolved_at where both
+% exist (one resolveModulePath); this arm also fires when NO same-file IMPORT
+% shares the specifier (the previously seam-less subset, −263 on the dogfood
+% copy). Set semantics unions the arms.
+reexp(F, EN, LN, TF2) :-
+    node(EB, "EXPORT_BINDING"), attr(EB, "file", F), attr(EB, "name", LN), neq(LN, ""),
+    node_attr(EB, "exportedName", EN), neq(EN, ""),
+    edge(EB, M2, "RE_EXPORTS"), node(M2, "MODULE"), attr(M2, "file", TF2).
+
+% Star re-export step: `export * from S` in F — the star EXPORT's committed
+% RE_EXPORTS edge IS the resolved target module (Hs:563-606 seam).
+star_src(F, TF2) :-
+    node(E, "EXPORT"), attr(E, "file", F), attr(E, "name", N), starts_with(N, "*:"),
+    edge(E, M, "RE_EXPORTS"), node(M, "MODULE"), attr(M, "file", TF2).
+
+visible(TF, N, T) :- exported_in(TF, N, T).
+visible(F, EN, T) :- reexp(F, EN, LN, TF2), visible(TF2, LN, T).
+visible(F, N, T)  :- star_src(F, TF2), visible(TF2, N, T).
+
+% B1 + B2: the binding resolves to the target file's export matching the
+% ORIGINAL imported name (named/aliased by IN; default via clause 2/3),
+% re-export chains collapsed to the final node by visible() (Wave 2b).
+@materialize(edge_type = "IMPORTS_FROM", mode = "additive")
+binding_import(B, T) :- b_named(B, TF, IN), visible(TF, IN, T).
+
+% B3 namespace (Wave 3c): `import * as X from './m'` — the legacy arm
+% (resolveImportWithSource, ImportResolution.hs:316-319) emitted
+% IMPORT_BINDING → MODULE through the SAME resolveModulePath winner the
+% parent IMPORT used; the b_mod seam (the parent IMPORT's committed
+% IMPORTS_FROM → MODULE edge, now produced in-engine by js_module_imports)
+% IS that winner. Excluded while legacy stayed ON (pure overlap); legacy
+% import-resolution is gated in Wave 3c, so the pack owns the namespace
+% edges.
+@materialize(edge_type = "IMPORTS_FROM", mode = "additive")
+binding_ns(B, M) :-
+    js_b(B, F),
+    edge(I, B, "CONTAINS"), node(I, "IMPORT"),
+    edge(I, M, "IMPORTS_FROM"), node(M, "MODULE"),
+    node_attr(B, "importedName", "*").

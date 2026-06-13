@@ -1,0 +1,136 @@
+% go_calls.dl — in-engine replacement for the GoCallResolution.hs resolver
+% (packages/go-resolve/src/GoCallResolution.hs): CALL → FUNCTION CALLS edges,
+% three strategies dispatched on the CALL's `receiver` metadata against the
+% SAME-FILE import aliases (resolveCall :157-174 — the dispatch is exclusive:
+% alias-receiver → strategy 1 ONLY, non-alias receiver → strategy 3 ONLY,
+% no receiver → strategy 2 ONLY; a strategy that misses has NO fallback):
+%
+%   S1 package-qualified (`utils.DoStuff()` where `utils` is an import's
+%      local_name): import path → package dir (PackageIndex :118-128, three
+%      key families: modPath<>"/"<>dir, modPath→"", bare dir→dir; plus the
+%      modPath-strip fallback :197-201) → (dir, callName) FunctionIndex.
+%   S2 same-package (`helper()`, no receiver): (callerDir, callName) lookup
+%      (:213-222).
+%   S3 same-package method (`s.Method()`, receiver not an alias): GLOBAL
+%      (receiverNAME, method) MethodIndex (:227-236) — only hits when a
+%      variable shares its TYPE's name (the known legacy weakness; receiver
+%      typing is the named Wave-2 refinement, NOT attempted — parity).
+%
+% callName = after the last '.' (extractCallName :54-57) — `method_suffix`
+% for the dotted S1/S3 names; S2 names are never dotted (a receiver-less
+% CALL's name is the bare ident or "<expr>", go-analyzer Calls.hs:74-77).
+%
+% PLANNER-LEGAL SPELLING (verdict C1): the import-path → dir map cannot be a
+% standalone `pkg_dir` relation (the modPath×dirs product is disconnected).
+% Consumers inline the peel-join: '/'-boundary prefixes of the alias's import
+% path (spec_pfx right-peel) equality-join `go_mod`, then the bound RelDir
+% joins `func_in_dir`. The legacy "dir must hold MODULEs" key condition is
+% IMPLIED here: a FUNCTION in dir d ⇒ its .go file is in d ⇒ that file's
+% MODULE is in d (the analyzer emits one MODULE per file, Walker.hs:32-44) —
+% so the func_in_dir join subsumes the PackageIndex membership test, exactly.
+%
+% NUMBERED DELTAS vs the resolver (everything not listed is exact):
+%   DELTA G3-1 (SUPERSET, bounded): FunctionIndex is Map.fromList = LAST-wins
+%     on duplicate (dir, name) keys (:91-100) — build-tag twins / _test.go
+%     siblings defining one name in one directory. Set semantics derives all
+%     candidates. Bound: #same-name functions per directory (≈1-2).
+%   DELTA G3-2 (CLOSED, was an approximation in the spec): the isStdLib gate
+%     on S1 import paths (:193) is EXACT via `first_segment` (M1 shipped) —
+%     first '/'-segment contains a dot. No "foo/bar.v2" residue, and no
+%     stdlib-named local dir ("errors/", "log/") can capture a qualified call.
+%   DELTA G3-3 (SUPERSET, pathological-only): legacy PackageIndex is ONE map —
+%     when P == modPath AND a directory literally named P exists, fromList
+%     order makes the bare key win (dir = P, not ""); the pack derives both
+%     arms. Requires a directory literally named like a module path (0 real).
+%   DELTA G3-4 (SUPERSET, compile-error-only): the per-file ImportAliasIndex
+%     is Map.fromList = last-wins on duplicate local_name in ONE file — a Go
+%     compile error except for `_`/`.` names, which can never appear as a
+%     call receiver. Set semantics derives per alias row. Bound 0 on code
+%     that compiles.
+%   DELTA G5-1 (SUPERSET, bounded): the S3 MethodIndex is GLOBAL last-wins
+%     across packages (:103-112) — same-named type with same-named method in
+%     two packages: legacy picks one arbitrary winner, the pack derives all.
+%     Bound: #duplicate (receiver-type-name, method) pairs. The dir-scoped
+%     REFINEMENT is deliberately deferred to the differential (rust_imports
+%     DELTA-1 governed-arm precedent).
+%   File gate: ends_with .go on every base relation (orchestrator stream
+%     filter; CALL/FUNCTION/IMPORT/MODULE are shared vocabulary).
+%   Metadata: legacy CALLS edges carry EMPTY metadata (emitCallsEdge
+%     :241-248) and stamp NO resolvedVia — no meta projected, exact parity.
+%
+% MAINTAIN ENVELOPE: negation (dispatch guards) + node_attr ⇒ scratch floor.
+%
+% ORDERING (PRODUCER): produces CALLS — must run BEFORE go_context (which
+% consumes committed CALLS on .go files — precondition P2; legacy did this
+% in-process, Main.hs:78-79 extractCallEdges) and BEFORE the CALLS negators
+% method_calls / shape_verifier (verdict C4: shape_verifier.dl negates
+% `edge(C, _, "CALLS")` with no file gate).
+
+% ── Shared sources ───────────────────────────────────────────────────────────
+go_call(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".go"),
+                    attr(C, "name", N).
+call_recv(C, R)  :- go_call(C, _, _), node_attr(C, "receiver", R).
+has_recv(C)      :- go_call(C, _, _), node_attr(C, "receiver", _).
+import_alias(F, L, P) :- node(I, "IMPORT"), attr(I, "file", F),
+                         ends_with(F, ".go"), node_attr(I, "local_name", L),
+                         node_attr(I, "path", P).
+
+% (dir, name) → FUNCTION kind=function (buildFunctionIndex :91-100; closures
+% and interface_methods excluded by the kind gate — Spec.hs:141-148).
+go_fn(T)             :- node(T, "FUNCTION"), attr(T, "file", TF),
+                        ends_with(TF, ".go"), node_attr(T, "kind", "function").
+fn_dir(T, D)         :- go_fn(T), attr(T, "file", TF), basename(TF, B),
+                        concat("/", B, SB), strip_suffix(TF, SB, D).
+fn_subdir(T)         :- fn_dir(T, _).
+func_in_dir(D, N, T) :- fn_dir(T, D), attr(T, "name", N).
+func_in_dir("", N, T) :- go_fn(T), \+ fn_subdir(T), attr(T, "name", N).
+
+go_mod(MP) :- node(W, "WORKSPACE_PACKAGE"), node_attr(W, "language", "go"),
+              attr(W, "name", MP).
+
+% ── Strategy 1: package-qualified calls ──────────────────────────────────────
+% Receiver matches a same-file import alias (the dispatch test :165).
+s1_path(C, P) :- call_recv(C, R), go_call(C, F, _), import_alias(F, R, P).
+% Exact isStdLib gate (:193, via first_segment — DELTA G3-2 closed).
+s1_ok(C, P)   :- s1_path(C, P), first_segment(P, "/", S1), string_contains(S1, ".").
+
+% '/'-boundary prefixes of S1 import paths (the spec_pfx right-peel).
+s1_pfx(P, P) :- s1_ok(_, P).
+s1_pfx(P, D) :- s1_pfx(P, X), last_segment(X, "/", L),
+                concat("/", L, Tail), strip_suffix(X, Tail, D).
+
+% Import path → target package dir, all three legacy key families
+% (buildPackageIndex :118-128 + the strip fallback :197-201), Rel/"" bound
+% as builtin outputs (the C1 discipline — see go_imports.dl):
+%   (a) modPath-prefixed → relative dir;
+%   (b) P == modPath     → root dir "";
+%   (c) bare dir key     → P itself names a local package directory.
+s1_dir(P, Rel) :- s1_pfx(P, MP), go_mod(MP), concat(MP, "/", MPS),
+                  strip_prefix(P, MPS, Rel).
+s1_dir(P, Rel) :- s1_ok(_, P), go_mod(P), strip_prefix(P, P, Rel).
+s1_dir(P, P)   :- s1_ok(_, P).
+
+@materialize(edge_type = "CALLS", mode = "additive")
+go_call_s1(C, T) :- s1_ok(C, P), s1_dir(P, D), go_call(C, _, N),
+                    method_suffix(N, MN), func_in_dir(D, MN, T).
+
+% ── Strategy 2: same-package function calls (no receiver) ───────────────────
+call_dir(C, D)  :- go_call(C, F, _), basename(F, B), concat("/", B, SB),
+                   strip_suffix(F, SB, D).
+call_subdir(C)  :- call_dir(C, _).
+
+@materialize(edge_type = "CALLS", mode = "additive")
+go_call_s2(C, T) :- go_call(C, _, N), \+ has_recv(C), call_dir(C, D),
+                    func_in_dir(D, N, T).
+go_call_s2(C, T) :- go_call(C, _, N), \+ has_recv(C), \+ call_subdir(C),
+                    func_in_dir("", N, T).
+
+% ── Strategy 3: same-package method calls (receiver is not an alias) ────────
+alias_recv(C) :- call_recv(C, R), go_call(C, F, _), import_alias(F, R, _).
+method_in(RT, MN, T) :- node(T, "FUNCTION"), attr(T, "file", TF),
+                        ends_with(TF, ".go"), node_attr(T, "kind", "method"),
+                        node_attr(T, "receiver", RT), attr(T, "name", MN).
+
+@materialize(edge_type = "CALLS", mode = "additive")
+go_call_s3(C, T) :- call_recv(C, R), \+ alias_recv(C), go_call(C, _, N),
+                    method_suffix(N, MN), method_in(R, MN, T).

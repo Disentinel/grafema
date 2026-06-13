@@ -12,7 +12,10 @@
 use std::io::Cursor;
 
 use crate::error::Result;
-use crate::storage_v2::compaction::merge::{merge_edge_segments, merge_node_segments};
+use crate::storage_v2::compaction::merge::{
+    merge_edge_segments, merge_edge_segments_derived, merge_node_segments,
+    merge_node_segments_derived,
+};
 use crate::storage_v2::compaction::types::CompactionConfig;
 use crate::storage_v2::manifest::SegmentDescriptor;
 use crate::storage_v2::segment::{EdgeSegmentV2, NodeSegmentV2};
@@ -114,14 +117,29 @@ fn merge_and_write_nodes(shard: &Shard) -> Result<(Option<Vec<u8>>, Option<Segme
         all_node_segs.push(l1);
     }
 
-    let merged = merge_node_segments(&all_node_segs, tombstones);
-    if merged.is_empty() {
-        return Ok((None, None));
-    }
+    // Base fast path (the dominant analyzer workload) stays byte-identical: first-insert-
+    // wins dedup, no per-record tag decode. Only when an input carries derived columns do
+    // we take the tag-aware ⊕-fold path, preserving provenance/tag/tx (the base path would
+    // strip them) — spec §8.2.
+    let any_derived = all_node_segs.iter().any(|s| s.has_derived_columns());
 
     let mut writer = NodeSegmentWriter::new();
-    for record in merged {
-        writer.add(record);
+    if any_derived {
+        let merged = merge_node_segments_derived(&all_node_segs, tombstones)?;
+        if merged.is_empty() {
+            return Ok((None, None));
+        }
+        for (record, fields) in merged {
+            writer.add_derived(record, fields);
+        }
+    } else {
+        let merged = merge_node_segments(&all_node_segs, tombstones);
+        if merged.is_empty() {
+            return Ok((None, None));
+        }
+        for record in merged {
+            writer.add(record);
+        }
     }
     let mut cursor = Cursor::new(Vec::new());
     let meta = writer.finish(&mut cursor)?;
@@ -141,14 +159,25 @@ fn merge_and_write_edges(shard: &Shard) -> Result<(Option<Vec<u8>>, Option<Segme
         all_edge_segs.push(l1);
     }
 
-    let merged = merge_edge_segments(&all_edge_segs, tombstones);
-    if merged.is_empty() {
-        return Ok((None, None));
-    }
+    let any_derived = all_edge_segs.iter().any(|s| s.has_derived_columns());
 
     let mut writer = EdgeSegmentWriter::new();
-    for record in merged {
-        writer.add(record);
+    if any_derived {
+        let merged = merge_edge_segments_derived(&all_edge_segs, tombstones)?;
+        if merged.is_empty() {
+            return Ok((None, None));
+        }
+        for (record, fields) in merged {
+            writer.add_derived(record, fields);
+        }
+    } else {
+        let merged = merge_edge_segments(&all_edge_segs, tombstones);
+        if merged.is_empty() {
+            return Ok((None, None));
+        }
+        for record in merged {
+            writer.add(record);
+        }
     }
     let mut cursor = Cursor::new(Vec::new());
     let meta = writer.finish(&mut cursor)?;

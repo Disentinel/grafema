@@ -35,14 +35,14 @@ import Grafema.SemanticId (semanticId, contentHash)
 
 walkDeclAnnotations :: KotlinDecl -> Analyzer ()
 
-walkDeclAnnotations (ClassDecl name _kind _mods _tps _ctor _supers members annots sp) = do
+walkDeclAnnotations (ClassDecl name _kind _mods _tps _ctor _supers _exts _impls members annots sp) = do
   file   <- askFile
   parent <- askNamedParent
   let itemId = semanticId file "CLASS" name parent Nothing
   mapM_ (walkAnnotation file itemId sp) annots
   mapM_ (walkMemberAnnotations file) members
 
-walkDeclAnnotations (ObjectDecl name _mods _supers members annots sp) = do
+walkDeclAnnotations (ObjectDecl name _mods _supers _exts _impls members annots sp) = do
   file   <- askFile
   parent <- askNamedParent
   let itemId = semanticId file "CLASS" name parent Nothing

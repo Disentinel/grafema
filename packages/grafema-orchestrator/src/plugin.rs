@@ -976,14 +976,8 @@ pub async fn clear_context_on_workers(
 }
 
 // ---------------------------------------------------------------------------
-// Per-file resolution (build-index + resolve-file)
+// Per-file resolution (resolve-file)
 // ---------------------------------------------------------------------------
-
-/// Index-worthy node types: these form the export index for cross-file resolution.
-const INDEX_NODE_TYPES: &[&str] = &[
-    "EXPORT_BINDING", "EXPORT", "MODULE",
-    "FUNCTION", "VARIABLE", "CONSTANT", "CLASS", "INTERFACE", "TYPE_ALIAS", "ENUM", "NAMESPACE",
-];
 
 /// How many files to process between durability checkpoints in the per-file
 /// resolve loop. Resolve over a large monorepo can take hours; without a
@@ -1122,19 +1116,22 @@ fn resolve_progress_fields(
     ]
 }
 
-/// Per-file resolve: builds an export index on the worker, then resolves each
-/// file individually by querying RFDB for that file's nodes.
+/// Per-file resolve: resolves each file individually by querying RFDB for that
+/// file's nodes.
 ///
 /// This avoids loading the entire graph into worker memory — only one file's
-/// nodes are in flight at a time. The index (build-index) is compact: only
-/// exported symbols and module metadata.
+/// nodes are in flight at a time.
 ///
 /// Protocol:
 /// 1. Query MODULE nodes → discover files for the given language
-/// 2. Query index-worthy nodes (exports, modules) → send `build-index` to worker
-/// 3. For each file: `query_nodes_by_file` → send `resolve-file` → accumulate edges,
+/// 2. For each file: `query_nodes_by_file` → send `resolve-file` → accumulate edges,
 ///    committing a durability checkpoint every [`RESOLVE_CHECKPOINT_INTERVAL`] files
-/// 4. Commit the final delta and return the accumulated PluginOutput
+/// 3. Commit the final delta and return the accumulated PluginOutput
+///
+/// (Wave 6: the former `build-index` step — the export/module index for the
+/// import-resolution / cross-file / property-access / class-inheritance steps —
+/// was deleted with those steps; the remaining daemon step, runtime-globals,
+/// needs no cross-file index.)
 ///
 /// Because this function now commits its own output incrementally (under
 /// `name`/`generation`), the caller must NOT commit the returned output again —
@@ -1162,52 +1159,7 @@ pub async fn resolve_per_file(
 
     tracing::info!(files = files.len(), "Per-file resolve: discovered files");
 
-    // Step 2: Collect index-worthy nodes and send build-index
-    let mut index_json_nodes: Vec<serde_json::Value> = Vec::new();
-    for node_type in INDEX_NODE_TYPES {
-        let nodes = rfdb.query_nodes_by_type(node_type).await?;
-        for node in nodes {
-            // Filter by language
-            if let Some(ref file) = node.file {
-                if crate::config::detect_language(std::path::Path::new(file)) != Some(lang) {
-                    continue;
-                }
-            } else {
-                continue;
-            }
-            // For declarations, only include exported ones in the index.
-            // Note: JS analyzer's `exported` flag may be false for `export function foo()`
-            // due to OXC AST walking order. We also check the file's exports list below.
-            if matches!(*node_type, "FUNCTION" | "VARIABLE" | "CONSTANT" | "CLASS" | "INTERFACE" | "TYPE_ALIAS" | "ENUM" | "NAMESPACE") {
-                if !node.exported {
-                    continue;
-                }
-            }
-            index_json_nodes.push(crate::analyzer::wire_node_to_resolve_json(&node));
-        }
-    }
-
-    tracing::info!(nodes = index_json_nodes.len(), "Per-file resolve: sending build-index");
-
-    let build_index_request = ResolveRequest {
-        cmd: "build-index".to_string(),
-        nodes: index_json_nodes,
-        workspace_packages: workspace_packages.to_vec(),
-        edges: vec![],
-    };
-    let payload = rmp_serde::to_vec_named(&build_index_request)
-        .context("Failed to encode build-index request")?;
-    let response_bytes = handle.request(&payload).await
-        .context("build-index request failed")?;
-    let response: ResolveResponse = rmp_serde::from_slice(&response_bytes)
-        .context("Failed to decode build-index response")?;
-    if response.status != "ok" {
-        let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
-        bail!("build-index failed: {msg}");
-    }
-    drop(build_index_request); // Free memory
-
-    // Step 3: For each file, query nodes and send resolve-file. Output is
+    // Step 2: For each file, query nodes and send resolve-file. Output is
     // committed incrementally (every RESOLVE_CHECKPOINT_INTERVAL files) so a
     // crash or SIGTERM mid-resolve does not discard all work, and also kept in
     // `all_output` so the caller can read derived edges/counts.
@@ -1353,6 +1305,19 @@ pub async fn stream_and_resolve_single_worker(
 // Full DAG execution
 // ---------------------------------------------------------------------------
 
+/// Convert a finished plugin result into a hard error if the plugin failed.
+///
+/// Wave 6 made derive-pack failures fail the analyze run, but plugin failures
+/// were still log-and-continue — a plugin exiting non-zero (or timing out)
+/// silently shipped a graph missing whole edge families (e.g. type-inference
+/// is the sole INSTANCE_OF producer). A failed plugin now aborts the run.
+pub fn check_plugin_result(result: &PluginRunResult) -> Result<()> {
+    if let Some(ref err) = result.error {
+        bail!("Plugin '{}' failed: {}", result.plugin_name, err);
+    }
+    Ok(())
+}
+
 /// Execute the full plugin DAG: build levels, run each level sequentially.
 ///
 /// Within each level, plugins are run sequentially because `RfdbClient` requires
@@ -1364,6 +1329,11 @@ pub async fn stream_and_resolve_single_worker(
 ///
 /// For streaming plugins: output is validated, metadata-stamped, and committed.
 /// Results for all plugins are collected and returned.
+///
+/// A plugin failure (non-zero exit, timeout, invalid output, commit failure)
+/// aborts the DAG with an error via [`check_plugin_result`] — dependents of a
+/// failed plugin never run against a half-populated graph, and the analyze
+/// run fails loudly instead of logging and continuing.
 pub async fn run_plugins_dag(
     plugins: &[PluginConfig],
     rfdb: &mut RfdbClient,
@@ -1398,6 +1368,7 @@ pub async fn run_plugins_dag(
                 );
             }
 
+            check_plugin_result(&result)?;
             results.push(result);
         }
     }
@@ -1714,27 +1685,10 @@ mod tests {
         assert_eq!(meta["_generation"], 1);
     }
 
-    /// Regression for REG-1139: every exported-declaration node type that the
-    /// grafema-resolve export index recognizes (see `nodeToExportEntries` /
-    /// `gnExported` arm in `packages/grafema-resolve/src/ImportResolution.hs`)
-    /// MUST also be queried by the orchestrator and sent to `build-index` — else
-    /// those exports are dark in the index and imports of them fail with
-    /// "no matching export" (e.g. `export namespace X {}`).
-    #[test]
-    fn index_node_types_cover_exported_declarations() {
-        // Mirrors grafema-resolve ImportResolution.hs `gnExported` export arm.
-        let resolver_exported_decl_types = [
-            "FUNCTION", "VARIABLE", "CONSTANT", "CLASS", "INTERFACE", "TYPE_ALIAS", "ENUM",
-            "NAMESPACE",
-        ];
-        for t in resolver_exported_decl_types {
-            assert!(
-                INDEX_NODE_TYPES.contains(&t),
-                "INDEX_NODE_TYPES is missing exported-declaration type {t:?} that the \
-                 resolver indexes — its exports become unresolvable (REG-1139)"
-            );
-        }
-    }
+    // (The REG-1139 INDEX_NODE_TYPES coverage test was deleted in Wave 6 with the
+    // build-index step itself: the export index and every step that read it —
+    // import-resolution / cross-file-calls / property-access / class-inheritance —
+    // were replaced by derive packs and removed from the resolver daemon.)
 
     // -- CheckpointAccumulator tests (REG-1138 mid-resolve durability) --
 
@@ -1839,6 +1793,144 @@ mod tests {
         acc.record(&[ck_node("a")], &[]);
         acc.record(&[ck_node("b")], &[]);
         assert!(acc.take_if_due().is_some(), "counter reset after empty checkpoint");
+    }
+
+    // -- loud-failure policy: plugin failures abort the analyze run --
+
+    /// Helper: build a PluginRunResult with an optional error.
+    fn make_result(name: &str, error: Option<&str>) -> PluginRunResult {
+        PluginRunResult {
+            plugin_name: name.to_string(),
+            nodes_emitted: 0,
+            edges_emitted: 0,
+            duration: Duration::from_millis(1),
+            error: error.map(|s| s.to_string()),
+        }
+    }
+
+    /// A successful plugin result passes the gate.
+    #[test]
+    fn check_plugin_result_ok_passes() {
+        let result = make_result("type-inference", None);
+        assert!(check_plugin_result(&result).is_ok());
+    }
+
+    /// A plugin that exited non-zero fails the run, naming the plugin and
+    /// carrying the underlying error (run_plugins_dag calls this per result,
+    /// so the `?` aborts the DAG → the analyze run fails loudly).
+    #[test]
+    fn check_plugin_result_exit_failure_aborts() {
+        let result = make_result(
+            "type-inference",
+            Some("Batch plugin 'type-inference' exited with status: exit status: 1"),
+        );
+        let err = check_plugin_result(&result).unwrap_err().to_string();
+        assert!(err.contains("Plugin 'type-inference' failed"), "{err}");
+        assert!(err.contains("exit status: 1"), "{err}");
+    }
+
+    /// A timed-out plugin is a failure too — same gate, same abort.
+    #[test]
+    fn check_plugin_result_timeout_aborts() {
+        let result = make_result(
+            "shape-tracker",
+            Some("Plugin 'shape-tracker' timed out after 600s"),
+        );
+        let err = check_plugin_result(&result).unwrap_err().to_string();
+        assert!(err.contains("Plugin 'shape-tracker' failed"), "{err}");
+        assert!(err.contains("timed out"), "{err}");
+    }
+
+    /// Minimal fake RFDB server: answers every incoming frame with a
+    /// Hello-shaped MessagePack response — just enough for
+    /// `RfdbClient::connect` to complete its handshake. Batch plugins never
+    /// touch the client afterwards, so nothing else is needed.
+    fn spawn_fake_hello_server(listener: tokio::net::UnixListener) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    return;
+                };
+                tokio::spawn(async move {
+                    // protocolVersion must match rfdb::PROTOCOL_VERSION (3).
+                    let reply = rmp_serde::to_vec_named(&serde_json::json!({
+                        "requestId": "r0",
+                        "ok": true,
+                        "protocolVersion": 3,
+                        "serverVersion": "fake-rfdb",
+                        "features": [],
+                    }))
+                    .expect("encode fake hello reply");
+                    loop {
+                        let mut len_buf = [0u8; 4];
+                        if stream.read_exact(&mut len_buf).await.is_err() {
+                            return;
+                        }
+                        let len = u32::from_be_bytes(len_buf) as usize;
+                        let mut payload = vec![0u8; len];
+                        if stream.read_exact(&mut payload).await.is_err() {
+                            return;
+                        }
+                        let frame_len = (reply.len() as u32).to_be_bytes();
+                        if stream.write_all(&frame_len).await.is_err() {
+                            return;
+                        }
+                        if stream.write_all(&reply).await.is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+    }
+
+    /// Helper: a batch-mode plugin running an arbitrary command.
+    fn make_batch_plugin(name: &str, command: String, deps: &[&str]) -> PluginConfig {
+        PluginConfig {
+            name: name.to_string(),
+            command,
+            query: None,
+            depends_on: deps.iter().map(|s| s.to_string()).collect(),
+            mode: PluginMode::Batch,
+            timeout_secs: None,
+        }
+    }
+
+    /// Gate PLACEMENT test: the three `check_plugin_result` unit tests above
+    /// would keep passing even if the gate call were deleted from the DAG
+    /// loop. This exercises the real `run_plugins_dag`: in the chain
+    /// A → B(fails) → C, the run must return Err naming B, and B's dependent
+    /// C must never execute against the half-populated graph.
+    #[tokio::test]
+    async fn run_plugins_dag_failing_plugin_aborts_and_skips_dependents() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sock = dir.path().join("fake-rfdb.sock");
+        let listener = tokio::net::UnixListener::bind(&sock).expect("bind fake rfdb socket");
+        spawn_fake_hello_server(listener);
+
+        let mut rfdb = RfdbClient::connect(&sock)
+            .await
+            .expect("handshake with fake hello server");
+
+        // C touches a sentinel file iff it actually runs.
+        let sentinel = dir.path().join("c-ran");
+        let plugins = vec![
+            make_batch_plugin("A", "true".to_string(), &[]),
+            make_batch_plugin("B", "false".to_string(), &["A"]),
+            make_batch_plugin("C", format!("touch {}", sentinel.display()), &["B"]),
+        ];
+
+        let err = run_plugins_dag(&plugins, &mut rfdb, &sock, "testdb", 1, None)
+            .await
+            .expect_err("a failing plugin must abort the DAG");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("Plugin 'B' failed"), "{msg}");
+        assert!(msg.contains("exit status"), "{msg}");
+        assert!(
+            !sentinel.exists(),
+            "dependent plugin C ran even though its dependency B failed"
+        );
     }
 
     // -- resolve_progress telemetry (REG-1138 defect 2) --

@@ -7,6 +7,7 @@ import Data.Aeson (eitherDecode)
 import qualified Data.Text
 import Data.Text (Text)
 import qualified Data.Map.Strict as Map
+import Data.List (nub)
 
 import AST.Types (ASTNode)
 import AST.Decode ()
@@ -218,6 +219,51 @@ exportTests = do
           , "]}"
           ]
     hasExport "*" ReExport fa `shouldBe` True
+
+  -- Test 8b: two `export function` statements in one file must NOT collapse into
+  -- a single EXPORT node. On HEAD both ExportNamedDeclarations mint the constant
+  -- sid `test.js->EXPORT->named` (Declarations.hs:617), so they merge in-graph —
+  -- the second statement's node identity and position are lost. Each statement
+  -- must own a distinct EXPORT node.
+  it "emits a distinct EXPORT node per named-export statement" $ do
+    let fa = analyzeAST $ BL.concat
+          [ "{\"type\":\"Program\",\"start\":0,\"end\":62,\"body\":["
+          , "{\"type\":\"ExportNamedDeclaration\",\"start\":0,\"end\":30,"
+          , "\"declaration\":{\"type\":\"FunctionDeclaration\",\"start\":7,\"end\":30,"
+          , "\"id\":{\"type\":\"Identifier\",\"start\":16,\"end\":19,\"name\":\"foo\"},"
+          , "\"params\":[],\"body\":{\"type\":\"BlockStatement\",\"start\":22,\"end\":24,\"body\":[]},"
+          , "\"async\":false,\"generator\":false},"
+          , "\"specifiers\":[]},"
+          , "{\"type\":\"ExportNamedDeclaration\",\"start\":31,\"end\":61,"
+          , "\"declaration\":{\"type\":\"FunctionDeclaration\",\"start\":38,\"end\":61,"
+          , "\"id\":{\"type\":\"Identifier\",\"start\":47,\"end\":50,\"name\":\"baz\"},"
+          , "\"params\":[],\"body\":{\"type\":\"BlockStatement\",\"start\":53,\"end\":55,\"body\":[]},"
+          , "\"async\":false,\"generator\":false},"
+          , "\"specifiers\":[]}"
+          , "]}"
+          ]
+    -- both names reach the export index (true on HEAD already — sanity)
+    hasExport "foo" NamedExport fa `shouldBe` True
+    hasExport "baz" NamedExport fa `shouldBe` True
+    -- but the two statements must be TWO distinct EXPORT nodes, not one merged id
+    let exportIds = nub (map gnId (findNodes "EXPORT" "named" fa))
+    length exportIds `shouldBe` 2
+
+  -- Test 8c: the same sid-collision class on the star arm — two
+  -- `export * from './utils'` statements (duplicate source) mint the constant
+  -- sid `test.js->EXPORT->*:./utils` (Declarations.hs:695) and merge. Each
+  -- statement must own a distinct EXPORT node.
+  it "emits a distinct EXPORT node per star re-export statement (duplicate source)" $ do
+    let fa = analyzeAST $ BL.concat
+          [ "{\"type\":\"Program\",\"start\":0,\"end\":50,\"body\":["
+          , "{\"type\":\"ExportAllDeclaration\",\"start\":0,\"end\":25,"
+          , "\"source\":{\"type\":\"Literal\",\"start\":14,\"end\":23,\"value\":\"./utils\",\"raw\":\"'./utils'\"}},"
+          , "{\"type\":\"ExportAllDeclaration\",\"start\":26,\"end\":50,"
+          , "\"source\":{\"type\":\"Literal\",\"start\":40,\"end\":49,\"value\":\"./utils\",\"raw\":\"'./utils'\"}}"
+          , "]}"
+          ]
+    let exportIds = nub (map gnId (findNodes "EXPORT" "*:./utils" fa))
+    length exportIds `shouldBe` 2
 
 
 edgeCaseTests :: Spec

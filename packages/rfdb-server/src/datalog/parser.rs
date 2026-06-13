@@ -106,18 +106,37 @@ impl<'a> Parser<'a> {
         Ok(self.input[start..self.pos].to_string())
     }
 
+    /// Parse a double-quoted string literal.
+    ///
+    /// Escape handling is LENIENT (Wave 14): a backslash followed by `"` or
+    /// `\` is an escape sequence producing that character (so a literal
+    /// double-quote CAN appear inside a string — required by quote-stripping
+    /// rules over JS string literals, whose graph `name` keeps the raw source
+    /// quoting). A backslash followed by anything else stays a literal
+    /// backslash — pre-escape strings like `"C:\Users"` keep their meaning
+    /// (only `\"` / `\\` sequences, previously impossible to express in the
+    /// first case and degenerate in the second, change interpretation).
     fn parse_string(&mut self) -> Result<String, ParseError> {
         self.skip_whitespace();
         self.expect("\"")?;
 
         let start = self.pos;
+        let mut value = String::new();
         while self.pos < self.input.len() {
             let c = self.input[self.pos..].chars().next().unwrap();
             if c == '"' {
-                let value = self.input[start..self.pos].to_string();
                 self.pos += 1; // consume closing quote
                 return Ok(value);
             }
+            if c == '\\' {
+                let next = self.input[self.pos + 1..].chars().next();
+                if matches!(next, Some('"') | Some('\\')) {
+                    value.push(next.unwrap());
+                    self.pos += 1 + next.unwrap().len_utf8();
+                    continue;
+                }
+            }
+            value.push(c);
             self.pos += c.len_utf8();
         }
 
@@ -143,8 +162,52 @@ impl<'a> Parser<'a> {
             let name = self.parse_identifier()?;
             // If it looks like a variable pattern but starts lowercase, treat as const
             Ok(Term::Const(name))
+        } else if c.is_ascii_digit()
+            || (c == '-' && self.remaining()[1..].starts_with(|d: char| d.is_ascii_digit()))
+        {
+            // Bare numeric literal → typed Int/Float (spec §5; not a string const, not an id).
+            self.parse_number()
         } else {
             Err(ParseError::new(&format!("unexpected character '{}'", c), self.pos))
+        }
+    }
+
+    /// Parse a bare numeric literal: optional leading `-`, digits, optional single `.` + digits.
+    /// A `.` makes it a `Float`, otherwise an `Int`. The decision is at parse time so `0` and
+    /// `"0"` stay distinct (typed literal vs string const, spec §5).
+    fn parse_number(&mut self) -> Result<Term, ParseError> {
+        self.skip_whitespace();
+        let start = self.pos;
+        if self.remaining().starts_with('-') {
+            self.pos += 1;
+        }
+        let mut saw_dot = false;
+        // Direct char walk (like `parse_identifier`) — NOT `peek()`, which skips whitespace and
+        // would let a number span a space. A single interior `.` (with a digit after) makes it a
+        // float; a trailing `.` (e.g. the rule terminator in `gt(A, 0).`) is left for the caller.
+        while self.pos < self.input.len() {
+            let c = self.input[self.pos..].chars().next().unwrap();
+            if c.is_ascii_digit() {
+                self.pos += 1;
+            } else if c == '.'
+                && !saw_dot
+                && self.input[self.pos + 1..].starts_with(|d: char| d.is_ascii_digit())
+            {
+                saw_dot = true;
+                self.pos += 1;
+            } else {
+                break;
+            }
+        }
+        let text = &self.input[start..self.pos];
+        if saw_dot {
+            text.parse::<f64>()
+                .map(|f| Term::Lit(crate::datalog::eval::Value::Float(f)))
+                .map_err(|_| ParseError::new("invalid float literal", start))
+        } else {
+            text.parse::<i64>()
+                .map(|i| Term::Lit(crate::datalog::eval::Value::Int(i)))
+                .map_err(|_| ParseError::new("invalid integer literal", start))
         }
     }
 
@@ -315,4 +378,39 @@ pub fn parse_query(input: &str) -> Result<Vec<Literal>, ParseError> {
         ));
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn const_of(t: &Term) -> &str {
+        match t {
+            Term::Const(s) => s,
+            other => panic!("expected Const, got {other:?}"),
+        }
+    }
+
+    /// Wave 14 — lenient escape sequences in string literals: `\"` and `\\`
+    /// decode to the bare character; any other backslash stays literal
+    /// (pre-escape behavior for strings like "C:\Users" is preserved).
+    #[test]
+    fn string_literal_escapes_are_lenient() {
+        let a = parse_atom(r#"p("a\"b")"#).expect("escaped quote parses");
+        assert_eq!(const_of(&a.args()[0]), "a\"b");
+
+        let a = parse_atom(r#"p("a\\b")"#).expect("escaped backslash parses");
+        assert_eq!(const_of(&a.args()[0]), "a\\b");
+
+        // Lone backslash before a non-escapable char stays literal.
+        let a = parse_atom(r#"p("C:\Users")"#).expect("non-escape backslash parses");
+        assert_eq!(const_of(&a.args()[0]), "C:\\Users");
+
+        // A bare double-quote literal — the quote-strip use case.
+        let a = parse_atom(r#"sw(X, "\"")"#).expect("single dquote literal parses");
+        assert_eq!(const_of(&a.args()[1]), "\"");
+
+        // Unterminated string (escape eats the closer) still errors.
+        assert!(parse_atom(r#"p("abc\")"#).is_err());
+    }
 }

@@ -15,6 +15,20 @@ date: 2026-02-20
 
 # RFDB V2 Clear Makes Engine Ephemeral
 
+## STATUS UPDATE (2026-06-11, branch feat/datalog — W8 Part 2)
+
+**Both flavors of this trap are FIXED on feat/datalog.** `GraphEngineV2::clear()` /
+`clear_durable()` now performs a REAL durable clear: it truncates the on-disk database
+(deletes `segments/` + `gc/` + manifest authority, recreates a fresh empty manifest and
+shard skeleton) and resets all engine caches (D2 materialize pins, planner-stats, W9
+shared indexes, derive pin sidecars). The engine stays DISK-BACKED after clear — no
+ephemeral swap, so post-clear analysis persists (the 2026-02 data-loss flavor) and a
+clear+restart does NOT resurrect the old graph (the 2026-06 placebo flavor, gaps.md).
+Wire `Clear` surfaces truncation errors to the client. Tests:
+`w8_durable_clear_truncates_disk_and_survives_reopen`, `w8_durable_clear_drops_pin_sidecars`
+(engine_v2.rs). Manual fallback remains `rm -rf <db>.rfdb` (e.g. after a crash inside the
+tiny manifest-reset window). On binaries WITHOUT this fix, everything below still applies.
+
 ## Problem
 
 After running `grafema analyze --clear`, the analysis completes successfully and reports
@@ -103,3 +117,23 @@ cat .grafema/graph.rfdb/manifest_index.json
   Using it in `clear()` is an architectural shortcut that creates this trap.
 - Related MEMORY note: "Ephemeral databases skip flush" — this is the V2 manifestation
   of the same concept documented for V1.
+
+## Second flavor discovered 2026-06-09: clear+restart = PLACEBO (stale data SURVIVES)
+
+The Feb-2026 flavor above is data LOSS (clear, then analyze into the ephemeral engine, no
+restart). The CLI's actual `--clear` flow (`analyzeAction.ts:340-346`) is
+`backend.clear()` → `shutdownServer()` → `connect()` — the shutdown DISCARDS the ephemeral
+state and the fresh auto-started server reloads the untouched on-disk DB. Net effect: `--clear`
+clears nothing; the manifest version just keeps counting (observed 660 → 1001 across a
+"cleared" run).
+
+Detection signature: after `--clear` + full reanalysis, edges from a PRIOR run survive with an
+older `_generation` in their metadata (e.g. 15 531 `DERIVED_FROM` edges at gen 36 alongside the
+fresh gen-37 `DERIVES_FROM` — 15 014 (src,dst) pairs carrying BOTH). Forensics: edge metadata
+`_generation`/`_source` (stamped by orchestrator gc.rs) maps every edge to the run that wrote
+it; `gen-tracker.json` holds the run counter. Segment-file mtimes are NOT evidence of write
+time — compaction rewrites old data into new files.
+
+Workaround stands: `rm -rf .grafema/graph.rfdb` (+ optionally `gen-tracker.json`) before the
+server starts. Real fix: `GraphEngineV2::clear()` must clear the persistent store. Gap recorded
+in `_ai/gaps.md` (2026-06-09).

@@ -51,6 +51,35 @@ export interface QueryGraphArgs {
   count?: boolean;
 }
 
+export interface ExplainFactArgs {
+  /** The derived predicate (e.g. "depends"). */
+  predicate: string;
+  /** The fact's ground key tuple as wire-string terms (node ids as decimal, else string). */
+  key: string[];
+  /** Optional Datalog program (derive engine); empty/omitted ⇒ the bundled depends.dl. */
+  source?: string;
+}
+
+export interface SimDatalogArgs {
+  /** The derived predicate whose NEW facts to predict (e.g. "depends"). */
+  predicate: string;
+  /** Hypothetical nodes: { id (decimal string), nodeType, name?, file? }. May be new ids. */
+  nodes?: Array<{ id: string; nodeType: string; name?: string; file?: string }>;
+  /** Hypothetical edges: { src, dst, edgeType }; endpoints existing OR hypothetical ids. */
+  edges?: Array<{ src: string; dst: string; edgeType: string }>;
+  /** Optional Datalog program (derive engine); empty/omitted ⇒ the bundled depends.dl. */
+  source?: string;
+}
+
+export interface ExplainGapArgs {
+  /** The derived predicate of the MISSING fact (e.g. "depends"). */
+  predicate: string;
+  /** The missing fact's ground key tuple as wire-string terms (node ids as decimal). */
+  key: string[];
+  /** Optional Datalog program (derive engine); empty/omitted ⇒ the bundled depends.dl. */
+  source?: string;
+}
+
 export interface FindCallsArgs {
   name: string;
   limit?: number;

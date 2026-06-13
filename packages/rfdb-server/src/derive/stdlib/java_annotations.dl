@@ -1,0 +1,31 @@
+% java_annotations.dl — in-engine replacement for AnnotationResolution.hs of
+% the java-resolve binary (packages/java-resolve/src/AnnotationResolution.hs:
+% 26-44): ANNOTATION_RESOLVES_TO from every annotation usage (ATTRIBUTE,
+% Annotations.hs) to the same-named ANNOTATION_TYPE declaration. Both names
+% are first-class — the simplest pack of the java family.
+% Lang-spec: _ai/research/lang-spec-java.md §4.4.
+%
+% LEGACY SEMANTICS: an ANNOTATION_TYPE index by bare name (Map last-wins),
+% probed with each ATTRIBUTE's name; emit with EMPTY metadata (Hs:46-53) ⇒
+% no meta(...) columns; additive (shared rollout discipline).
+%
+% The .java gates on BOTH legs are load-bearing: kotlin-analyzer emits
+% ATTRIBUTE and ANNOTATION_TYPE too (and cpp/python/swift emit ATTRIBUTE);
+% legacy only ever saw Java-streamed nodes (main.rs:1578) — without the gates
+% the pack would invent java↔kotlin edges legacy never derived.
+%
+% NUMBERED DELTAS vs the legacy resolver (everything not listed is exact):
+%   DELTA 1 (superset, spec §5 class 1): set semantics on duplicate
+%     annotation names — an edge per same-named ANNOTATION_TYPE candidate vs
+%     the Map's arbitrary last-wins winner.
+%   DELTA 2 (metadata): engine provenance _source/_generation (rust DELTA 6).
+%
+% MAINTAIN ENVELOPE: no node_attr, no negation — maintain-incremental
+% eligible (the negation-light end of the java family, spec §4 note).
+
+jattr(A, N) :- node(A, "ATTRIBUTE"), attr(A, "file", F), ends_with(F, ".java"),
+    attr(A, "name", N), neq(N, "").
+jann(N, T)  :- node(T, "ANNOTATION_TYPE"), attr(T, "file", F), ends_with(F, ".java"),
+    attr(T, "name", N), neq(N, "").
+@materialize(edge_type = "ANNOTATION_RESOLVES_TO", mode = "additive")
+ann_resolves(A, T) :- jattr(A, N), jann(N, T).

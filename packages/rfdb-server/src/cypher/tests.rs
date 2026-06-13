@@ -836,6 +836,9 @@ mod executor_tests {
             true, // skip_validation for test speed
         );
 
+        // B2 (RFD-71): public reads see only the published manifest version, so
+        // flush/commit the staged write buffer before the test queries it.
+        engine.flush().unwrap();
         engine
     }
 
@@ -1104,6 +1107,7 @@ mod executor_tests {
         let mut engine = GraphEngineV2::create_ephemeral();
         engine.add_nodes(vec![person(1, "alice"), person(2, "bob"), person(3, "carol")]);
         engine.add_edges(vec![rel(1, 1, "LOOPS"), rel(2, 3, "LOOPS")], true);
+        engine.flush().unwrap();
 
         let res = crate::cypher::execute(
             &engine,
@@ -1147,6 +1151,7 @@ mod executor_tests {
             ],
             true,
         );
+        engine.flush().unwrap();
 
         let res = crate::cypher::execute(
             &engine,
@@ -1184,6 +1189,7 @@ mod executor_tests {
         let mut engine = GraphEngineV2::create_ephemeral();
         engine.add_nodes(vec![person(1, "alice"), person(2, "bob"), person(3, "carol")]);
         engine.add_edges(vec![rel(1, 2, "KNOWS"), rel(2, 3, "KNOWS")], true);
+        engine.flush().unwrap();
 
         let res = crate::cypher::execute(
             &engine,
@@ -1364,6 +1370,7 @@ mod executor_tests {
                 semantic_id: None,
             },
         ]);
+        engine.flush().unwrap();
         engine
     }
 
@@ -2520,6 +2527,9 @@ mod integration_tests {
             true, // skip_validation for test speed
         );
 
+        // B2 (RFD-71): public reads see only the published manifest version, so
+        // flush/commit the staged write buffer before the test queries it.
+        engine.flush().unwrap();
         engine
     }
 
@@ -2907,6 +2917,7 @@ mod integration_tests {
             })
             .collect();
         engine.add_edges(edges, true);
+        engine.flush().unwrap();
         engine
     }
 
@@ -3110,6 +3121,7 @@ mod integration_tests {
             mk(22, "c", Some(r#"{"lineCount": 30}"#)),
             mk(23, "d", None),
         ]);
+        engine.flush().unwrap();
         engine
     }
 
@@ -3285,6 +3297,7 @@ mod integration_tests {
             mk(31, "a.js", 2),
             mk(32, "b.js", 10),
         ]);
+        engine.flush().unwrap();
         let result = execute(
             &engine,
             "MATCH (n:FUNCTION) RETURN n.file, SUM(n.lineCount) AS total",
@@ -3539,6 +3552,7 @@ mod integration_tests {
             })
             .collect();
         engine.add_nodes(nodes);
+        engine.flush().unwrap();
         engine
     }
 
@@ -3719,6 +3733,7 @@ mod integration_tests {
             metadata: None,
             semantic_id: None,
         }]);
+        engine.flush().unwrap();
 
         let result = execute(
             &engine,
@@ -3761,6 +3776,7 @@ mod integration_tests {
             mk(22, "m.js", 100),
             mk(23, "z.js", 1),
         ]);
+        engine.flush().unwrap();
         engine
     }
 
@@ -4155,6 +4171,7 @@ mod return_star_tests {
             mke(11, 12, "CALLS"),
             mke(11, 13, "CALLS"),
         ], false);
+        e.flush().unwrap();
         e
     }
 

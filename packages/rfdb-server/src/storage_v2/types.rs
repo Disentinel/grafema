@@ -18,8 +18,24 @@ pub const MAGIC_V2: [u8; 4] = *b"SGV2";
 /// Magic bytes for v1 segments (used in error detection)
 pub const MAGIC_V1: [u8; 4] = *b"SGRF";
 
-/// Format version
+/// Format version — v2 base columnar format, NO derived (Datalog) columns.
+///
+/// Segments written before the derive engine Gate B work carry this version.
+/// They MUST remain readable forever; readers detect this version and return
+/// DEFAULT derived fields (see `ProvenanceV2::none`, `TagV2::bool_one`, and the
+/// `tx_created=0` / `tx_invalidated=u64::MAX` defaults).
 pub const FORMAT_VERSION: u16 = 2;
+
+/// Format version — v2 base format PLUS the §8.1 derived columns:
+/// per-record provenance, tag, and tx_created/tx_invalidated.
+///
+/// A reader distinguishes v2-derived from plain v2 purely by this header
+/// version field; the derived columns are addressed by NEW footer offsets that
+/// are only present (and only non-zero) in version-3 segments.
+pub const FORMAT_VERSION_DERIVED: u16 = 3;
+
+/// Highest segment version this build can read.
+pub const MAX_READABLE_VERSION: u16 = FORMAT_VERSION_DERIVED;
 
 /// Header size in bytes (fixed, power-of-2, cache-line friendly)
 pub const HEADER_SIZE: usize = 32;
@@ -27,9 +43,28 @@ pub const HEADER_SIZE: usize = 32;
 /// Footer index magic (ASCII "FTR2")
 pub const FOOTER_INDEX_MAGIC: u32 = 0x4654_5232;
 
-/// Footer index size in bytes: 5 * u64 + u32(size) + u32(magic) = 48 bytes
-/// Self-describing: footer_index_size field allows future extension.
+/// Footer index size in bytes for the BASE (v2, no derived columns) format:
+/// 5 * u64 + u32(size) + u32(magic) = 48 bytes.
+/// Self-describing: footer_index_size field allows forward-compatible growth.
 pub const FOOTER_INDEX_SIZE: usize = 48;
+
+/// Footer index size in bytes for the DERIVED (v3) format. Adds three u64
+/// offsets (provenance / tag-directory / tx) BEFORE the `footer_index_size`
+/// field, per the forward-compatible footer contract:
+/// 8 * u64 + u32(size) + u32(magic) = 72 bytes.
+pub const FOOTER_INDEX_SIZE_DERIVED: usize = 72;
+
+/// Reserved semiring id for the BoolTag semiring (the default / "check" tag).
+/// A BoolTag carries no per-record bytes (len = 0); its value is always one().
+pub const BOOLTAG_SEMIRING_ID: u16 = 0;
+
+/// Semiring id for `CountTag` (Gate C): carrier `i64`, encoded as 8 little-endian
+/// bytes in the tag payload.
+pub const COUNTTAG_SEMIRING_ID: u16 = 1;
+
+/// Semiring id for `ConfTag` (Gate C): carrier `u32` neg-log units, encoded as 4
+/// little-endian bytes in the tag payload.
+pub const CONFTAG_SEMIRING_ID: u16 = 2;
 
 /// Bloom filter: bits per key (10 → ~0.82% FPR with k=7)
 pub const BLOOM_BITS_PER_KEY: usize = 10;
@@ -85,6 +120,7 @@ pub struct SegmentHeaderV2 {
 }
 
 impl SegmentHeaderV2 {
+    /// Construct a header for the BASE v2 format (no derived columns).
     pub fn new(segment_type: SegmentType, record_count: u64, footer_offset: u64) -> Self {
         Self {
             magic: MAGIC_V2,
@@ -93,6 +129,22 @@ impl SegmentHeaderV2 {
             record_count,
             footer_offset,
         }
+    }
+
+    /// Construct a header for the DERIVED v3 format (provenance/tag/tx columns).
+    pub fn new_derived(segment_type: SegmentType, record_count: u64, footer_offset: u64) -> Self {
+        Self {
+            magic: MAGIC_V2,
+            version: FORMAT_VERSION_DERIVED,
+            segment_type,
+            record_count,
+            footer_offset,
+        }
+    }
+
+    /// Whether this segment carries the §8.1 derived columns (version 3).
+    pub fn has_derived_columns(&self) -> bool {
+        self.version >= FORMAT_VERSION_DERIVED
     }
 
     /// Validate header fields. Returns specific errors for v1 segments.
@@ -108,10 +160,12 @@ impl SegmentHeaderV2 {
                 self.magic
             )));
         }
-        if self.version != FORMAT_VERSION {
+        // Both the base v2 format and the derived v3 format are readable.
+        // Older (v1) and unknown-future versions are rejected explicitly.
+        if self.version < FORMAT_VERSION || self.version > MAX_READABLE_VERSION {
             return Err(GraphError::InvalidFormat(format!(
-                "Unsupported segment version: {}",
-                self.version
+                "Unsupported segment version: {} (readable range {}..={})",
+                self.version, FORMAT_VERSION, MAX_READABLE_VERSION
             )));
         }
         Ok(())
@@ -166,6 +220,7 @@ impl SegmentHeaderV2 {
 /// review). Future versions add fields before `footer_index_size` and increase
 /// the size value. Old readers can detect unknown sizes and error gracefully.
 ///
+/// Base (v2) layout — 48 bytes:
 /// ```text
 /// Offset  Size  Field
 /// +0      8     bloom_offset: u64
@@ -173,9 +228,32 @@ impl SegmentHeaderV2 {
 /// +16     8     zone_maps_offset: u64
 /// +24     8     string_table_offset: u64
 /// +32     8     data_end_offset: u64
-/// +40     4     footer_index_size: u32 (= 48 for v1)
+/// +40     4     footer_index_size: u32 (= 48 base, 72 derived)
 /// +44     4     magic: u32 = 0x46545232 ("FTR2")
 /// ```
+///
+/// Derived (v3) layout — 72 bytes. The three derived offsets are inserted
+/// BEFORE `footer_index_size`, per the forward-compatible footer contract:
+/// ```text
+/// Offset  Size  Field
+/// +0      8     bloom_offset: u64
+/// +8      8     dst_bloom_offset: u64
+/// +16     8     zone_maps_offset: u64
+/// +24     8     string_table_offset: u64
+/// +32     8     data_end_offset: u64
+/// +40     8     provenance_offset: u64   (NEW — start of provenance column)
+/// +48     8     tag_dir_offset: u64      (NEW — start of tag directory column)
+/// +56     8     tx_offset: u64           (NEW — start of tx column)
+/// +64     4     footer_index_size: u32 (= 72)
+/// +68     4     magic: u32 = 0x46545232 ("FTR2")
+/// ```
+///
+/// A base-format reader sees `footer_index_size = 48` and never touches the
+/// derived offsets (they stay 0). A derived-format reader sees `72` and reads
+/// all three. Old readers reading a future (larger) footer read the known
+/// prefix and ignore extra bytes — but a NEW field that shifts the position of
+/// `footer_index_size`/`magic` is why those two live at the END and are located
+/// relative to the slice tail, not a fixed offset.
 #[derive(Debug, Clone, Copy)]
 pub struct FooterIndex {
     pub bloom_offset: u64,
@@ -183,25 +261,32 @@ pub struct FooterIndex {
     pub zone_maps_offset: u64,
     pub string_table_offset: u64,
     pub data_end_offset: u64,
+    /// Start of the provenance column. 0 in base-format segments.
+    pub provenance_offset: u64,
+    /// Start of the tag directory column. 0 in base-format segments.
+    pub tag_dir_offset: u64,
+    /// Start of the tx (created/invalidated) column. 0 in base-format segments.
+    pub tx_offset: u64,
     pub footer_index_size: u32,
     pub magic: u32,
 }
 
 impl FooterIndex {
-    /// Parse footer index from byte slice (>= FOOTER_INDEX_SIZE bytes).
+    /// Parse footer index from a byte slice. The slice must contain at least
+    /// `footer_index_size` bytes; the trailing `footer_index_size`/`magic` pair
+    /// is read relative to that size so both base (48) and derived (72) layouts
+    /// parse from the same code, and a future larger footer still yields the
+    /// known fields (forward-compatible).
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         if bytes.len() < FOOTER_INDEX_SIZE {
             return Err(GraphError::InvalidFormat(
                 "Footer index too small".into(),
             ));
         }
-        let bloom_offset = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
-        let dst_bloom_offset = u64::from_le_bytes(bytes[8..16].try_into().unwrap());
-        let zone_maps_offset = u64::from_le_bytes(bytes[16..24].try_into().unwrap());
-        let string_table_offset = u64::from_le_bytes(bytes[24..32].try_into().unwrap());
-        let data_end_offset = u64::from_le_bytes(bytes[32..40].try_into().unwrap());
-        let footer_index_size = u32::from_le_bytes(bytes[40..44].try_into().unwrap());
-        let magic = u32::from_le_bytes(bytes[44..48].try_into().unwrap());
+        // The size+magic pair is always the last 8 bytes of the footer index.
+        let tail = bytes.len();
+        let footer_index_size = u32::from_le_bytes(bytes[tail - 8..tail - 4].try_into().unwrap());
+        let magic = u32::from_le_bytes(bytes[tail - 4..tail].try_into().unwrap());
 
         if magic != FOOTER_INDEX_MAGIC {
             return Err(GraphError::InvalidFormat(
@@ -214,8 +299,24 @@ impl FooterIndex {
                 footer_index_size
             )));
         }
-        // Future: if footer_index_size > FOOTER_INDEX_SIZE, we still read
-        // the known fields and ignore extra bytes. Forward-compatible.
+
+        let bloom_offset = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
+        let dst_bloom_offset = u64::from_le_bytes(bytes[8..16].try_into().unwrap());
+        let zone_maps_offset = u64::from_le_bytes(bytes[16..24].try_into().unwrap());
+        let string_table_offset = u64::from_le_bytes(bytes[24..32].try_into().unwrap());
+        let data_end_offset = u64::from_le_bytes(bytes[32..40].try_into().unwrap());
+
+        // Derived offsets are present only in the 72-byte (or larger) layout.
+        let (provenance_offset, tag_dir_offset, tx_offset) =
+            if (footer_index_size as usize) >= FOOTER_INDEX_SIZE_DERIVED {
+                (
+                    u64::from_le_bytes(bytes[40..48].try_into().unwrap()),
+                    u64::from_le_bytes(bytes[48..56].try_into().unwrap()),
+                    u64::from_le_bytes(bytes[56..64].try_into().unwrap()),
+                )
+            } else {
+                (0, 0, 0)
+            };
 
         Ok(Self {
             bloom_offset,
@@ -223,21 +324,54 @@ impl FooterIndex {
             zone_maps_offset,
             string_table_offset,
             data_end_offset,
+            provenance_offset,
+            tag_dir_offset,
+            tx_offset,
             footer_index_size,
             magic,
         })
     }
 
-    /// Write footer index to writer (exactly FOOTER_INDEX_SIZE bytes).
+    /// Write footer index to writer. Emits the base 48-byte layout when
+    /// `footer_index_size == FOOTER_INDEX_SIZE`, or the derived 72-byte layout
+    /// when `footer_index_size == FOOTER_INDEX_SIZE_DERIVED`.
     pub fn write_to<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_all(&self.bloom_offset.to_le_bytes())?;
         writer.write_all(&self.dst_bloom_offset.to_le_bytes())?;
         writer.write_all(&self.zone_maps_offset.to_le_bytes())?;
         writer.write_all(&self.string_table_offset.to_le_bytes())?;
         writer.write_all(&self.data_end_offset.to_le_bytes())?;
+        if self.footer_index_size as usize >= FOOTER_INDEX_SIZE_DERIVED {
+            writer.write_all(&self.provenance_offset.to_le_bytes())?;
+            writer.write_all(&self.tag_dir_offset.to_le_bytes())?;
+            writer.write_all(&self.tx_offset.to_le_bytes())?;
+        }
         writer.write_all(&self.footer_index_size.to_le_bytes())?;
         writer.write_all(&self.magic.to_le_bytes())?;
         Ok(())
+    }
+
+    /// Construct a base (v2) footer index with no derived columns.
+    #[allow(clippy::too_many_arguments)]
+    pub fn base(
+        bloom_offset: u64,
+        dst_bloom_offset: u64,
+        zone_maps_offset: u64,
+        string_table_offset: u64,
+        data_end_offset: u64,
+    ) -> Self {
+        Self {
+            bloom_offset,
+            dst_bloom_offset,
+            zone_maps_offset,
+            string_table_offset,
+            data_end_offset,
+            provenance_offset: 0,
+            tag_dir_offset: 0,
+            tx_offset: 0,
+            footer_index_size: FOOTER_INDEX_SIZE as u32,
+            magic: FOOTER_INDEX_MAGIC,
+        }
     }
 }
 
@@ -284,6 +418,104 @@ pub struct EdgeRecordV2 {
     pub edge_type: String,
     /// JSON metadata string. "" = no metadata.
     pub metadata: String,
+}
+
+// ── Derived (derive engine §8.1) Per-Record Fields ───────────────────
+
+/// Per-record provenance — spec §8.1 `provenance { rule_ast_hash | plugin_id, generation }`.
+///
+/// For plain EDB analyzer facts this is `none()`: `rule_ast_hash = 0` (sentinel)
+/// and `generation = 0`. A non-zero `rule_ast_hash` identifies the normalized
+/// rule AST (or plugin) that derived the fact; `generation` is the run/manifest
+/// generation in which it was (re)derived.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProvenanceV2 {
+    /// Hash of the normalized rule AST, or plugin id. 0 = none (plain EDB fact).
+    pub rule_ast_hash: u32,
+    /// Run/manifest generation in which the fact was (re)derived. 0 = none.
+    pub generation: u64,
+}
+
+impl ProvenanceV2 {
+    /// The default provenance for a plain EDB analyzer fact: no rule, gen 0.
+    pub const fn none() -> Self {
+        Self {
+            rule_ast_hash: 0,
+            generation: 0,
+        }
+    }
+}
+
+impl Default for ProvenanceV2 {
+    fn default() -> Self {
+        Self::none()
+    }
+}
+
+/// Per-record semiring tag — spec §8.1/§6 `tag(semiring_id: u16, len: u16, bytes)`.
+///
+/// `BoolTag` (the default / "check" semiring, `semiring_id = BOOLTAG_SEMIRING_ID`)
+/// carries no per-record bytes (`bytes` empty, len 0); its value is always one().
+/// Other semirings (CountTag, ConfTag, … in Gate C) carry their encoded payload
+/// in `bytes` — the encoding path exists now so no further format change is
+/// needed to drop them in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TagV2 {
+    pub semiring_id: u16,
+    pub bytes: Vec<u8>,
+}
+
+impl TagV2 {
+    /// The BoolTag one() value: reserved semiring id, empty payload.
+    pub fn bool_one() -> Self {
+        Self {
+            semiring_id: BOOLTAG_SEMIRING_ID,
+            bytes: Vec::new(),
+        }
+    }
+
+    /// Whether this is a BoolTag (default semiring, empty payload).
+    pub fn is_bool(&self) -> bool {
+        self.semiring_id == BOOLTAG_SEMIRING_ID
+    }
+}
+
+impl Default for TagV2 {
+    fn default() -> Self {
+        Self::bool_one()
+    }
+}
+
+/// Default open-ended `tx_invalidated`: the fact is currently live.
+pub const TX_OPEN: u64 = u64::MAX;
+
+/// Per-record derived fields bundled together — what the writer accepts and the
+/// reader returns. Defaults match a plain EDB analyzer fact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DerivedFields {
+    pub provenance: ProvenanceV2,
+    pub tag: TagV2,
+    pub tx_created: u64,
+    pub tx_invalidated: u64,
+}
+
+impl DerivedFields {
+    /// Defaults for a plain EDB analyzer fact: no provenance, BoolTag one(),
+    /// `tx_created = 0`, `tx_invalidated = TX_OPEN`.
+    pub fn edb_default() -> Self {
+        Self {
+            provenance: ProvenanceV2::none(),
+            tag: TagV2::bool_one(),
+            tx_created: 0,
+            tx_invalidated: TX_OPEN,
+        }
+    }
+}
+
+impl Default for DerivedFields {
+    fn default() -> Self {
+        Self::edb_default()
+    }
 }
 
 // ── Segment Metadata ───────────────────────────────────────────────
@@ -466,15 +698,7 @@ mod tests {
 
     #[test]
     fn test_footer_index_write_read_roundtrip() {
-        let fi = FooterIndex {
-            bloom_offset: 100,
-            dst_bloom_offset: 200,
-            zone_maps_offset: 300,
-            string_table_offset: 400,
-            data_end_offset: 500,
-            footer_index_size: FOOTER_INDEX_SIZE as u32,
-            magic: FOOTER_INDEX_MAGIC,
-        };
+        let fi = FooterIndex::base(100, 200, 300, 400, 500);
         let mut buf = Vec::new();
         fi.write_to(&mut buf).unwrap();
         assert_eq!(buf.len(), FOOTER_INDEX_SIZE);
@@ -534,25 +758,51 @@ mod tests {
 
     #[test]
     fn test_footer_index_forward_compat() {
-        // A future footer with larger size should still parse the known fields
-        let fi = FooterIndex {
-            bloom_offset: 100,
-            dst_bloom_offset: 0,
-            zone_maps_offset: 200,
-            string_table_offset: 300,
-            data_end_offset: 400,
-            footer_index_size: 56, // future: 48 + 8 extra bytes
-            magic: FOOTER_INDEX_MAGIC,
-        };
+        // A future footer with larger size should still parse the known fields.
+        // We write a base footer (48B), then declare a larger size and append
+        // extra bytes. Because size+magic are read from the slice tail, the
+        // known prefix still parses and the derived offsets stay 0 (since
+        // 56 < FOOTER_INDEX_SIZE_DERIVED).
+        let mut fi = FooterIndex::base(100, 0, 200, 300, 400);
+        fi.footer_index_size = 56; // future: 48 + 8 extra bytes
         let mut buf = Vec::new();
-        fi.write_to(&mut buf).unwrap();
-        // Append 8 hypothetical extra bytes (simulating future version)
-        buf.extend_from_slice(&[0u8; 8]);
+        // Manually emit base prefix then size/magic at the tail (write_to would
+        // not pad to 56), simulating a 56-byte future footer.
+        buf.extend_from_slice(&100u64.to_le_bytes());
+        buf.extend_from_slice(&0u64.to_le_bytes());
+        buf.extend_from_slice(&200u64.to_le_bytes());
+        buf.extend_from_slice(&300u64.to_le_bytes());
+        buf.extend_from_slice(&400u64.to_le_bytes());
+        buf.extend_from_slice(&[0u8; 8]); // hypothetical future field
+        buf.extend_from_slice(&56u32.to_le_bytes());
+        buf.extend_from_slice(&FOOTER_INDEX_MAGIC.to_le_bytes());
+        assert_eq!(buf.len(), 56);
 
-        // Can still parse from the first 48 bytes
         let parsed = FooterIndex::from_bytes(&buf).unwrap();
         assert_eq!(parsed.bloom_offset, 100);
+        assert_eq!(parsed.data_end_offset, 400);
         assert_eq!(parsed.footer_index_size, 56);
+    }
+
+    #[test]
+    fn test_footer_index_derived_roundtrip() {
+        let mut fi = FooterIndex::base(100, 200, 300, 400, 500);
+        fi.footer_index_size = FOOTER_INDEX_SIZE_DERIVED as u32;
+        fi.provenance_offset = 600;
+        fi.tag_dir_offset = 700;
+        fi.tx_offset = 800;
+
+        let mut buf = Vec::new();
+        fi.write_to(&mut buf).unwrap();
+        assert_eq!(buf.len(), FOOTER_INDEX_SIZE_DERIVED);
+
+        let parsed = FooterIndex::from_bytes(&buf).unwrap();
+        assert_eq!(parsed.bloom_offset, 100);
+        assert_eq!(parsed.data_end_offset, 500);
+        assert_eq!(parsed.provenance_offset, 600);
+        assert_eq!(parsed.tag_dir_offset, 700);
+        assert_eq!(parsed.tx_offset, 800);
+        assert_eq!(parsed.footer_index_size, FOOTER_INDEX_SIZE_DERIVED as u32);
     }
 
     // ── CommitDelta tests ─────────────────────────────────────────

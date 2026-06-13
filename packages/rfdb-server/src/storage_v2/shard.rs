@@ -777,6 +777,42 @@ impl Shard {
         self.write_buffer.iter_nodes()
     }
 
+    /// Borrow a live, already-opened L0/L1 node segment by its `segment_id`.
+    ///
+    /// Used by the MVCC read path (`ReadSnapshot`) for ephemeral stores, where
+    /// segments live only in memory and have no file to open via `SegmentCache`.
+    /// Scans descriptors (small Vecs) to map `segment_id` → opened segment.
+    /// Returns None if this shard does not currently hold that segment open.
+    pub fn node_segment_by_id(&self, segment_id: u64) -> Option<&NodeSegmentV2> {
+        if let Some(d) = &self.l1_node_descriptor {
+            if d.segment_id == segment_id {
+                return self.l1_node_segment.as_ref();
+            }
+        }
+        for (i, d) in self.node_descriptors.iter().enumerate() {
+            if d.segment_id == segment_id {
+                return self.node_segments.get(i);
+            }
+        }
+        None
+    }
+
+    /// Borrow a live, already-opened L0/L1 edge segment by its `segment_id`.
+    /// Companion to `node_segment_by_id` for the MVCC ephemeral read path.
+    pub fn edge_segment_by_id(&self, segment_id: u64) -> Option<&EdgeSegmentV2> {
+        if let Some(d) = &self.l1_edge_descriptor {
+            if d.segment_id == segment_id {
+                return self.l1_edge_segment.as_ref();
+            }
+        }
+        for (i, d) in self.edge_descriptors.iter().enumerate() {
+            if d.segment_id == segment_id {
+                return self.edge_segments.get(i);
+            }
+        }
+        None
+    }
+
     /// Clear L0 segments after compaction (they've been merged into L1).
     /// Also clears tombstones since they were applied during merge.
     pub fn clear_l0_after_compaction(&mut self) {
@@ -1077,7 +1113,11 @@ impl Shard {
     }
 
     /// Match node fields against AttrQuery-compatible filters.
-    fn matches_attr_filters(
+    ///
+    /// `pub(crate)` so the MVCC snapshot read path (`MultiShardStore::*_at`)
+    /// can reuse the exact same filter semantics when scanning version-pinned
+    /// segments instead of the live shard.
+    pub(crate) fn matches_attr_filters(
         node_type_value: &str,
         file_value: &str,
         name_value: &str,
@@ -2099,20 +2139,118 @@ impl Shard {
 // -- Stats --------------------------------------------------------------------
 
 impl Shard {
-    /// Total node count (write buffer + all node segments + L1).
-    /// Note: may overcount if same node ID exists in multiple segments
-    /// (exact count requires dedup scan). For stats purposes only.
+    /// Number of LIVE nodes (write buffer + all node segments + L1).
+    ///
+    /// Counts each id exactly once and excludes tombstoned ids — same
+    /// liveness semantics as `get_node`/`node_exists`/`count_by_type`.
+    /// A node id may appear in multiple segments (e.g. re-analysis re-adds
+    /// the same id with new content into a newer segment while the old copy
+    /// lingers in an older one); without dedup such ids would be counted
+    /// once per segment. Exact counting is O(N) over records given the
+    /// segment model — the same cost as `count_by_type`, which is the
+    /// authoritative count path.
     pub fn node_count(&self) -> usize {
-        let l0_count: usize = self.node_segments.iter().map(|s| s.record_count()).sum();
-        let l1_count = self.l1_node_segment.as_ref().map_or(0, |s| s.record_count());
-        self.write_buffer.node_count() + l0_count + l1_count
+        let mut seen_ids: HashSet<u128> = HashSet::new();
+        let mut count = 0usize;
+
+        // Step 1: Write buffer (authoritative, newest).
+        for node in self.write_buffer.iter_nodes() {
+            if !seen_ids.insert(node.id) {
+                continue;
+            }
+            if self.tombstones.contains_node(node.id) {
+                continue;
+            }
+            count += 1;
+        }
+
+        // Step 2: L0 segments (newest-to-oldest for newest-wins dedup).
+        for i in (0..self.node_segments.len()).rev() {
+            let seg = &self.node_segments[i];
+            for j in 0..seg.record_count() {
+                let id = seg.get_id(j);
+                if !seen_ids.insert(id) {
+                    continue;
+                }
+                if self.tombstones.contains_node(id) {
+                    continue;
+                }
+                count += 1;
+            }
+        }
+
+        // Step 3: L1 segment (oldest, compacted).
+        if let Some(l1_seg) = &self.l1_node_segment {
+            for j in 0..l1_seg.record_count() {
+                let id = l1_seg.get_id(j);
+                if !seen_ids.insert(id) {
+                    continue;
+                }
+                if self.tombstones.contains_node(id) {
+                    continue;
+                }
+                count += 1;
+            }
+        }
+
+        count
     }
 
-    /// Total edge count (write buffer + all edge segments + L1).
+    /// Number of LIVE edges (write buffer + all edge segments + L1).
+    ///
+    /// Counts each `(src, dst, edge_type)` key exactly once and excludes
+    /// tombstoned keys — same liveness semantics as `get_all_edges`.
     pub fn edge_count(&self) -> usize {
-        let l0_count: usize = self.edge_segments.iter().map(|s| s.record_count()).sum();
-        let l1_count = self.l1_edge_segment.as_ref().map_or(0, |s| s.record_count());
-        self.write_buffer.edge_count() + l0_count + l1_count
+        let mut seen_keys: HashSet<(u128, u128, Arc<str>)> = HashSet::new();
+        let mut count = 0usize;
+
+        // Step 1: Write buffer (authoritative, newest).
+        for edge in self.write_buffer.iter_edges() {
+            let key = (edge.src, edge.dst, Arc::from(edge.edge_type.as_str()));
+            if !seen_keys.insert(key) {
+                continue;
+            }
+            if self.tombstones.contains_edge(edge.src, edge.dst, &edge.edge_type) {
+                continue;
+            }
+            count += 1;
+        }
+
+        // Step 2: L0 segments (newest-to-oldest for newest-wins dedup).
+        for seg in self.edge_segments.iter().rev() {
+            for j in 0..seg.record_count() {
+                let src = seg.get_src(j);
+                let dst = seg.get_dst(j);
+                let edge_type = seg.get_edge_type(j);
+                let key = (src, dst, Arc::from(edge_type));
+                if !seen_keys.insert(key) {
+                    continue;
+                }
+                if self.tombstones.contains_edge(src, dst, edge_type) {
+                    continue;
+                }
+                count += 1;
+            }
+        }
+
+        // Step 3: L1 segment (oldest, compacted).
+        if let Some(l1_seg) = &self.l1_edge_segment {
+            for j in 0..l1_seg.record_count() {
+                let src = l1_seg.get_src(j);
+                let dst = l1_seg.get_dst(j);
+                let edge_type = l1_seg.get_edge_type(j);
+                let key = (src, dst, Arc::from(edge_type));
+                if !seen_keys.insert(key) {
+                    continue;
+                }
+                if self.tombstones.contains_edge(src, dst, edge_type) {
+                    continue;
+                }
+                count += 1;
+            }
+        }
+
+        count
     }
 
     /// Number of loaded segments: (node_segments, edge_segments).

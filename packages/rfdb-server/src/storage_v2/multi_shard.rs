@@ -35,7 +35,8 @@ use crate::error::{GraphError, Result};
 use crate::storage_v2::compaction::{CompactionConfig, CompactionResult};
 use crate::storage_v2::index::{build_inverted_indexes, GlobalIndex, IndexEntry, InvertedIndex};
 use crate::storage_v2::index::token::{TokenIndex, TokenMatch, tokenize_name};
-use crate::storage_v2::manifest::{ManifestStore, SegmentDescriptor};
+use crate::storage_v2::manifest::{ManifestEdit, ManifestStore, SegmentDescriptor};
+use crate::storage_v2::read_snapshot::{ReadSnapshot, SegmentCache};
 use crate::storage_v2::segment::{self, EdgeSegmentV2, NodeSegmentV2};
 use crate::storage_v2::shard::{Shard, ShardDiagnostics, TombstoneSet};
 use crate::storage_v2::shard_planner::ShardPlanner;
@@ -125,6 +126,121 @@ pub struct MultiShardStore {
     /// Intern pool for edge type strings. Edge types have ~15 distinct values,
     /// so interning saves ~40 bytes per tombstone entry (4M+ entries on large graphs).
     edge_type_intern: HashMap<String, Arc<str>>,
+
+    /// MVCC segment cache (RFD-71 B1): `segment_id -> Arc<opened immutable segment>`.
+    /// Decouples version-pinned reads from whether the owning `Shard` still holds
+    /// the segment open. Disk-backed only; ephemeral stores resolve via the live
+    /// shard. Thread-safe (interior `RwLock`s) so reads stay `&self`.
+    segment_cache: SegmentCache,
+
+    /// MVCC B4: `file -> last-committed manifest version` for write-write
+    /// conflict detection at the concurrent commit point. Interior-mutable so
+    /// `commit_batch_private(&self)` can read it (lock-free build is unaffected)
+    /// and update it under the manifest mutex (the single serialized section).
+    /// Empty on open; reconstructed lazily as commits flow (a missing entry
+    /// means "no committed version has touched this file since open" — which is
+    /// conflict-free for any snapshot, the correct conservative default).
+    file_last_committed_version: std::sync::Mutex<HashMap<String, u64>>,
+
+    /// MVCC B4: monotonic count of conflict-driven commit retries (every abort
+    /// at the commit point increments this). Exposed for diagnostics / the B4
+    /// acceptance test; a rising value is a work-distribution alarm.
+    commit_conflict_retries: Arc<std::sync::atomic::AtomicU64>,
+
+    /// MVCC B4: live count of commits currently inside the LOCK-FREE build/flush
+    /// region (phases 1–7 of `commit_batch_private`) — i.e. NOT holding the
+    /// manifest commit-point mutex. Incremented on entry to the lock-free region
+    /// and decremented before the phase-8 commit point.
+    commit_build_in_flight: Arc<std::sync::atomic::AtomicU64>,
+    /// Peak value ever observed for `commit_build_in_flight`. This is the
+    /// rigorous parallelism witness: peak > 1 PROVES two commits executed the
+    /// no-lock build/flush phase SIMULTANEOUSLY — structurally impossible under
+    /// the abandoned 2PL path (which held a global + per-shard lock across the
+    /// whole commit, so at most one commit body ran at a time). Distinct from a
+    /// probe wrapping the whole call, which 2PL would also trip (3 threads block
+    /// on the lock while 1 runs). This counter excludes the serialized region.
+    commit_build_peak: Arc<std::sync::atomic::AtomicU64>,
+
+    /// MVCC C1 (group-commit): the batch queue + leader flag that amortize the
+    /// commit-point durable write (manifest edit + index + current.json, each an
+    /// fsync under `DurabilityMode::Strict`) across a BATCH of concurrent
+    /// commits. Each commit finishes its LOCK-FREE build/flush (phases 0–7),
+    /// then enqueues its prepared output here; one thread becomes LEADER and
+    /// performs ONE `commit_edit` for the whole non-conflicting batch (one set of
+    /// fsyncs instead of N). Followers wait on their own private result slot — no
+    /// lock held while waiting. This `Mutex` is a strict LEAF: it is acquired
+    /// only to enqueue / drain, and is ALWAYS released before the manifest mutex
+    /// (the single serialization point) is taken, so it introduces no lock-order
+    /// cycle. See `commit_batch_private` phase 8.
+    group_commit: Arc<GroupCommitQueue>,
+
+    /// MVCC C1: running sum of batch sizes ever drained by a leader, and the
+    /// number of batches (leader publishes). `sum / count` is the observed mean
+    /// group-commit batch size — the amortization witness (`> 1` ⇒ real batching;
+    /// `== 1` ⇒ no merging happened and C1 gave no fsync savings). Exposed via
+    /// `group_commit_batch_size()` / `group_commit_batches()`.
+    group_commit_batch_size_sum: Arc<std::sync::atomic::AtomicU64>,
+    group_commit_batches: Arc<std::sync::atomic::AtomicU64>,
+    /// MVCC C1: largest single batch a leader ever drained (peak fan-in).
+    group_commit_batch_size_max: Arc<std::sync::atomic::AtomicU64>,
+}
+
+// ── MVCC C1: group-commit batch protocol ───────────────────────────
+
+/// A commit that has finished its LOCK-FREE build/flush (phases 0–7 of
+/// `commit_batch_private`) and is waiting at the commit point to be published by
+/// the batch leader. Carries everything the leader needs to fold this commit
+/// into the single batched `ManifestEdit`, plus a private result slot the leader
+/// writes and signals once the batch is durable.
+struct PendingCommit {
+    /// Conflict key: the files this commit (re-)analysed.
+    changed_files: Vec<String>,
+    /// Snapshot version this commit was built against (inter-batch conflict key).
+    snapshot_version: u64,
+    /// Immutable segment descriptors written privately in phase 7.
+    new_node_descs: Vec<SegmentDescriptor>,
+    new_edge_descs: Vec<SegmentDescriptor>,
+    /// Tombstone delta this commit adds (file's old nodes/edges).
+    tombstone_node_ids: Vec<u128>,
+    tombstone_edge_keys: Vec<(u128, u128, Arc<str>)>,
+    /// Re-added ids that supersede (un-tombstone) any matching tombstone.
+    untombstoned_nodes: Vec<u128>,
+    /// String form for the on-disk O(Δ) `removed_tombstone_edges` edit record.
+    untombstoned_edges: Vec<(u128, u128, String)>,
+    /// Arc<str>-interned form for removing from the leader's cumulative
+    /// Arc-keyed tombstone set (avoids a per-commit intern pool in the leader).
+    untombstoned_edges_arc: Vec<(u128, u128, Arc<str>)>,
+    /// Opened segments to register in the cache after a successful publish.
+    opened_nodes: Vec<(u64, Arc<NodeSegmentV2>)>,
+    opened_edges: Vec<(u64, Arc<EdgeSegmentV2>)>,
+    /// Tags this commit carries (the batched edit takes the leader's union;
+    /// here we keep them so the FIRST non-conflicting commit's tags are applied
+    /// — RFDB tags are rarely set on the hot ingest path).
+    tags: HashMap<String, String>,
+    /// CommitDelta scaffolding the leader echoes back to this commit verbatim
+    /// (only `manifest_version` is filled in by the leader at publish time).
+    delta_template: CommitDelta,
+    /// Private wake slot: `(result, woken)` guarded by a mutex + condvar. The
+    /// leader writes `Some(result)` then notifies; the owner waits on it. NOT
+    /// shared with any other commit ⇒ no cross-commit lock contention / cycle.
+    result: Arc<(std::sync::Mutex<Option<Result<CommitDelta>>>, std::sync::Condvar)>,
+}
+
+/// The shared group-commit queue. `pending` collects commits that have reached
+/// the commit point; `leader_active` is the single-leader flag. Guarded by one
+/// `Mutex` (a leaf — never held across the manifest mutex or any I/O).
+#[derive(Default)]
+struct GroupCommitInner {
+    pending: std::collections::VecDeque<PendingCommit>,
+    /// True while a leader is in its drain→publish→wake cycle. A second arrival
+    /// that sees this becomes a FOLLOWER (enqueue + wait); the active leader will
+    /// drain it in a subsequent round before clearing the flag.
+    leader_active: bool,
+}
+
+#[derive(Default)]
+struct GroupCommitQueue {
+    inner: std::sync::Mutex<GroupCommitInner>,
 }
 
 // ── Constructors ───────────────────────────────────────────────────
@@ -158,6 +274,15 @@ impl MultiShardStore {
             enrichment_edge_to_shard: HashMap::new(),
             file_to_node_ids: HashMap::new(),
             edge_type_intern: HashMap::new(),
+            segment_cache: SegmentCache::new(),
+            file_last_committed_version: std::sync::Mutex::new(HashMap::new()),
+            commit_conflict_retries: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            commit_build_in_flight: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            commit_build_peak: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            group_commit: Arc::new(GroupCommitQueue::default()),
+            group_commit_batch_size_sum: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            group_commit_batches: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            group_commit_batch_size_max: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })
     }
 
@@ -177,14 +302,14 @@ impl MultiShardStore {
         let mut node_descs_by_shard: HashMap<u16, Vec<SegmentDescriptor>> = HashMap::new();
         let mut edge_descs_by_shard: HashMap<u16, Vec<SegmentDescriptor>> = HashMap::new();
 
-        for desc in &current.node_segments {
+        for desc in current.node_segments.iter() {
             let shard_id = desc.shard_id.unwrap_or(0);
             node_descs_by_shard
                 .entry(shard_id)
                 .or_default()
                 .push(desc.clone());
         }
-        for desc in &current.edge_segments {
+        for desc in current.edge_segments.iter() {
             let shard_id = desc.shard_id.unwrap_or(0);
             edge_descs_by_shard
                 .entry(shard_id)
@@ -196,11 +321,11 @@ impl MultiShardStore {
         let mut l1_node_descs_by_shard: HashMap<u16, SegmentDescriptor> = HashMap::new();
         let mut l1_edge_descs_by_shard: HashMap<u16, SegmentDescriptor> = HashMap::new();
 
-        for desc in &current.l1_node_segments {
+        for desc in current.l1_node_segments.iter() {
             let shard_id = desc.shard_id.unwrap_or(0);
             l1_node_descs_by_shard.insert(shard_id, desc.clone());
         }
-        for desc in &current.l1_edge_segments {
+        for desc in current.l1_edge_segments.iter() {
             let shard_id = desc.shard_id.unwrap_or(0);
             l1_edge_descs_by_shard.insert(shard_id, desc.clone());
         }
@@ -283,6 +408,15 @@ impl MultiShardStore {
             enrichment_edge_to_shard,
             file_to_node_ids,
             edge_type_intern: HashMap::new(),
+            segment_cache: SegmentCache::new(),
+            file_last_committed_version: std::sync::Mutex::new(HashMap::new()),
+            commit_conflict_retries: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            commit_build_in_flight: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            commit_build_peak: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            group_commit: Arc::new(GroupCommitQueue::default()),
+            group_commit_batch_size_sum: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            group_commit_batches: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            group_commit_batch_size_max: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })
     }
 
@@ -303,6 +437,15 @@ impl MultiShardStore {
             enrichment_edge_to_shard: HashMap::new(),
             file_to_node_ids: HashMap::new(),
             edge_type_intern: HashMap::new(),
+            segment_cache: SegmentCache::new(),
+            file_last_committed_version: std::sync::Mutex::new(HashMap::new()),
+            commit_conflict_retries: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            commit_build_in_flight: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            commit_build_peak: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            group_commit: Arc::new(GroupCommitQueue::default()),
+            group_commit_batch_size_sum: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            group_commit_batches: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            group_commit_batch_size_max: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 }
@@ -423,15 +566,27 @@ impl MultiShardStore {
         }
     }
 
-    /// Check if a node is tombstoned in the shard TombstoneSet.
+    /// Check if a node is tombstoned in the per-shard mirror.
     ///
-    /// All shards share the same Arc<TombstoneSet>, so checking shard 0 is sufficient.
+    /// MVCC B3: the version authority is the manifest; this consults the
+    /// per-shard mirror, which `commit_batch_ext`/`flush` keep equal to the
+    /// current version's cumulative set. All shards share one Arc, so shard 0
+    /// is representative.
+    ///
+    /// MVCC B4 (residual closed): the CONCURRENT commit path
+    /// (`commit_batch_private`) reads tombstones from the version snapshot and
+    /// NEVER writes this mirror. The mirror is therefore mutated ONLY by the
+    /// exclusive `&mut self` paths (`commit_batch_ext` / `flush`, which run under
+    /// the server's exclusive `write()` lock) and read ONLY by exclusive-path or
+    /// dead callers. No path that runs concurrently with a `commit_batch_private`
+    /// either reads or writes it ⇒ no race window remains. (The snapshot authority
+    /// is the only tombstone source on the concurrent path.)
     pub fn is_node_tombstoned(&self, id: u128) -> bool {
         if self.shards.is_empty() { return false; }
         self.shards[0].tombstones().contains_node(id)
     }
 
-    /// Check if an edge is tombstoned in the shard TombstoneSet.
+    /// Check if an edge is tombstoned in the per-shard mirror.
     ///
     /// All shards share the same Arc<TombstoneSet>, so checking shard 0 is sufficient.
     pub fn is_edge_tombstoned(&self, src: u128, dst: u128, edge_type: &str) -> bool {
@@ -540,8 +695,12 @@ impl MultiShardStore {
 
         // Two-step ManifestStore protocol:
         // Step 1: Start with current segments
-        let mut all_node_segs = manifest_store.current().node_segments.clone();
-        let mut all_edge_segs = manifest_store.current().edge_segments.clone();
+        // MVCC C3.b: deref-clone the Arc'd descriptor Vecs into owned Vecs so we
+        // can extend them; create_manifest re-wraps in a fresh Arc.
+        let mut all_node_segs: Vec<SegmentDescriptor> =
+            (*manifest_store.current().node_segments).clone();
+        let mut all_edge_segs: Vec<SegmentDescriptor> =
+            (*manifest_store.current().edge_segments).clone();
 
         // Step 2: Extend with NEW segments
         all_node_segs.extend(new_node_descs);
@@ -606,6 +765,887 @@ impl MultiShardStore {
         }
 
         self.shards.iter().any(|s| s.node_exists(id))
+    }
+
+    /// Check if a specific live edge exists (tombstone-aware).
+    ///
+    /// Mirrors `node_exists` liveness semantics for edges: returns true only
+    /// if the `(src, dst, edge_type)` triple resolves to a live (non-tombstoned)
+    /// edge in the source node's shard. Used by the engine to determine which
+    /// pending (not-yet-flushed) edge tombstones still cover a live edge.
+    pub fn edge_exists(&self, src: u128, dst: u128, edge_type: &str) -> bool {
+        let types = [edge_type];
+        self.get_outgoing_edges(src, Some(&types))
+            .iter()
+            .any(|e| e.dst == dst && e.edge_type == edge_type)
+    }
+}
+
+// ── MVCC Snapshot Reads (RFD-71 B1) ────────────────────────────────
+
+impl MultiShardStore {
+    /// Capture a version-pinned [`ReadSnapshot`] of the current published
+    /// manifest version: its segment descriptor set + that version's cumulative
+    /// tombstones (the runtime shard set, since the manifest clears its own).
+    ///
+    /// The snapshot is immutable; later commits do not affect it. Reads resolved
+    /// through it (the `*_at` methods below) never observe the live, uncommitted
+    /// `Shard.write_buffer` — only the version's committed, immutable segments.
+    pub fn snapshot(&self, manifest: &ManifestStore) -> ReadSnapshot {
+        // MVCC B3: tombstones are version state. Take the current published
+        // version's cumulative tombstone set from the manifest authority (the
+        // derived Arc), NOT from any per-shard broadcast set. Cloning the Arc is
+        // O(1) and freezes the version's tombstones immutably into the snapshot.
+        let tombstones = manifest.current_tombstones();
+        ReadSnapshot::capture(manifest, tombstones)
+    }
+
+    /// Resolve a node segment descriptor to an opened segment and run `f`.
+    ///
+    /// Disk store: open (or hit cache) via [`SegmentCache`]. Ephemeral store:
+    /// borrow the live in-memory segment from the owning shard. Returns `None`
+    /// (treated as "segment absent / skip") if the segment cannot be resolved.
+    fn with_node_segment<R>(
+        &self,
+        desc: &SegmentDescriptor,
+        f: impl FnOnce(&NodeSegmentV2) -> R,
+    ) -> Option<R> {
+        if let Some(db_path) = &self.db_path {
+            match self.segment_cache.get_node_segment(db_path, desc) {
+                Ok(seg) => Some(f(&seg)),
+                Err(_) => None,
+            }
+        } else {
+            let shard_id = desc.shard_id.unwrap_or(0) as usize;
+            self.shards
+                .get(shard_id)
+                .and_then(|s| s.node_segment_by_id(desc.segment_id))
+                .map(f)
+        }
+    }
+
+    /// Edge-segment companion to [`Self::with_node_segment`].
+    fn with_edge_segment<R>(
+        &self,
+        desc: &SegmentDescriptor,
+        f: impl FnOnce(&EdgeSegmentV2) -> R,
+    ) -> Option<R> {
+        if let Some(db_path) = &self.db_path {
+            match self.segment_cache.get_edge_segment(db_path, desc) {
+                Ok(seg) => Some(f(&seg)),
+                Err(_) => None,
+            }
+        } else {
+            let shard_id = desc.shard_id.unwrap_or(0) as usize;
+            self.shards
+                .get(shard_id)
+                .and_then(|s| s.edge_segment_by_id(desc.segment_id))
+                .map(f)
+        }
+    }
+
+    /// Get a node by id resolved through `snap` (version-pinned).
+    ///
+    /// Mirrors `Shard::get_node` EXACTLY except it never consults the write
+    /// buffer: tombstone-first, then L0 newest→oldest (reverse of the snapshot's
+    /// oldest-first descriptor list, with bloom short-circuit), then L1.
+    pub fn get_node_at(&self, snap: &ReadSnapshot, id: u128) -> Option<NodeRecordV2> {
+        // Step 0: tombstone check (definitive).
+        if snap.tombstones.contains_node(id) {
+            return None;
+        }
+
+        // Step 1: L0 segments newest→oldest. Descriptors are oldest-first, so
+        // iterate in reverse; gather this shard-agnostic id across all shards.
+        for desc in snap.node_segments.iter().rev() {
+            let found = self.with_node_segment(desc, |seg| {
+                if !seg.maybe_contains(id) {
+                    return None;
+                }
+                for j in 0..seg.record_count() {
+                    if seg.get_id(j) == id {
+                        return Some(seg.get_record(j));
+                    }
+                }
+                None
+            });
+            if let Some(Some(rec)) = found {
+                return Some(rec);
+            }
+        }
+
+        // Step 2: L1 segments (oldest, compacted).
+        for desc in snap.l1_node_segments.iter() {
+            let found = self.with_node_segment(desc, |seg| {
+                if !seg.maybe_contains(id) {
+                    return None;
+                }
+                for j in 0..seg.record_count() {
+                    if seg.get_id(j) == id {
+                        return Some(seg.get_record(j));
+                    }
+                }
+                None
+            });
+            if let Some(Some(rec)) = found {
+                return Some(rec);
+            }
+        }
+
+        None
+    }
+
+    /// Existence check resolved through `snap`. Mirrors `Shard::node_exists`
+    /// minus the write-buffer step.
+    pub fn node_exists_at(&self, snap: &ReadSnapshot, id: u128) -> bool {
+        if snap.tombstones.contains_node(id) {
+            return false;
+        }
+        for desc in snap.node_segments.iter().rev() {
+            let hit = self.with_node_segment(desc, |seg| {
+                if !seg.maybe_contains(id) {
+                    return false;
+                }
+                (0..seg.record_count()).any(|j| seg.get_id(j) == id)
+            });
+            if matches!(hit, Some(true)) {
+                return true;
+            }
+        }
+        for desc in snap.l1_node_segments.iter() {
+            let hit = self.with_node_segment(desc, |seg| {
+                if !seg.maybe_contains(id) {
+                    return false;
+                }
+                (0..seg.record_count()).any(|j| seg.get_id(j) == id)
+            });
+            if matches!(hit, Some(true)) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Find nodes matching optional `node_type` / `file` filters, resolved
+    /// through `snap`. Reproduces `Shard::find_nodes` dedup + tombstone +
+    /// zone-map semantics across all shards, minus the write buffer.
+    pub fn find_nodes_at(
+        &self,
+        snap: &ReadSnapshot,
+        node_type: Option<&str>,
+        file: Option<&str>,
+    ) -> Vec<NodeRecordV2> {
+        let mut seen: HashSet<u128> = HashSet::new();
+        let mut results: Vec<NodeRecordV2> = Vec::new();
+
+        // L0 newest→oldest.
+        for desc in snap.node_segments.iter().rev() {
+            // Descriptor-level zone-map pruning (no I/O).
+            if !desc.may_contain(node_type, file, None) {
+                continue;
+            }
+            self.with_node_segment(desc, |seg| {
+                if let Some(nt) = node_type {
+                    if !seg.contains_node_type(nt) {
+                        return;
+                    }
+                }
+                if let Some(f) = file {
+                    if !seg.contains_file(f) {
+                        return;
+                    }
+                }
+                for j in 0..seg.record_count() {
+                    let id = seg.get_id(j);
+                    if seen.contains(&id) {
+                        continue;
+                    }
+                    if snap.tombstones.contains_node(id) {
+                        seen.insert(id);
+                        continue;
+                    }
+                    if let Some(nt) = node_type {
+                        if seg.get_node_type(j) != nt {
+                            continue;
+                        }
+                    }
+                    if let Some(f) = file {
+                        if seg.get_file(j) != f {
+                            continue;
+                        }
+                    }
+                    seen.insert(id);
+                    results.push(seg.get_record(j));
+                }
+            });
+        }
+
+        // L1 (oldest). No inverted-index path here — snapshot reads scan the
+        // descriptor's segment directly (indexes live on the live Shard).
+        for desc in snap.l1_node_segments.iter() {
+            if !desc.may_contain(node_type, file, None) {
+                continue;
+            }
+            self.with_node_segment(desc, |seg| {
+                if let Some(nt) = node_type {
+                    if !seg.contains_node_type(nt) {
+                        return;
+                    }
+                }
+                if let Some(f) = file {
+                    if !seg.contains_file(f) {
+                        return;
+                    }
+                }
+                for j in 0..seg.record_count() {
+                    let id = seg.get_id(j);
+                    if seen.contains(&id) {
+                        continue;
+                    }
+                    if snap.tombstones.contains_node(id) {
+                        seen.insert(id);
+                        continue;
+                    }
+                    if let Some(nt) = node_type {
+                        if seg.get_node_type(j) != nt {
+                            continue;
+                        }
+                    }
+                    if let Some(f) = file {
+                        if seg.get_file(j) != f {
+                            continue;
+                        }
+                    }
+                    seen.insert(id);
+                    results.push(seg.get_record(j));
+                }
+            });
+        }
+
+        results
+    }
+
+    /// Per-type LIVE node counts resolved through `snap` — the planner's §7
+    /// cardinality oracle (`Stats::nodes_by_type`) WITHOUT materializing records.
+    /// Same L0-newest-wins dedup + tombstone walk as [`Self::find_nodes_at`] with
+    /// no filters, but it reads only the id and node-type columns (`get_record`
+    /// copies name/file/metadata blobs per node — at ~500k nodes that copy alone
+    /// dominated the per-`@materialize`-call fixed overhead, W9 fix #1a).
+    pub fn count_nodes_by_type_at(
+        &self,
+        snap: &ReadSnapshot,
+    ) -> std::collections::HashMap<String, u64> {
+        let mut seen: HashSet<u128> = HashSet::new();
+        let mut counts: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+
+        // L0 newest→oldest, then L1 (oldest) — the find_nodes_at visit order, so
+        // the newest occurrence of a duplicated id is the one counted.
+        for desc in snap.node_segments.iter().rev().chain(snap.l1_node_segments.iter()) {
+            self.with_node_segment(desc, |seg| {
+                for j in 0..seg.record_count() {
+                    let id = seg.get_id(j);
+                    if !seen.insert(id) {
+                        continue;
+                    }
+                    if snap.tombstones.contains_node(id) {
+                        continue;
+                    }
+                    *counts.entry(seg.get_node_type(j).to_string()).or_insert(0) += 1;
+                }
+            });
+        }
+        counts
+    }
+
+    /// Count of LIVE nodes resolved through `snap`. Reproduces
+    /// `Shard::node_count` dedup + tombstone semantics across all shards, minus
+    /// the write buffer (full O(records) scan).
+    pub fn node_count_at(&self, snap: &ReadSnapshot) -> usize {
+        let mut seen: HashSet<u128> = HashSet::new();
+        let mut count = 0usize;
+
+        for desc in snap.node_segments.iter().rev() {
+            self.with_node_segment(desc, |seg| {
+                for j in 0..seg.record_count() {
+                    let id = seg.get_id(j);
+                    if !seen.insert(id) {
+                        continue;
+                    }
+                    if snap.tombstones.contains_node(id) {
+                        continue;
+                    }
+                    count += 1;
+                }
+            });
+        }
+        for desc in snap.l1_node_segments.iter() {
+            self.with_node_segment(desc, |seg| {
+                for j in 0..seg.record_count() {
+                    let id = seg.get_id(j);
+                    if !seen.insert(id) {
+                        continue;
+                    }
+                    if snap.tombstones.contains_node(id) {
+                        continue;
+                    }
+                    count += 1;
+                }
+            });
+        }
+        count
+    }
+
+    /// Per-type live node counts resolved through `snap`. Reproduces
+    /// `Shard::count_by_type` minus the write buffer.
+    pub fn count_by_type_at(&self, snap: &ReadSnapshot) -> HashMap<String, usize> {
+        let mut seen: HashSet<u128> = HashSet::new();
+        let mut counts: HashMap<String, usize> = HashMap::new();
+
+        for desc in snap.node_segments.iter().rev() {
+            self.with_node_segment(desc, |seg| {
+                for j in 0..seg.record_count() {
+                    let id = seg.get_id(j);
+                    if !seen.insert(id) {
+                        continue;
+                    }
+                    if snap.tombstones.contains_node(id) {
+                        continue;
+                    }
+                    *counts.entry(seg.get_node_type(j).to_string()).or_insert(0) += 1;
+                }
+            });
+        }
+        for desc in snap.l1_node_segments.iter() {
+            self.with_node_segment(desc, |seg| {
+                for j in 0..seg.record_count() {
+                    let id = seg.get_id(j);
+                    if !seen.insert(id) {
+                        continue;
+                    }
+                    if snap.tombstones.contains_node(id) {
+                        continue;
+                    }
+                    *counts.entry(seg.get_node_type(j).to_string()).or_insert(0) += 1;
+                }
+            });
+        }
+        counts
+    }
+
+    /// Outgoing edges from `node_id` resolved through `snap`, optionally
+    /// filtered by `edge_types`. Mirrors `Shard::get_outgoing_edges` (L0 forward,
+    /// then L1; bloom + zone-map short-circuits; dedup by `(src,dst,type)`,
+    /// tombstone filter) across all shards, minus the write buffer.
+    pub fn get_outgoing_edges_at(
+        &self,
+        snap: &ReadSnapshot,
+        node_id: u128,
+        edge_types: Option<&[&str]>,
+    ) -> Vec<EdgeRecordV2> {
+        let mut results: Vec<EdgeRecordV2> = Vec::new();
+        let mut seen: HashSet<(u128, u128, String)> = HashSet::new();
+
+        // L0 in descriptor (oldest-first) order, matching the live shard which
+        // scans its L0 Vec forward.
+        for desc in snap.edge_segments.iter() {
+            self.with_edge_segment(desc, |seg| {
+                if !seg.maybe_contains_src(node_id) {
+                    return;
+                }
+                if let Some(types) = edge_types {
+                    if !types.iter().any(|t| seg.contains_edge_type(t)) {
+                        return;
+                    }
+                }
+                for j in 0..seg.record_count() {
+                    if seg.get_src(j) != node_id {
+                        continue;
+                    }
+                    let dst = seg.get_dst(j);
+                    let et = seg.get_edge_type(j);
+                    let key = (node_id, dst, et.to_string());
+                    if seen.contains(&key) {
+                        continue;
+                    }
+                    seen.insert(key);
+                    if snap.tombstones.contains_edge(node_id, dst, et) {
+                        continue;
+                    }
+                    if let Some(types) = edge_types {
+                        if !types.contains(&et) {
+                            continue;
+                        }
+                    }
+                    results.push(seg.get_record(j));
+                }
+            });
+        }
+
+        for desc in snap.l1_edge_segments.iter() {
+            self.with_edge_segment(desc, |seg| {
+                if !seg.maybe_contains_src(node_id) {
+                    return;
+                }
+                if let Some(types) = edge_types {
+                    if !types.iter().any(|t| seg.contains_edge_type(t)) {
+                        return;
+                    }
+                }
+                for j in 0..seg.record_count() {
+                    if seg.get_src(j) != node_id {
+                        continue;
+                    }
+                    let dst = seg.get_dst(j);
+                    let et = seg.get_edge_type(j);
+                    let key = (node_id, dst, et.to_string());
+                    if seen.contains(&key) {
+                        continue;
+                    }
+                    seen.insert(key);
+                    if snap.tombstones.contains_edge(node_id, dst, et) {
+                        continue;
+                    }
+                    if let Some(types) = edge_types {
+                        if !types.contains(&et) {
+                            continue;
+                        }
+                    }
+                    results.push(seg.get_record(j));
+                }
+            });
+        }
+
+        results
+    }
+
+    /// Incoming edges to `node_id` resolved through `snap`. Mirrors
+    /// `Shard::get_incoming_edges` (bloom on dst) across all shards, minus the
+    /// write buffer.
+    pub fn get_incoming_edges_at(
+        &self,
+        snap: &ReadSnapshot,
+        node_id: u128,
+        edge_types: Option<&[&str]>,
+    ) -> Vec<EdgeRecordV2> {
+        let mut results: Vec<EdgeRecordV2> = Vec::new();
+        let mut seen: HashSet<(u128, u128, String)> = HashSet::new();
+
+        for desc in snap.edge_segments.iter() {
+            self.with_edge_segment(desc, |seg| {
+                if !seg.maybe_contains_dst(node_id) {
+                    return;
+                }
+                if let Some(types) = edge_types {
+                    if !types.iter().any(|t| seg.contains_edge_type(t)) {
+                        return;
+                    }
+                }
+                for j in 0..seg.record_count() {
+                    if seg.get_dst(j) != node_id {
+                        continue;
+                    }
+                    let src = seg.get_src(j);
+                    let et = seg.get_edge_type(j);
+                    let key = (src, node_id, et.to_string());
+                    if seen.contains(&key) {
+                        continue;
+                    }
+                    seen.insert(key);
+                    if snap.tombstones.contains_edge(src, node_id, et) {
+                        continue;
+                    }
+                    if let Some(types) = edge_types {
+                        if !types.contains(&et) {
+                            continue;
+                        }
+                    }
+                    results.push(seg.get_record(j));
+                }
+            });
+        }
+
+        for desc in snap.l1_edge_segments.iter() {
+            self.with_edge_segment(desc, |seg| {
+                if !seg.maybe_contains_dst(node_id) {
+                    return;
+                }
+                if let Some(types) = edge_types {
+                    if !types.iter().any(|t| seg.contains_edge_type(t)) {
+                        return;
+                    }
+                }
+                for j in 0..seg.record_count() {
+                    if seg.get_dst(j) != node_id {
+                        continue;
+                    }
+                    let src = seg.get_src(j);
+                    let et = seg.get_edge_type(j);
+                    let key = (src, node_id, et.to_string());
+                    if seen.contains(&key) {
+                        continue;
+                    }
+                    seen.insert(key);
+                    if snap.tombstones.contains_edge(src, node_id, et) {
+                        continue;
+                    }
+                    if let Some(types) = edge_types {
+                        if !types.contains(&et) {
+                            continue;
+                        }
+                    }
+                    results.push(seg.get_record(j));
+                }
+            });
+        }
+
+        results
+    }
+
+    /// All live edges resolved through `snap`. Mirrors `Shard::iter_all_edges`
+    /// (L0 newest→oldest, then L1; dedup by key; tombstone filter) across all
+    /// shards, minus the write buffer.
+    pub fn iter_all_edges_at(&self, snap: &ReadSnapshot) -> Vec<EdgeRecordV2> {
+        let mut results: Vec<EdgeRecordV2> = Vec::new();
+        let mut seen: HashSet<(u128, u128, String)> = HashSet::new();
+
+        for desc in snap.edge_segments.iter().rev() {
+            self.with_edge_segment(desc, |seg| {
+                for j in 0..seg.record_count() {
+                    let src = seg.get_src(j);
+                    let dst = seg.get_dst(j);
+                    let et = seg.get_edge_type(j);
+                    let key = (src, dst, et.to_string());
+                    if seen.contains(&key) {
+                        continue;
+                    }
+                    seen.insert(key);
+                    if snap.tombstones.contains_edge(src, dst, et) {
+                        continue;
+                    }
+                    results.push(seg.get_record(j));
+                }
+            });
+        }
+        for desc in snap.l1_edge_segments.iter() {
+            self.with_edge_segment(desc, |seg| {
+                for j in 0..seg.record_count() {
+                    let src = seg.get_src(j);
+                    let dst = seg.get_dst(j);
+                    let et = seg.get_edge_type(j);
+                    let key = (src, dst, et.to_string());
+                    if seen.contains(&key) {
+                        continue;
+                    }
+                    seen.insert(key);
+                    if snap.tombstones.contains_edge(src, dst, et) {
+                        continue;
+                    }
+                    results.push(seg.get_record(j));
+                }
+            });
+        }
+        results
+    }
+
+    /// Edges of one `edge_type` resolved through `snap`. Mirrors
+    /// `Shard::get_edges_by_type` (L0 newest→oldest, then L1) across all shards,
+    /// minus the write buffer.
+    pub fn get_edges_by_type_at(&self, snap: &ReadSnapshot, edge_type: &str) -> Vec<EdgeRecordV2> {
+        let mut results: Vec<EdgeRecordV2> = Vec::new();
+        let mut seen: HashSet<(u128, u128, String)> = HashSet::new();
+
+        for desc in snap.edge_segments.iter().rev() {
+            if !desc.edge_types.is_empty() && !desc.edge_types.contains(edge_type) {
+                continue;
+            }
+            self.with_edge_segment(desc, |seg| {
+                if !seg.contains_edge_type(edge_type) {
+                    return;
+                }
+                for j in 0..seg.record_count() {
+                    let et = seg.get_edge_type(j);
+                    if et != edge_type {
+                        continue;
+                    }
+                    let src = seg.get_src(j);
+                    let dst = seg.get_dst(j);
+                    let key = (src, dst, et.to_string());
+                    if seen.contains(&key) {
+                        continue;
+                    }
+                    seen.insert(key);
+                    if snap.tombstones.contains_edge(src, dst, et) {
+                        continue;
+                    }
+                    results.push(seg.get_record(j));
+                }
+            });
+        }
+        for desc in snap.l1_edge_segments.iter() {
+            if !desc.edge_types.is_empty() && !desc.edge_types.contains(edge_type) {
+                continue;
+            }
+            self.with_edge_segment(desc, |seg| {
+                if !seg.contains_edge_type(edge_type) {
+                    return;
+                }
+                for j in 0..seg.record_count() {
+                    let et = seg.get_edge_type(j);
+                    if et != edge_type {
+                        continue;
+                    }
+                    let src = seg.get_src(j);
+                    let dst = seg.get_dst(j);
+                    let key = (src, dst, et.to_string());
+                    if seen.contains(&key) {
+                        continue;
+                    }
+                    seen.insert(key);
+                    if snap.tombstones.contains_edge(src, dst, et) {
+                        continue;
+                    }
+                    results.push(seg.get_record(j));
+                }
+            });
+        }
+        results
+    }
+
+    /// Existence check for a live edge resolved through `snap`. MVCC twin of
+    /// [`Self::edge_exists`] — never consults the write buffer.
+    pub fn edge_exists_at(
+        &self,
+        snap: &ReadSnapshot,
+        src: u128,
+        dst: u128,
+        edge_type: &str,
+    ) -> bool {
+        let types = [edge_type];
+        self.get_outgoing_edges_at(snap, src, Some(&types))
+            .iter()
+            .any(|e| e.dst == dst && e.edge_type == edge_type)
+    }
+
+    /// Live edge count resolved through `snap`. MVCC twin of
+    /// [`Self::edge_count`]: dedups `(src,dst,type)` across the version's
+    /// segments and excludes tombstoned edges, never reading the write buffer.
+    pub fn edge_count_at(&self, snap: &ReadSnapshot) -> usize {
+        // iter_all_edges_at already dedups by (src,dst,type) and filters
+        // tombstones, so its length is the live edge count for the version.
+        self.iter_all_edges_at(snap).len()
+    }
+
+    /// Node IDs of exact `node_type` resolved through `snap`. MVCC twin of
+    /// [`Self::find_node_ids_by_type`], scanning version-pinned segments
+    /// (L0 newest→oldest, then L1) instead of the live shard.
+    pub fn find_node_ids_by_type_at(&self, snap: &ReadSnapshot, node_type: &str) -> Vec<u128> {
+        self.find_node_ids_by_attr_at(
+            snap,
+            Some(node_type),
+            None,
+            None,
+            None,
+            None,
+            &[],
+            false,
+        )
+    }
+
+    /// Node IDs matching AttrQuery-compatible filters resolved through `snap`.
+    /// MVCC twin of [`Self::find_node_ids_by_attr`]: replicates
+    /// `Shard::for_each_matching_id` filter + dedup + tombstone semantics
+    /// against the version's segment set, never the write buffer.
+    #[allow(clippy::too_many_arguments)]
+    pub fn find_node_ids_by_attr_at(
+        &self,
+        snap: &ReadSnapshot,
+        node_type: Option<&str>,
+        node_type_prefix: Option<&str>,
+        file: Option<&str>,
+        name: Option<&str>,
+        exported: Option<bool>,
+        metadata_filters: &[(String, String)],
+        substring_match: bool,
+    ) -> Vec<u128> {
+        let mut results: Vec<u128> = Vec::new();
+        self.find_node_ids_by_attr_chunked_at(
+            snap,
+            node_type,
+            node_type_prefix,
+            file,
+            name,
+            exported,
+            metadata_filters,
+            substring_match,
+            usize::MAX,
+            &mut |chunk| {
+                results.extend_from_slice(chunk);
+                true
+            },
+        );
+        results
+    }
+
+    /// Chunked variant of [`Self::find_node_ids_by_attr_at`]. MVCC twin of
+    /// [`Self::find_node_ids_by_attr_chunked`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn find_node_ids_by_attr_chunked_at(
+        &self,
+        snap: &ReadSnapshot,
+        node_type: Option<&str>,
+        node_type_prefix: Option<&str>,
+        file: Option<&str>,
+        name: Option<&str>,
+        exported: Option<bool>,
+        metadata_filters: &[(String, String)],
+        substring_match: bool,
+        chunk_size: usize,
+        callback: &mut dyn FnMut(&[u128]) -> bool,
+    ) {
+        let mut seen: HashSet<u128> = HashSet::new();
+        let mut buffer: Vec<u128> = Vec::with_capacity(chunk_size.min(65536));
+        let mut stopped = false;
+
+        // Substring file matching can't use the exact-path zone map.
+        let prune_file = if substring_match { None } else { file };
+
+        // Scan one segment, emitting matching ids into the chunk buffer.
+        let mut scan_seg = |seg: &NodeSegmentV2,
+                            seen: &mut HashSet<u128>,
+                            buffer: &mut Vec<u128>,
+                            stopped: &mut bool| {
+            for j in 0..seg.record_count() {
+                let id = seg.get_id(j);
+                if !seen.insert(id) {
+                    continue; // newer segment / buffer-equivalent already won
+                }
+                if snap.tombstones.contains_node(id) {
+                    continue;
+                }
+                if !Shard::matches_attr_filters(
+                    seg.get_node_type(j),
+                    seg.get_file(j),
+                    seg.get_name(j),
+                    seg.get_metadata(j),
+                    node_type,
+                    node_type_prefix,
+                    file,
+                    name,
+                    exported,
+                    metadata_filters,
+                    substring_match,
+                ) {
+                    continue;
+                }
+                buffer.push(id);
+                if buffer.len() >= chunk_size {
+                    if !callback(buffer) {
+                        *stopped = true;
+                        return;
+                    }
+                    buffer.clear();
+                }
+            }
+        };
+
+        // L0 newest→oldest (descriptors are oldest-first ⇒ iterate reversed).
+        for desc in snap.node_segments.iter().rev() {
+            if stopped {
+                break;
+            }
+            // Descriptor-level zone-map pruning (no I/O).
+            if let Some(nt) = node_type {
+                if !desc.may_contain(Some(nt), prune_file, None) {
+                    continue;
+                }
+            } else if !desc.may_contain(None, prune_file, None) {
+                continue;
+            }
+            if let Some(prefix) = node_type_prefix {
+                if !desc.node_types.is_empty()
+                    && !desc.node_types.iter().any(|t| t.starts_with(prefix))
+                {
+                    continue;
+                }
+            }
+            self.with_node_segment(desc, |seg| {
+                scan_seg(seg, &mut seen, &mut buffer, &mut stopped);
+            });
+        }
+
+        // L1 (oldest, compacted).
+        for desc in snap.l1_node_segments.iter() {
+            if stopped {
+                break;
+            }
+            if let Some(nt) = node_type {
+                if !desc.may_contain(Some(nt), prune_file, None) {
+                    continue;
+                }
+            } else if !desc.may_contain(None, prune_file, None) {
+                continue;
+            }
+            if let Some(prefix) = node_type_prefix {
+                if !desc.node_types.is_empty()
+                    && !desc.node_types.iter().any(|t| t.starts_with(prefix))
+                {
+                    continue;
+                }
+            }
+            self.with_node_segment(desc, |seg| {
+                scan_seg(seg, &mut seen, &mut buffer, &mut stopped);
+            });
+        }
+
+        if !stopped && !buffer.is_empty() {
+            callback(&buffer);
+        }
+    }
+
+    /// Fuzzy name search resolved through `snap`. MVCC twin of
+    /// [`Self::find_similar_names`] — searches each shard's committed L1 token
+    /// index (the last published compaction) but NEVER scans the live write
+    /// buffer, filters by the version's tombstone set, and resolves the
+    /// optional `node_type` filter via `get_node_at` (version-pinned).
+    pub fn find_similar_names_at(
+        &self,
+        snap: &ReadSnapshot,
+        query: &str,
+        node_type: Option<&str>,
+        k: usize,
+        min_score: f32,
+    ) -> Vec<TokenMatch> {
+        let mut all_matches: Vec<TokenMatch> = Vec::new();
+        let mut seen_ids: HashSet<u128> = HashSet::new();
+
+        for shard in &self.shards {
+            if let Some(token_idx) = shard.l1_token_index() {
+                let matches = token_idx.search(query, k * 2, min_score); // over-fetch for dedup
+                for m in matches {
+                    if snap.tombstones.contains_node(m.node_id) {
+                        continue;
+                    }
+                    if !seen_ids.insert(m.node_id) {
+                        continue;
+                    }
+                    if let Some(nt) = node_type {
+                        match self.get_node_at(snap, m.node_id) {
+                            Some(node) if node.node_type == nt => {}
+                            _ => continue,
+                        }
+                    }
+                    all_matches.push(m);
+                }
+            }
+        }
+
+        all_matches.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        all_matches.truncate(k);
+        all_matches
     }
 }
 
@@ -1003,6 +2043,79 @@ impl MultiShardStore {
         }
         keys
     }
+
+    // ── MVCC B4: snapshot-pinned edge-key finders ──────────────────────
+    //
+    // These mirror the live-shard finders above but resolve through a
+    // version-pinned `ReadSnapshot` (immutable segments via the SegmentCache).
+    // The concurrent commit path (`commit_batch_private`) uses ONLY these so a
+    // commit never reads the live, concurrently-mutated `Shard` state.
+
+    /// Snapshot-pinned variant of [`Self::find_edge_keys_by_src_ids`] /
+    /// [`Self::find_non_enrichment_edge_keys_by_src_ids`]. Scans the version's
+    /// L0 + L1 edge segments only (no live write buffer — committed data only).
+    fn find_edge_keys_by_src_ids_at(
+        &self,
+        snap: &ReadSnapshot,
+        src_ids: &HashSet<u128>,
+        exclude_enrichment: bool,
+    ) -> Vec<(u128, u128, String)> {
+        let mut keys = Vec::new();
+        if src_ids.is_empty() {
+            return keys;
+        }
+        let descs = snap.edge_segments.iter().chain(snap.l1_edge_segments.iter());
+        for desc in descs {
+            self.with_edge_segment(desc, |seg| {
+                let may_match = src_ids.iter().any(|id| seg.maybe_contains_src(*id));
+                if !may_match {
+                    return;
+                }
+                for j in 0..seg.record_count() {
+                    let src = seg.get_src(j);
+                    if !src_ids.contains(&src) {
+                        continue;
+                    }
+                    if exclude_enrichment {
+                        let metadata = seg.get_metadata(j);
+                        if crate::storage_v2::types::extract_file_context(metadata).is_some() {
+                            continue;
+                        }
+                    }
+                    let dst = seg.get_dst(j);
+                    let edge_type = seg.get_edge_type(j).to_string();
+                    keys.push((src, dst, edge_type));
+                }
+            });
+        }
+        keys
+    }
+
+    /// Snapshot-pinned variant of [`Self::find_edge_keys_by_file_context`].
+    fn find_edge_keys_by_file_context_at(
+        &self,
+        snap: &ReadSnapshot,
+        file_context: &str,
+    ) -> Vec<(u128, u128, String)> {
+        let mut keys = Vec::new();
+        let descs = snap.edge_segments.iter().chain(snap.l1_edge_segments.iter());
+        for desc in descs {
+            self.with_edge_segment(desc, |seg| {
+                for j in 0..seg.record_count() {
+                    let metadata = seg.get_metadata(j);
+                    if let Some(ctx) = crate::storage_v2::types::extract_file_context(metadata) {
+                        if ctx == file_context {
+                            let src = seg.get_src(j);
+                            let dst = seg.get_dst(j);
+                            let edge_type = seg.get_edge_type(j).to_string();
+                            keys.push((src, dst, edge_type));
+                        }
+                    }
+                }
+            });
+        }
+        keys
+    }
 }
 
 // ── Batch Commit ───────────────────────────────────────────────────
@@ -1170,37 +2283,32 @@ impl MultiShardStore {
             changed_edge_types.insert(edge.edge_type.clone());
         }
 
-        // ── Phase 4: Apply tombstones to shards ──
+        // ── Phase 4: Compute the next version's cumulative tombstone set ──
         let t_phase4 = Instant::now();
 
-        // Build combined tombstone set (existing shard tombstones + new).
-        // Read from shard TombstoneSet (single source of truth), not manifest.
-        // Manifest tombstone Vecs may be cleared after commit to save memory.
-        let mut all_tomb_nodes: HashSet<u128> = if !self.shards.is_empty() {
-            self.shards[0].tombstones().node_ids.clone()
-        } else {
-            HashSet::new()
-        };
+        // MVCC B3: the BASE cumulative set comes from the manifest VERSION (the
+        // authority), not from a per-shard broadcast. next = base + this commit's
+        // additions (phase 5.5 below subtracts re-added ids). No per-shard
+        // broadcast here — the snapshot reads the manifest, and the legacy
+        // shard mirror is published ONCE at the commit point (phase 5.5).
+        let mut all_tomb_nodes: HashSet<u128> = manifest_store
+            .current()
+            .tombstoned_node_ids
+            .iter()
+            .copied()
+            .collect();
         all_tomb_nodes.extend(&tombstone_node_ids);
 
-        let mut all_tomb_edges: HashSet<(u128, u128, Arc<str>)> = if !self.shards.is_empty() {
-            self.shards[0].tombstones().edge_keys.clone()
-        } else {
-            HashSet::new()
-        };
+        let mut all_tomb_edges: HashSet<(u128, u128, Arc<str>)> = manifest_store
+            .current()
+            .tombstoned_edge_keys
+            .iter()
+            .map(|(s, d, t)| (*s, *d, Arc::from(t.as_str())))
+            .collect();
         all_tomb_edges.extend(tombstone_edge_keys.iter().cloned());
 
-        // Arc-share tombstones across shards (O(1) per shard instead of O(N) clone)
-        let shared_tombstones = Arc::new(TombstoneSet {
-            node_ids: all_tomb_nodes.clone(),
-            edge_keys: all_tomb_edges.clone(),
-        });
-        for shard in &mut self.shards {
-            shard.set_tombstones_shared(Arc::clone(&shared_tombstones));
-        }
-
         tracing::debug!(
-            "commit_batch phase4_apply_tombstones: {}ms",
+            "commit_batch phase4_compute_tombstones: {}ms",
             t_phase4.elapsed().as_millis()
         );
 
@@ -1227,16 +2335,30 @@ impl MultiShardStore {
         );
 
         // ── Phase 5.5: Remove re-added IDs from tombstones ──
-        // New data supersedes tombstones for the same IDs.
+        // New data supersedes tombstones for the same IDs. Collect the IDs we
+        // actually un-tombstone so the manifest edit carries the precise
+        // O(batch) delta (replay removes exactly these from the cumulative set).
+        let mut untombstoned_nodes: Vec<u128> = Vec::new();
         for node in &nodes {
-            all_tomb_nodes.remove(&node.id);
+            if all_tomb_nodes.remove(&node.id) {
+                untombstoned_nodes.push(node.id);
+            }
         }
+        let mut untombstoned_edges: Vec<(u128, u128, String)> = Vec::new();
         for edge in &edges_clone {
             let interned_type = self.intern_edge_type(&edge.edge_type);
-            all_tomb_edges.remove(&(edge.src, edge.dst, interned_type));
+            let key = (edge.src, edge.dst, interned_type);
+            if all_tomb_edges.remove(&key) {
+                untombstoned_edges.push((key.0, key.1, key.2.to_string()));
+            }
         }
 
-        // Re-apply updated tombstones to shards (Arc-shared)
+        // MVCC B3: publish the next version's cumulative set to the per-shard
+        // mirror ONCE, at the serialized commit point. This is NOT the snapshot
+        // authority (snapshots read the manifest version) — it only backs the
+        // legacy live-read paths in Shard and the compaction-merge filter that
+        // still consult `Shard.tombstones`. Single broadcast, no intermediate
+        // shared-mutable race window.
         let shared_tombstones = Arc::new(TombstoneSet {
             node_ids: all_tomb_nodes.clone(),
             edge_keys: all_tomb_edges.clone(),
@@ -1317,26 +2439,54 @@ impl MultiShardStore {
         // ── Phase 8: Build and commit manifest WITH tombstones ──
         let t_phase8 = Instant::now();
 
-        let mut all_node_segs = manifest_store.current().node_segments.clone();
-        let mut all_edge_segs = manifest_store.current().edge_segments.clone();
-        all_node_segs.extend(new_node_descs);
-        all_edge_segs.extend(new_edge_descs);
+        // O(Δ) commit: build only the delta, never the full segment list.
+        // `commit_edit` advances the in-memory snapshot in place via replay and
+        // writes a full checkpoint only every `checkpoint_interval` versions.
+        let manifest_version = manifest_store.current().version + 1;
 
-        let mut manifest = manifest_store.create_manifest(
-            all_node_segs,
-            all_edge_segs,
-            Some(tags),
-        )?;
+        // Resulting stats computed incrementally from current + this commit's
+        // added segments (a normal re-analysis commit removes no segments).
+        let mut stats = manifest_store.current().stats.clone();
+        for s in &new_node_descs {
+            stats.total_nodes += s.record_count;
+            stats.node_segment_count += 1;
+        }
+        for s in &new_edge_descs {
+            stats.total_edges += s.record_count;
+            stats.edge_segment_count += 1;
+        }
 
-        // Inject tombstones into manifest before commit
-        manifest.tombstoned_node_ids = all_tomb_nodes.into_iter().collect();
-        manifest.tombstoned_edge_keys = all_tomb_edges
+        // Full cumulative tombstone set — passed for checkpoint snapshots only.
+        let cp_tomb_nodes: Vec<u128> = all_tomb_nodes.into_iter().collect();
+        let cp_tomb_edges: Vec<(u128, u128, String)> = all_tomb_edges
             .into_iter()
             .map(|(s, d, t)| (s, d, t.to_string()))
             .collect();
 
-        let manifest_version = manifest.version;
-        manifest_store.commit(manifest)?;
+        let edit = ManifestEdit {
+            version: manifest_version,
+            parent_version: manifest_version.saturating_sub(1),
+            base_checkpoint: 0, // advisory; open() locates the base by dir scan
+            created_at: 0,      // stamped by commit_edit
+            added_node_segments: new_node_descs,
+            added_edge_segments: new_edge_descs,
+            removed_node_segment_ids: Vec::new(),
+            removed_edge_segment_ids: Vec::new(),
+            added_tombstone_nodes: tombstone_node_ids.iter().copied().collect(),
+            removed_tombstone_nodes: untombstoned_nodes,
+            added_tombstone_edges: tombstone_edge_keys
+                .iter()
+                .map(|(s, d, t)| (*s, *d, t.to_string()))
+                .collect(),
+            removed_tombstone_edges: untombstoned_edges,
+            l1_node_segments: None,
+            l1_edge_segments: None,
+            last_compaction: None,
+            tags,
+            stats,
+        };
+
+        manifest_store.commit_edit(edit, &cp_tomb_nodes, &cp_tomb_edges)?;
 
         tracing::debug!(
             "commit_batch phase8_manifest: {}ms",
@@ -1355,6 +2505,797 @@ impl MultiShardStore {
             changed_edge_types,
             manifest_version,
         })
+    }
+}
+
+// ── MVCC B4: concurrent commit (private buffers, lock-free build/flush) ──
+//
+// `commit_batch_private(&self)` is the concurrency payoff. Unlike
+// `commit_batch_ext(&mut self)` it:
+//   - reads ALL old state through a version-pinned snapshot (immutable
+//     segments via the SegmentCache) — never the live, concurrently-mutated
+//     `Shard`;
+//   - builds this commit's output into PRIVATE per-shard segment writers and
+//     flushes them to NEW immutable segment files — never the shared
+//     `Shard.write_buffer` / `Shard.node_segments`;
+//   - holds NO lock across the build/flush (phases 0–7);
+//   - serializes ONLY phase 8 (conflict-check + manifest version append) under
+//     the one manifest mutex supplied by the caller.
+//
+// Because no lock spans the build/flush, two concurrent commits on disjoint
+// files run fully in parallel and cannot form a lock cycle — deadlock-free by
+// construction. Same-file concurrent commits collide at the conflict check and
+// one aborts (strict abort-retry, §4 of the MVCC design).
+//
+// Disk-backed only: the private-flush + SegmentCache path needs real segment
+// files. Ephemeral (in-memory) stores fall back to the serial `commit_batch_ext`
+// (single-threaded tests), so this method asserts a `db_path`.
+impl MultiShardStore {
+    /// Number of conflict-driven commit retries observed so far (MVCC B4).
+    pub fn commit_conflict_retries(&self) -> u64 {
+        self.commit_conflict_retries
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// MVCC B4 parallelism witness: peak number of commits that executed the
+    /// LOCK-FREE build/flush region (phases 1–7 of `commit_batch_private`)
+    /// SIMULTANEOUSLY. `> 1` proves real disjoint-commit overlap that the 2PL
+    /// path structurally could not produce.
+    pub fn commit_build_peak(&self) -> u64 {
+        self.commit_build_peak
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// MVCC C1 amortization witness: mean group-commit batch size (commits
+    /// drained per leader publish). `> 1.0` ⇒ real batching is folding multiple
+    /// commits into one durable `commit_edit` (fsync amortized); `== 1.0` ⇒ no
+    /// merging happened (each commit published alone — C1 gave no fsync savings,
+    /// the bottleneck is elsewhere). Returns `0.0` before any batch.
+    pub fn group_commit_batch_size(&self) -> f64 {
+        use std::sync::atomic::Ordering::Relaxed;
+        let batches = self.group_commit_batches.load(Relaxed);
+        if batches == 0 {
+            return 0.0;
+        }
+        self.group_commit_batch_size_sum.load(Relaxed) as f64 / batches as f64
+    }
+
+    /// MVCC C1: number of leader publishes (batches) so far.
+    pub fn group_commit_batches(&self) -> u64 {
+        self.group_commit_batches
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// MVCC C1: largest single batch a leader ever drained (peak fan-in).
+    pub fn group_commit_batch_size_max(&self) -> u64 {
+        self.group_commit_batch_size_max
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// True if this store can take the concurrent commit path (disk-backed).
+    pub fn supports_concurrent_commit(&self) -> bool {
+        self.db_path.is_some()
+    }
+
+    /// Concurrent, deadlock-free commit. See module-level B4 notes.
+    ///
+    /// `manifest` is the engine's shared `Mutex<ManifestStore>`; this method
+    /// locks it ONLY for the short phase-8 commit point. `protected_types`
+    /// matches `commit_batch_ext`. On a write-write conflict it returns
+    /// `GraphError::ConflictedCommit` (the caller retries with a fresh
+    /// snapshot); the private segment files written for the aborted attempt are
+    /// orphaned (unreferenced by any version) and reaped by manifest GC.
+    pub fn commit_batch_private(
+        &self,
+        nodes: Vec<NodeRecordV2>,
+        edges: Vec<EdgeRecordV2>,
+        changed_files: &[String],
+        tags: HashMap<String, String>,
+        manifest: &std::sync::Mutex<ManifestStore>,
+        protected_types: &[String],
+    ) -> Result<CommitDelta> {
+        use std::io::BufWriter;
+        use crate::storage_v2::writer::{EdgeSegmentWriter, NodeSegmentWriter};
+
+        let db_path = self
+            .db_path
+            .as_ref()
+            .expect("commit_batch_private requires a disk-backed store");
+
+        // ── Phase 0: capture a version-pinned snapshot (atomic, short lock) ──
+        // Lock the manifest only long enough to clone the current version's
+        // descriptors + tombstone Arc. Released immediately — NOT held across
+        // build/flush.
+        let (snap, durability) = {
+            let m = manifest.lock().unwrap();
+            (self.snapshot(&m), m.durability())
+        };
+        let snapshot_version = snap.version;
+
+        // MVCC B4 parallelism witness: mark entry into the LOCK-FREE build/flush
+        // region (phases 1–7, which hold NO shared lock) and track the peak
+        // simultaneous occupancy. peak>1 proves two commit bodies ran the no-lock
+        // phase at the same time — the property 2PL structurally could not have.
+        // A guard ensures we always decrement (even on the `?`/conflict early
+        // returns below) so the in-flight gauge never leaks.
+        struct BuildGuard<'a>(&'a std::sync::atomic::AtomicU64);
+        impl Drop for BuildGuard<'_> {
+            fn drop(&mut self) {
+                self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let _build_guard = {
+            use std::sync::atomic::Ordering::SeqCst;
+            let cur = self.commit_build_in_flight.fetch_add(1, SeqCst) + 1;
+            let mut p = self.commit_build_peak.load(SeqCst);
+            while cur > p {
+                match self
+                    .commit_build_peak
+                    .compare_exchange(p, cur, SeqCst, SeqCst)
+                {
+                    Ok(_) => break,
+                    Err(actual) => p = actual,
+                }
+            }
+            BuildGuard(&self.commit_build_in_flight)
+        };
+
+        // ── Phase 1: old state of changed_files, from the snapshot ──
+        // No file_to_node_ids dependency: scan the snapshot's segments by file.
+        let mut old_nodes_by_id: HashMap<u128, NodeRecordV2> = HashMap::new();
+        for file in changed_files {
+            for node in self.find_nodes_at(&snap, None, Some(file.as_str())) {
+                old_nodes_by_id.insert(node.id, node);
+            }
+        }
+        let old_node_ids: HashSet<u128> = old_nodes_by_id.keys().copied().collect();
+
+        // Separate enrichment file contexts from normal files.
+        let enrichment_contexts: Vec<&String> = changed_files
+            .iter()
+            .filter(|f| f.starts_with("__enrichment__/"))
+            .collect();
+
+        // ── Phase 2: compute tombstones (snapshot-pinned edge finders) ──
+        let tombstone_node_ids: HashSet<u128> = if protected_types.is_empty() {
+            old_node_ids.clone()
+        } else {
+            old_nodes_by_id
+                .iter()
+                .filter(|(_, node)| !protected_types.contains(&node.node_type))
+                .map(|(id, _)| *id)
+                .collect()
+        };
+
+        let normal_file_node_ids: HashSet<u128> = old_nodes_by_id
+            .iter()
+            .filter(|(_, n)| !n.file.starts_with("__enrichment__/"))
+            .filter(|(id, _)| tombstone_node_ids.contains(id))
+            .map(|(id, _)| *id)
+            .collect();
+        let enrichment_file_node_ids: HashSet<u128> = old_nodes_by_id
+            .iter()
+            .filter(|(_, n)| n.file.starts_with("__enrichment__/"))
+            .filter(|(id, _)| tombstone_node_ids.contains(id))
+            .map(|(id, _)| *id)
+            .collect();
+
+        let mut raw_tombstone_edge_keys: Vec<(u128, u128, String)> =
+            self.find_edge_keys_by_src_ids_at(&snap, &normal_file_node_ids, true);
+        if !enrichment_file_node_ids.is_empty() {
+            raw_tombstone_edge_keys
+                .extend(self.find_edge_keys_by_src_ids_at(&snap, &enrichment_file_node_ids, false));
+        }
+        for ctx in &enrichment_contexts {
+            raw_tombstone_edge_keys
+                .extend(self.find_edge_keys_by_file_context_at(&snap, ctx));
+        }
+        let edges_removed = raw_tombstone_edge_keys.len() as u64;
+
+        // Intern edge types locally (no shared edge_type_intern mutation on the
+        // concurrent path — a per-commit map is enough for dedup here).
+        let mut local_intern: HashMap<String, Arc<str>> = HashMap::new();
+        let mut intern = |t: &str| -> Arc<str> {
+            if let Some(a) = local_intern.get(t) {
+                return Arc::clone(a);
+            }
+            let a: Arc<str> = Arc::from(t);
+            local_intern.insert(t.to_string(), Arc::clone(&a));
+            a
+        };
+        let tombstone_edge_keys: Vec<(u128, u128, Arc<str>)> = raw_tombstone_edge_keys
+            .into_iter()
+            .map(|(s, d, t)| {
+                let it = intern(&t);
+                (s, d, it)
+            })
+            .collect();
+
+        // ── Phase 3: changed types (for the CommitDelta) ──
+        let mut changed_node_types: HashSet<String> = HashSet::new();
+        let mut changed_edge_types: HashSet<String> = HashSet::new();
+        for node in old_nodes_by_id.values() {
+            changed_node_types.insert(node.node_type.clone());
+        }
+        for (_, _, et) in &tombstone_edge_keys {
+            changed_edge_types.insert(et.to_string());
+        }
+        for node in &nodes {
+            changed_node_types.insert(node.node_type.clone());
+        }
+        for edge in &edges {
+            changed_edge_types.insert(edge.edge_type.clone());
+        }
+
+        // ── Phase 4: tombstone-removal delta for re-added entities ──
+        // A re-added node/edge supersedes ANY tombstone on its id. The published
+        // edit replays as `set.extend(added_tombstones); set.remove(removed)`
+        // (Manifest::apply), so `removed_tombstone_*` (this var) must cancel a
+        // tombstone whether it came from (a) the prior cumulative set OR (b) THIS
+        // commit's own `tombstone_*_ids` (added in the same edit — phase 1/2
+        // tombstones the file's OLD nodes, which for a re-analysis share ids with
+        // the NEW nodes). Restricting to the snapshot base alone (case a) lost
+        // re-added rows under same-file re-analysis: the edit added the id to
+        // tombstones and never removed it, so replay/reopen (and even the
+        // in-memory non-checkpoint version) hid the freshly re-added node.
+        // Listing EVERY re-added id as removed is always correct — a re-added
+        // entity is live by definition, and conflict detection guarantees no
+        // other commit owns these files after our snapshot. (apply's order
+        // extend-then-remove makes the remove authoritative.)
+        let untombstoned_nodes: Vec<u128> = nodes.iter().map(|n| n.id).collect();
+        let untombstoned_edges: Vec<(u128, u128, String)> = edges
+            .iter()
+            .map(|e| (e.src, e.dst, e.edge_type.clone()))
+            .collect();
+
+        // ── Phase 5–7: build PRIVATE per-shard segments, flush to NEW files ──
+        // Route nodes by file; edges by source-node's shard (local map first,
+        // then snapshot lookup). NO shared Shard / routing-map mutation.
+        let mut local_node_shard: HashMap<u128, u16> = HashMap::new();
+        let mut nodes_by_shard: HashMap<u16, Vec<NodeRecordV2>> = HashMap::new();
+        for node in &nodes {
+            let shard_id = self.planner.compute_shard_id(&node.file);
+            local_node_shard.insert(node.id, shard_id);
+            nodes_by_shard
+                .entry(shard_id)
+                .or_default()
+                .push(node.clone());
+        }
+
+        let mut edges_by_shard: HashMap<u16, Vec<EdgeRecordV2>> = HashMap::new();
+        for edge in &edges {
+            let shard_id = if let Some(ctx) = extract_file_context(&edge.metadata) {
+                // Enrichment edge: route by file_context.
+                self.planner.compute_shard_id(&ctx)
+            } else if let Some(&sid) = local_node_shard.get(&edge.src) {
+                sid
+            } else if let Some(src_node) = self.get_node_at(&snap, edge.src) {
+                self.planner.compute_shard_id(&src_node.file)
+            } else {
+                // Source unknown in this commit and in the snapshot — skip
+                // (matches upsert_edges' skip-unknown-source behavior).
+                continue;
+            };
+            edges_by_shard
+                .entry(shard_id)
+                .or_default()
+                .push(edge.clone());
+        }
+
+        // Allocate IDs + write private segment files. Segment IDs come from the
+        // lock-free atomic counter (no manifest lock needed for allocation).
+        let mut new_node_descs: Vec<SegmentDescriptor> = Vec::new();
+        let mut new_edge_descs: Vec<SegmentDescriptor> = Vec::new();
+        // Opened segments to register in the cache AFTER a successful publish.
+        let mut opened_nodes: Vec<(u64, Arc<NodeSegmentV2>)> = Vec::new();
+        let mut opened_edges: Vec<(u64, Arc<EdgeSegmentV2>)> = Vec::new();
+        // Shard dirs whose new segment dir-entries must be fsync'd (Strict only)
+        // so a crash cannot lose the directory entry of a just-fsync'd segment.
+        let mut shard_dirs_to_fsync: HashSet<PathBuf> = HashSet::new();
+
+        let next_seg_id = || -> u64 {
+            let g = manifest.lock().unwrap();
+            g.next_segment_id()
+        };
+
+        for (shard_id, shard_nodes) in &nodes_by_shard {
+            if shard_nodes.is_empty() {
+                continue;
+            }
+            let seg_id = next_seg_id();
+            let mut writer = NodeSegmentWriter::new();
+            for n in shard_nodes {
+                writer.add(n.clone());
+            }
+            let shard_path = shard_dir(db_path, *shard_id);
+            let seg_path = shard_path.join(format!("seg_{:06}_nodes.seg", seg_id));
+            let file = std::fs::File::create(&seg_path)?;
+            let mut bw = BufWriter::new(file);
+            let meta = writer.finish(&mut bw)?;
+            // MVCC C1 / durability invariant (design §1): the segment must be on
+            // STABLE storage BEFORE the manifest commit makes it visible. The
+            // commit point only fsyncs the manifest + current.json; without this
+            // the atomic current.json swap could reference a segment still in the
+            // page cache (torn publish: visibility advances past durability). We
+            // recover the fd from the BufWriter and fsync it here, in the
+            // lock-free build phase (still fully parallel — no manifest lock).
+            let inner = bw
+                .into_inner()
+                .map_err(|e| GraphError::Io(e.into_error()))?;
+            if durability == crate::storage_v2::manifest::DurabilityMode::Strict {
+                inner.sync_all()?;
+                shard_dirs_to_fsync.insert(shard_path);
+            }
+            drop(inner);
+            let seg = Arc::new(NodeSegmentV2::open(&seg_path)?);
+            let desc = SegmentDescriptor::from_meta(
+                seg_id,
+                SegmentType::Nodes,
+                Some(*shard_id),
+                meta,
+            );
+            opened_nodes.push((seg_id, seg));
+            new_node_descs.push(desc);
+        }
+
+        for (shard_id, shard_edges) in &edges_by_shard {
+            if shard_edges.is_empty() {
+                continue;
+            }
+            let seg_id = next_seg_id();
+            let mut writer = EdgeSegmentWriter::new();
+            for e in shard_edges {
+                writer.add(e.clone());
+            }
+            let shard_path = shard_dir(db_path, *shard_id);
+            let seg_path = shard_path.join(format!("seg_{:06}_edges.seg", seg_id));
+            let file = std::fs::File::create(&seg_path)?;
+            let mut bw = BufWriter::new(file);
+            let meta = writer.finish(&mut bw)?;
+            // Durability invariant: fsync the edge segment to stable storage
+            // before the manifest commit can reference it (see node loop above).
+            let inner = bw
+                .into_inner()
+                .map_err(|e| GraphError::Io(e.into_error()))?;
+            if durability == crate::storage_v2::manifest::DurabilityMode::Strict {
+                inner.sync_all()?;
+                shard_dirs_to_fsync.insert(shard_path);
+            }
+            drop(inner);
+            let seg = Arc::new(EdgeSegmentV2::open(&seg_path)?);
+            let desc = SegmentDescriptor::from_meta(
+                seg_id,
+                SegmentType::Edges,
+                Some(*shard_id),
+                meta,
+            );
+            opened_edges.push((seg_id, seg));
+            new_edge_descs.push(desc);
+        }
+
+        // Durability invariant: fsync each shard directory that gained a new
+        // segment dir-entry, so a crash after the manifest commit cannot find a
+        // fsync'd segment whose directory entry was never flushed (ext4/XFS).
+        // No-op on macOS/Windows. Still lock-free — no manifest lock held.
+        if durability == crate::storage_v2::manifest::DurabilityMode::Strict {
+            for dir in &shard_dirs_to_fsync {
+                fsync_dir(dir)?;
+            }
+        }
+
+        // ── Phase 6: modified-vs-new counts (vs snapshot old state) ──
+        let new_nodes_by_id: HashMap<u128, &NodeRecordV2> =
+            nodes.iter().map(|n| (n.id, n)).collect();
+        let mut nodes_modified: u64 = 0;
+        let mut purely_new: u64 = 0;
+        for (id, new_node) in &new_nodes_by_id {
+            if let Some(old_node) = old_nodes_by_id.get(id) {
+                if old_node.content_hash != 0
+                    && new_node.content_hash != 0
+                    && old_node.content_hash != new_node.content_hash
+                {
+                    nodes_modified += 1;
+                }
+            } else {
+                purely_new += 1;
+            }
+        }
+
+        // Leave the LOCK-FREE region BEFORE taking the commit-point mutex: a
+        // thread blocked on the group-commit queue / manifest mutex is
+        // serialized, NOT overlapping, so it must not inflate the build/flush
+        // parallelism witness.
+        drop(_build_guard);
+
+        // ── Phase 8: commit point (MVCC C1 — group-commit) ──
+        //
+        // Up to here every commit ran fully lock-free and in parallel (phases
+        // 0–7, the BuildGuard witness above). Now, instead of each commit taking
+        // `manifest.lock()` and paying its own `commit_edit` (3 fsyncs), commits
+        // converge on the group-commit queue: one becomes LEADER and publishes
+        // the whole non-conflicting batch with ONE `commit_edit` (3 fsyncs
+        // amortized over the batch); the rest are FOLLOWERS that wait on a
+        // private result slot. The leader is the ONLY thread that touches the
+        // manifest mutex, so the durable write is still serialized — but once
+        // per batch, not once per commit.
+
+        // Pre-intern this commit's re-added edge keys so the leader can
+        // un-tombstone them without needing this commit's local intern pool.
+        let untombstoned_edges_interned: Vec<(u128, u128, Arc<str>)> = edges
+            .iter()
+            .map(|e| (e.src, e.dst, intern(&e.edge_type)))
+            .collect();
+
+        let delta_template = CommitDelta {
+            changed_files: changed_files.to_vec(),
+            nodes_added: purely_new,
+            nodes_removed: tombstone_node_ids.len() as u64,
+            nodes_modified,
+            removed_node_ids: tombstone_node_ids.iter().copied().collect(),
+            edges_removed,
+            changed_node_types,
+            changed_edge_types,
+            // Filled in by the leader at publish time (the batch version).
+            manifest_version: 0,
+        };
+
+        let pending = PendingCommit {
+            changed_files: changed_files.to_vec(),
+            snapshot_version,
+            new_node_descs,
+            new_edge_descs,
+            tombstone_node_ids: tombstone_node_ids.into_iter().collect(),
+            tombstone_edge_keys,
+            untombstoned_nodes,
+            untombstoned_edges,
+            untombstoned_edges_arc: untombstoned_edges_interned,
+            opened_nodes,
+            opened_edges,
+            tags,
+            delta_template,
+            result: Arc::new((std::sync::Mutex::new(None), std::sync::Condvar::new())),
+        };
+
+        self.group_commit_publish(pending, manifest)
+    }
+
+    /// MVCC C1: the group-commit leader/follower publish path.
+    ///
+    /// `pending` is THIS commit's prepared output (already built + flushed,
+    /// lock-free). It is enqueued on the group-commit queue; the caller either
+    /// becomes the LEADER (drains the queue and performs ONE durable
+    /// `commit_edit` for the whole non-conflicting batch) or a FOLLOWER (waits on
+    /// its private result slot). Returns this commit's `CommitDelta`, or
+    /// `GraphError::ConflictedCommit` if it lost an intra- or inter-batch
+    /// conflict (caller retries from a fresh snapshot).
+    ///
+    /// Locking (deadlock-free by construction):
+    /// 1. `group_commit.inner` (LEAF) — held only to enqueue and to drain; never
+    ///    held across `manifest.lock()` nor across any I/O.
+    /// 2. `manifest` (the single serialization point) — held only by the leader,
+    ///    only for the batched `commit_edit`.
+    /// 3. each commit's private `result` mutex/condvar — not shared with any
+    ///    other commit.
+    /// No cycle: queue → manifest → (private slot). Followers wait OUTSIDE every
+    /// critical section.
+    fn group_commit_publish(
+        &self,
+        pending: PendingCommit,
+        manifest: &std::sync::Mutex<ManifestStore>,
+    ) -> Result<CommitDelta> {
+        use std::sync::atomic::Ordering;
+
+        let result_slot = Arc::clone(&pending.result);
+        let am_i_leader;
+        {
+            let mut q = self.group_commit.inner.lock().unwrap();
+            q.pending.push_back(pending);
+            if !q.leader_active {
+                q.leader_active = true;
+                am_i_leader = true;
+            } else {
+                am_i_leader = false;
+            }
+            // Queue lock released here — BEFORE any manifest lock / wait.
+        }
+
+        if !am_i_leader {
+            // FOLLOWER: wait on the private slot. No other lock held. A bounded
+            // wait makes a leader crash detectable instead of an eternal hang.
+            let (lock, cvar) = &*result_slot;
+            let mut guard = lock.lock().unwrap();
+            let mut waited = std::time::Duration::ZERO;
+            let step = std::time::Duration::from_secs(5);
+            while guard.is_none() {
+                let (g, timeout) = cvar.wait_timeout(guard, step).unwrap();
+                guard = g;
+                if guard.is_some() {
+                    break;
+                }
+                if timeout.timed_out() {
+                    waited += step;
+                    if waited >= std::time::Duration::from_secs(45) {
+                        // Leader vanished (panicked before waking us). Surface a
+                        // hard error rather than hang; the caller's bounded retry
+                        // loop re-attempts from a fresh snapshot.
+                        return Err(GraphError::ConflictedCommit {
+                            files: Vec::new(),
+                            snapshot_version: 0,
+                            conflicting_version: 0,
+                        });
+                    }
+                }
+            }
+            return guard.take().unwrap();
+        }
+
+        // LEADER: drain → publish (ONE durable write) → wake followers. Loop so a
+        // commit that arrived after we set leader_active but is still in the
+        // queue gets published in a follow-up round before we clear the flag.
+        let mut my_result: Option<Result<CommitDelta>> = None;
+        loop {
+            // 8.1 Drain the current pending set under the LEAF queue lock.
+            let batch: Vec<PendingCommit> = {
+                let mut q = self.group_commit.inner.lock().unwrap();
+                if q.pending.is_empty() {
+                    q.leader_active = false;
+                    break;
+                }
+                q.pending.drain(..).collect()
+            };
+
+            // 8.2 Publish the batch with ONE durable commit_edit (under the
+            // manifest mutex — the single serialization point).
+            let mut wakeups: Vec<(
+                Arc<(std::sync::Mutex<Option<Result<CommitDelta>>>, std::sync::Condvar)>,
+                Result<CommitDelta>,
+                bool, // is_self
+            )> = Vec::new();
+
+            {
+                let mut m = manifest.lock().unwrap();
+                let base_version = m.current().version;
+                let batch_version = base_version + 1;
+
+                // Cumulative tombstone sets start from the THEN-current version.
+                let mut all_tomb_nodes: HashSet<u128> =
+                    m.current().tombstoned_node_ids.iter().copied().collect();
+                let mut all_tomb_edges: HashSet<(u128, u128, Arc<str>)> = m
+                    .current()
+                    .tombstoned_edge_keys
+                    .iter()
+                    .map(|(s, d, t)| (*s, *d, Arc::from(t.as_str())))
+                    .collect();
+
+                let mut stats = m.current().stats.clone();
+
+                // Merged edit accumulators.
+                let mut merged_node_descs: Vec<SegmentDescriptor> = Vec::new();
+                let mut merged_edge_descs: Vec<SegmentDescriptor> = Vec::new();
+                let mut merged_added_tomb_nodes: Vec<u128> = Vec::new();
+                let mut merged_removed_tomb_nodes: Vec<u128> = Vec::new();
+                let mut merged_added_tomb_edges: Vec<(u128, u128, String)> = Vec::new();
+                let mut merged_removed_tomb_edges: Vec<(u128, u128, String)> = Vec::new();
+                let mut merged_tags: HashMap<String, String> = HashMap::new();
+                let mut committed_files: Vec<String> = Vec::new();
+                let mut opened_nodes_all: Vec<(u64, Arc<NodeSegmentV2>)> = Vec::new();
+                let mut opened_edges_all: Vec<(u64, Arc<EdgeSegmentV2>)> = Vec::new();
+
+                // Intra-batch conflict tracking: the FIRST commit to claim a file
+                // wins; any later commit in this batch touching the same file is
+                // a loser (abort+retry — loud counter). Inter-batch conflict via
+                // the file_last_committed_version check.
+                //
+                // file_last_committed_version is written ONLY by a leader holding
+                // THIS manifest mutex, so while we hold it the map is stable — we
+                // read it directly (no clone) under its own short leaf lock.
+                let mut seen_files: HashSet<String> = HashSet::new();
+                let mut winner_count: u64 = 0;
+
+                for pc in batch.into_iter() {
+                    let is_self = Arc::ptr_eq(&pc.result, &result_slot);
+
+                    // Conflict 1: intra-batch same-file overlap.
+                    let intra_conflict: Vec<String> = pc
+                        .changed_files
+                        .iter()
+                        .filter(|f| seen_files.contains(f.as_str()))
+                        .cloned()
+                        .collect();
+
+                    // Conflict 2: inter-batch — a committed version AFTER this
+                    // commit's snapshot already touched one of its files.
+                    let inter_conflict: Option<(String, u64)> = {
+                        let cm = self.file_last_committed_version.lock().unwrap();
+                        pc.changed_files.iter().find_map(|f| {
+                            cm.get(f.as_str())
+                                .filter(|&&last_v| last_v > pc.snapshot_version)
+                                .map(|&last_v| (f.clone(), last_v))
+                        })
+                    };
+
+                    if !intra_conflict.is_empty() || inter_conflict.is_some() {
+                        self.commit_conflict_retries.fetch_add(1, Ordering::Relaxed);
+                        let (files, conflicting_version) = if let Some((f, v)) = inter_conflict {
+                            tracing::warn!(
+                                "commit_conflict (inter-batch): file={}, last_committed_version={}, my_snapshot={} — aborting for retry",
+                                f, v, pc.snapshot_version
+                            );
+                            (vec![f], v)
+                        } else {
+                            tracing::warn!(
+                                "commit_conflict (intra-batch): files={:?} already claimed in this batch — aborting for retry",
+                                intra_conflict
+                            );
+                            (intra_conflict, batch_version)
+                        };
+                        let err = Err(GraphError::ConflictedCommit {
+                            files,
+                            snapshot_version: pc.snapshot_version,
+                            conflicting_version,
+                        });
+                        wakeups.push((Arc::clone(&pc.result), err, is_self));
+                        continue;
+                    }
+
+                    // Winner: claim its files and fold its deltas into the batch.
+                    winner_count += 1;
+                    for f in &pc.changed_files {
+                        seen_files.insert(f.clone());
+                    }
+                    committed_files.extend(pc.changed_files.iter().cloned());
+
+                    for s in &pc.new_node_descs {
+                        stats.total_nodes += s.record_count;
+                        stats.node_segment_count += 1;
+                    }
+                    for s in &pc.new_edge_descs {
+                        stats.total_edges += s.record_count;
+                        stats.edge_segment_count += 1;
+                    }
+
+                    merged_node_descs.extend(pc.new_node_descs.iter().cloned());
+                    merged_edge_descs.extend(pc.new_edge_descs.iter().cloned());
+
+                    // Tombstone cumulative-set replay (add then remove re-added).
+                    all_tomb_nodes.extend(pc.tombstone_node_ids.iter().copied());
+                    all_tomb_edges.extend(pc.tombstone_edge_keys.iter().cloned());
+                    for id in &pc.untombstoned_nodes {
+                        all_tomb_nodes.remove(id);
+                    }
+                    for key in &pc.untombstoned_edges_arc {
+                        all_tomb_edges.remove(key);
+                    }
+
+                    // Edit-level tombstone deltas (the on-disk O(Δ) record).
+                    merged_added_tomb_nodes.extend(pc.tombstone_node_ids.iter().copied());
+                    merged_removed_tomb_nodes.extend(pc.untombstoned_nodes.iter().copied());
+                    merged_added_tomb_edges.extend(
+                        pc.tombstone_edge_keys
+                            .iter()
+                            .map(|(s, d, t)| (*s, *d, t.to_string())),
+                    );
+                    merged_removed_tomb_edges.extend(pc.untombstoned_edges.iter().cloned());
+
+                    for (k, v) in &pc.tags {
+                        merged_tags.entry(k.clone()).or_insert_with(|| v.clone());
+                    }
+
+                    opened_nodes_all.extend(pc.opened_nodes.into_iter());
+                    opened_edges_all.extend(pc.opened_edges.into_iter());
+
+                    let mut delta = pc.delta_template;
+                    delta.manifest_version = batch_version;
+                    wakeups.push((Arc::clone(&pc.result), Ok(delta), is_self));
+                }
+
+                // If the WHOLE batch conflicted (no winner), there is nothing to
+                // publish — skip the durable write entirely (no empty version).
+                // Any winner ⇒ advance one version (even a no-op winner gets an
+                // honest version so its CommitDelta.manifest_version is real).
+                if winner_count > 0 {
+                    let cp_tomb_nodes: Vec<u128> = all_tomb_nodes.into_iter().collect();
+                    let cp_tomb_edges: Vec<(u128, u128, String)> = all_tomb_edges
+                        .into_iter()
+                        .map(|(s, d, t)| (s, d, t.to_string()))
+                        .collect();
+
+                    let edit = ManifestEdit {
+                        version: batch_version,
+                        parent_version: base_version,
+                        base_checkpoint: 0,
+                        created_at: 0,
+                        added_node_segments: merged_node_descs,
+                        added_edge_segments: merged_edge_descs,
+                        removed_node_segment_ids: Vec::new(),
+                        removed_edge_segment_ids: Vec::new(),
+                        added_tombstone_nodes: merged_added_tomb_nodes,
+                        removed_tombstone_nodes: merged_removed_tomb_nodes,
+                        added_tombstone_edges: merged_added_tomb_edges,
+                        removed_tombstone_edges: merged_removed_tomb_edges,
+                        l1_node_segments: None,
+                        l1_edge_segments: None,
+                        last_compaction: None,
+                        tags: merged_tags,
+                        stats,
+                    };
+
+                    // ONE durable commit for the whole batch (fsync amortized).
+                    if let Err(e) = m.commit_edit(edit, &cp_tomb_nodes, &cp_tomb_edges) {
+                        // commit_edit failed durably: fail EVERY winner in this
+                        // batch (their segments are orphaned + GC'd). Surface the
+                        // error to self; wake others with a conflict so they
+                        // retry. We re-map Ok(...) wakeups → error.
+                        let msg = e.to_string();
+                        for (slot, res, is_self_w) in wakeups.iter_mut() {
+                            if res.is_ok() {
+                                *res = Err(GraphError::ConflictedCommit {
+                                    files: Vec::new(),
+                                    snapshot_version: 0,
+                                    conflicting_version: 0,
+                                });
+                            }
+                            let _ = slot;
+                            let _ = is_self_w;
+                        }
+                        tracing::error!("group_commit: durable commit_edit failed: {msg}");
+                    } else {
+                        // Update the conflict map for every committed file → V.
+                        let mut cm = self.file_last_committed_version.lock().unwrap();
+                        for f in &committed_files {
+                            cm.insert(f.clone(), batch_version);
+                        }
+                        drop(cm);
+
+                        // Register all batch segments in the cache (post-publish).
+                        for (id, seg) in opened_nodes_all {
+                            self.segment_cache.insert_node_segment(id, seg);
+                        }
+                        for (id, seg) in opened_edges_all {
+                            self.segment_cache.insert_edge_segment(id, seg);
+                        }
+                    }
+                }
+
+                // Manifest mutex released at the end of this block.
+                drop(m);
+
+                // Record batch-size metrics (winners + losers = drained count).
+                let batch_len = wakeups.len() as u64;
+                self.group_commit_batch_size_sum
+                    .fetch_add(batch_len, Ordering::Relaxed);
+                self.group_commit_batches.fetch_add(1, Ordering::Relaxed);
+                let mut mx = self.group_commit_batch_size_max.load(Ordering::Relaxed);
+                while batch_len > mx {
+                    match self.group_commit_batch_size_max.compare_exchange(
+                        mx,
+                        batch_len,
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                    ) {
+                        Ok(_) => break,
+                        Err(actual) => mx = actual,
+                    }
+                }
+            }
+
+            // 8.3 Wake followers (outside the manifest mutex). Each writes its
+            // own private slot + notifies. The leader keeps its OWN result to
+            // return directly (no self-wakeup needed).
+            for (slot, res, is_self) in wakeups.into_iter() {
+                if is_self {
+                    my_result = Some(res);
+                } else {
+                    let (lock, cvar) = &*slot;
+                    *lock.lock().unwrap() = Some(res);
+                    cvar.notify_one();
+                }
+            }
+            // Loop: drain any commits that queued while we published.
+        }
+
+        // The leader's own commit is always part of the FIRST drained batch.
+        my_result.expect("leader must produce its own result in the first batch")
     }
 }
 
@@ -1639,9 +3580,9 @@ impl MultiShardStore {
             None,
         )?;
 
-        // Inject L1 descriptors and compaction info
-        manifest.l1_node_segments = l1_node_descs;
-        manifest.l1_edge_segments = l1_edge_descs;
+        // Inject L1 descriptors and compaction info (MVCC C3.b: fresh Arc).
+        manifest.l1_node_segments = std::sync::Arc::new(l1_node_descs);
+        manifest.l1_edge_segments = std::sync::Arc::new(l1_edge_descs);
         manifest.last_compaction = Some(CompactionInfo {
             manifest_version: manifest.version,
             timestamp_ms: std::time::SystemTime::now()
@@ -1706,6 +3647,18 @@ impl MultiShardStore {
         self.shards.iter().map(|s| s.write_buffer_size().0).sum()
     }
 
+    /// True when ANY shard's write buffer holds unflushed node OR edge records.
+    ///
+    /// W8 Part 3 soundness probe: the durable-pin persist must know whether a flush
+    /// would publish data beyond the caller's own delta (buffered writes from other
+    /// connections "ride" the commit under MVCC visibility=publish).
+    pub fn has_buffered_writes(&self) -> bool {
+        self.shards.iter().any(|s| {
+            let (nodes, edges) = s.write_buffer_size();
+            nodes > 0 || edges > 0
+        })
+    }
+
     /// Per-shard statistics for monitoring.
     /// Per-shard diagnostics for lifecycle visibility.
     pub fn shard_diagnostics(&self) -> Vec<ShardDiagnostics> {
@@ -1727,6 +3680,24 @@ impl MultiShardStore {
 /// Compute shard directory path: `<db_path>/segments/<shard_id>/`
 fn shard_dir(db_path: &Path, shard_id: u16) -> PathBuf {
     db_path.join("segments").join(format!("{:02}", shard_id))
+}
+
+/// Fsync a directory so newly-created entries (segment files) are durable.
+///
+/// On ext4/XFS a freshly created file's directory entry is not guaranteed to be
+/// on stable storage just because the file's data was `sync_all`'d — the parent
+/// directory must be fsync'd too. No-op on macOS/Windows (directory metadata is
+/// auto-persisted there).
+#[cfg(target_os = "linux")]
+fn fsync_dir(path: &Path) -> Result<()> {
+    let dir = std::fs::File::open(path)?;
+    dir.sync_all()?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn fsync_dir(_path: &Path) -> Result<()> {
+    Ok(())
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
@@ -2898,23 +4869,37 @@ mod tests {
             &mut manifest_store,
         ).unwrap();
 
-        // Manifest tombstone Vecs are cleared after commit to save memory.
-        // Tombstones now live in the shard TombstoneSet (single source of truth).
+        // MVCC B3: the manifest VERSION is the tombstone authority and KEEPS its
+        // cumulative set in memory (previously these were cleared after commit;
+        // the per-shard set was the source of truth). The re-analysis of
+        // a/file.js dropped fn1 + fn2 + the CALLS edge → all tombstoned.
         let manifest = manifest_store.current();
         assert!(
-            manifest.tombstoned_node_ids.is_empty(),
-            "Manifest tombstone Vecs should be cleared after commit"
+            manifest.tombstoned_node_ids.contains(&a.id),
+            "manifest version must hold the cumulative node tombstones (B3 authority)"
         );
         assert!(
-            manifest.tombstoned_edge_keys.is_empty(),
-            "Manifest tombstone Vecs should be cleared after commit"
+            manifest.tombstoned_node_ids.contains(&b.id),
+            "manifest version must hold the cumulative node tombstones (B3 authority)"
+        );
+        assert!(
+            manifest
+                .tombstoned_edge_keys
+                .iter()
+                .any(|(s, d, t)| *s == edge.src && *d == edge.dst && t == &edge.edge_type),
+            "manifest version must hold the cumulative edge tombstones (B3 authority)"
         );
 
-        // Shard TombstoneSet should contain tombstones for old nodes
+        // The derived current_tombstones Arc (what snapshots read) agrees.
+        let cur_tomb = manifest_store.current_tombstones();
+        assert!(cur_tomb.contains_node(a.id));
+        assert!(cur_tomb.contains_node(b.id));
+        assert!(cur_tomb.contains_edge(edge.src, edge.dst, &edge.edge_type));
+
+        // The per-shard mirror is kept consistent with the version for the
+        // legacy live-read paths.
         assert!(store.is_node_tombstoned(a.id));
         assert!(store.is_node_tombstoned(b.id));
-
-        // Shard TombstoneSet should contain tombstones for old edges
         assert!(store.is_edge_tombstoned(edge.src, edge.dst, &edge.edge_type));
     }
 
@@ -4262,5 +6247,1084 @@ mod tests {
             last,
             first,
         );
+    }
+
+    // -- MVCC Snapshot Reads (RFD-71 B1) ----------------------------------------
+
+    /// Equivalence: snapshot reads on the CURRENT version must match the live
+    /// read path for all committed data (nodes, edges, counts, by-type).
+    /// The only difference (write-buffer freshness) is invisible here because
+    /// commit_batch flushes the buffer to immutable segments before publishing.
+    #[test]
+    fn test_snapshot_reads_equivalent_to_live() {
+        let mut store = MultiShardStore::ephemeral(4);
+        let mut manifest = ManifestStore::ephemeral();
+
+        let n1 = make_node("a/fn1", "FUNCTION", "fn1", "a/file.js");
+        let n2 = make_node("a/fn2", "FUNCTION", "fn2", "a/file.js");
+        let n3 = make_node("b/cls1", "CLASS", "cls1", "b/file.js");
+        let e1 = make_edge("a/fn1", "a/fn2", "CALLS");
+        let e2 = make_edge("a/fn1", "b/cls1", "CONTAINS");
+
+        store
+            .commit_batch(
+                vec![n1.clone(), n2.clone(), n3.clone()],
+                vec![e1.clone(), e2.clone()],
+                &["a/file.js".to_string(), "b/file.js".to_string()],
+                HashMap::new(),
+                &mut manifest,
+            )
+            .unwrap();
+
+        let snap = store.snapshot(&manifest);
+
+        // get_node / node_exists
+        for n in [&n1, &n2, &n3] {
+            assert_eq!(store.get_node_at(&snap, n.id), store.get_node(n.id));
+            assert!(store.get_node_at(&snap, n.id).is_some());
+            assert_eq!(store.node_exists_at(&snap, n.id), store.node_exists(n.id));
+        }
+        assert!(store.get_node_at(&snap, 0xdead_beef).is_none());
+        assert!(!store.node_exists_at(&snap, 0xdead_beef));
+
+        // node_count + count_by_type
+        let live_total: usize = store.count_by_type().values().sum();
+        assert_eq!(store.node_count_at(&snap), 3);
+        assert_eq!(store.node_count_at(&snap), live_total);
+        assert_eq!(store.count_by_type_at(&snap), store.count_by_type());
+
+        // find_nodes (all, by type, by file)
+        let mut snap_all: Vec<u128> =
+            store.find_nodes_at(&snap, None, None).iter().map(|n| n.id).collect();
+        let mut live_all: Vec<u128> =
+            store.find_nodes(None, None).iter().map(|n| n.id).collect();
+        snap_all.sort_unstable();
+        live_all.sort_unstable();
+        assert_eq!(snap_all, live_all);
+
+        let snap_fns = store.find_nodes_at(&snap, Some("FUNCTION"), None);
+        assert_eq!(snap_fns.len(), 2);
+        assert!(snap_fns.iter().all(|n| n.node_type == "FUNCTION"));
+        let snap_b = store.find_nodes_at(&snap, None, Some("b/file.js"));
+        assert_eq!(snap_b.len(), 1);
+        assert_eq!(snap_b[0].id, n3.id);
+
+        // outgoing / incoming / by-type / iter_all
+        let mut snap_out: Vec<u128> = store
+            .get_outgoing_edges_at(&snap, n1.id, None)
+            .iter()
+            .map(|e| e.dst)
+            .collect();
+        let mut live_out: Vec<u128> =
+            store.get_outgoing_edges(n1.id, None).iter().map(|e| e.dst).collect();
+        snap_out.sort_unstable();
+        live_out.sort_unstable();
+        assert_eq!(snap_out, live_out);
+        assert_eq!(snap_out.len(), 2);
+
+        let calls_only = store.get_outgoing_edges_at(&snap, n1.id, Some(&["CALLS"]));
+        assert_eq!(calls_only.len(), 1);
+        assert_eq!(calls_only[0].edge_type, "CALLS");
+
+        let incoming = store.get_incoming_edges_at(&snap, n2.id, None);
+        assert_eq!(incoming.len(), 1);
+        assert_eq!(incoming[0].src, n1.id);
+
+        assert_eq!(store.get_edges_by_type_at(&snap, "CALLS").len(), 1);
+        assert_eq!(store.get_edges_by_type_at(&snap, "CONTAINS").len(), 1);
+        assert_eq!(store.iter_all_edges_at(&snap).len(), 2);
+    }
+
+    /// The CORE MVCC property: a captured snapshot is version-pinned. After more
+    /// commits (add + re-analyze/tombstone), reads through the OLD snapshot still
+    /// return the OLD version's state; a FRESH snapshot returns the new state.
+    #[test]
+    fn test_snapshot_version_isolation() {
+        let mut store = MultiShardStore::ephemeral(4);
+        let mut manifest = ManifestStore::ephemeral();
+
+        // Commit 1: file a/file.js has nodeA + nodeB, with an edge A->B.
+        let a_v1 = make_node_with_hash("a/nodeA", "FUNCTION", "nodeA", "a/file.js", 11);
+        let b = make_node_with_hash("a/nodeB", "FUNCTION", "nodeB", "a/file.js", 22);
+        let ab = make_edge("a/nodeA", "a/nodeB", "CALLS");
+        store
+            .commit_batch(
+                vec![a_v1.clone(), b.clone()],
+                vec![ab.clone()],
+                &["a/file.js".to_string()],
+                HashMap::new(),
+                &mut manifest,
+            )
+            .unwrap();
+
+        // Pin the snapshot of version V (2 nodes, 1 edge, A has hash 11).
+        let snap_v1 = store.snapshot(&manifest);
+        assert_eq!(store.node_count_at(&snap_v1), 2);
+        assert_eq!(store.get_node_at(&snap_v1, a_v1.id).unwrap().content_hash, 11);
+        assert_eq!(store.iter_all_edges_at(&snap_v1).len(), 1);
+
+        // Commit 2: re-analyze a/file.js — nodeA gets a NEW content hash (33),
+        // nodeB is DROPPED (so it must be tombstoned), edge A->B removed, and a
+        // brand-new file b/file.js adds nodeC.
+        let a_v2 = make_node_with_hash("a/nodeA", "FUNCTION", "nodeA", "a/file.js", 33);
+        let c = make_node_with_hash("b/nodeC", "CLASS", "nodeC", "b/file.js", 44);
+        store
+            .commit_batch(
+                vec![a_v2.clone(), c.clone()],
+                vec![],
+                &["a/file.js".to_string(), "b/file.js".to_string()],
+                HashMap::new(),
+                &mut manifest,
+            )
+            .unwrap();
+
+        // ── OLD snapshot is UNCHANGED (version isolation) ──
+        assert_eq!(
+            store.node_count_at(&snap_v1),
+            2,
+            "old snapshot must still see exactly the v1 node set"
+        );
+        // A still has the OLD hash; B is still alive; C does not exist yet.
+        assert_eq!(
+            store.get_node_at(&snap_v1, a_v1.id).unwrap().content_hash,
+            11,
+            "old snapshot must see A's v1 content hash, not the re-analyzed one"
+        );
+        assert!(
+            store.node_exists_at(&snap_v1, b.id),
+            "old snapshot must still see nodeB (tombstoned only in the new version)"
+        );
+        assert!(
+            store.get_node_at(&snap_v1, c.id).is_none(),
+            "old snapshot must NOT see nodeC from the later commit"
+        );
+        assert_eq!(
+            store.iter_all_edges_at(&snap_v1).len(),
+            1,
+            "old snapshot must still see the A->B edge"
+        );
+
+        // ── FRESH snapshot sees the NEW state ──
+        let snap_v2 = store.snapshot(&manifest);
+        assert!(snap_v2.version > snap_v1.version, "new snapshot is a later version");
+        assert_eq!(
+            store.node_count_at(&snap_v2),
+            2,
+            "new version: A (re-analyzed) + C; B tombstoned"
+        );
+        assert_eq!(
+            store.get_node_at(&snap_v2, a_v1.id).unwrap().content_hash,
+            33,
+            "new snapshot sees A's re-analyzed content hash"
+        );
+        assert!(
+            !store.node_exists_at(&snap_v2, b.id),
+            "new snapshot must NOT see tombstoned nodeB"
+        );
+        assert!(
+            store.node_exists_at(&snap_v2, c.id),
+            "new snapshot sees the newly added nodeC"
+        );
+        assert_eq!(
+            store.iter_all_edges_at(&snap_v2).len(),
+            0,
+            "new version dropped the A->B edge"
+        );
+
+        // Sanity: the FRESH snapshot matches the LIVE read path.
+        let live_total: usize = store.count_by_type().values().sum();
+        assert_eq!(store.node_count_at(&snap_v2), live_total);
+        assert_eq!(store.get_node_at(&snap_v2, a_v1.id), store.get_node(a_v1.id));
+        assert_eq!(store.node_exists_at(&snap_v2, b.id), store.node_exists(b.id));
+    }
+
+    /// Disk-backed equivalent of version isolation: exercises the SegmentCache
+    /// (real `NodeSegmentV2::open` from files) rather than the ephemeral live-shard
+    /// fallback, and proves the captured snapshot stays pinned across commits.
+    #[test]
+    fn test_snapshot_version_isolation_disk() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path();
+        let mut store = MultiShardStore::create(db_path, 4).unwrap();
+        let mut manifest = ManifestStore::create(db_path).unwrap();
+
+        let a_v1 = make_node_with_hash("a/nodeA", "FUNCTION", "nodeA", "a/file.js", 11);
+        let b = make_node_with_hash("a/nodeB", "FUNCTION", "nodeB", "a/file.js", 22);
+        store
+            .commit_batch(
+                vec![a_v1.clone(), b.clone()],
+                vec![make_edge("a/nodeA", "a/nodeB", "CALLS")],
+                &["a/file.js".to_string()],
+                HashMap::new(),
+                &mut manifest,
+            )
+            .unwrap();
+
+        let snap_v1 = store.snapshot(&manifest);
+        assert_eq!(store.node_count_at(&snap_v1), 2);
+        assert_eq!(store.get_node_at(&snap_v1, a_v1.id).unwrap().content_hash, 11);
+        assert_eq!(store.get_node_at(&snap_v1, a_v1.id), store.get_node(a_v1.id));
+
+        // Re-analyze: A new hash, B dropped (tombstoned).
+        let a_v2 = make_node_with_hash("a/nodeA", "FUNCTION", "nodeA", "a/file.js", 33);
+        store
+            .commit_batch(
+                vec![a_v2.clone()],
+                vec![],
+                &["a/file.js".to_string()],
+                HashMap::new(),
+                &mut manifest,
+            )
+            .unwrap();
+
+        // Old snapshot pinned: A=11, B alive, 1 edge.
+        assert_eq!(store.node_count_at(&snap_v1), 2);
+        assert_eq!(store.get_node_at(&snap_v1, a_v1.id).unwrap().content_hash, 11);
+        assert!(store.node_exists_at(&snap_v1, b.id));
+        assert_eq!(store.iter_all_edges_at(&snap_v1).len(), 1);
+
+        // Fresh snapshot: A=33, B tombstoned, edge gone.
+        let snap_v2 = store.snapshot(&manifest);
+        assert!(snap_v2.version > snap_v1.version);
+        assert_eq!(store.get_node_at(&snap_v2, a_v1.id).unwrap().content_hash, 33);
+        assert!(!store.node_exists_at(&snap_v2, b.id));
+        assert_eq!(store.node_count_at(&snap_v2), 1);
+        assert_eq!(store.iter_all_edges_at(&snap_v2).len(), 0);
+
+        // SegmentCache actually opened segments (disk path exercised).
+        assert!(!store.segment_cache.is_empty());
+    }
+
+    // ── MVCC B4: concurrent commit (commit_batch_private) ──────────────
+
+    /// Single-thread sanity: a `commit_batch_private` re-analysis tombstones the
+    /// old node and adds the new one, exactly like the serial path, with reads
+    /// resolved through a fresh snapshot.
+    #[test]
+    fn b4_private_commit_single_thread_replaces_node() {
+        use std::sync::Mutex;
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("b4_single.rfdb");
+        std::fs::create_dir_all(&db_path).unwrap();
+
+        let store = MultiShardStore::create(&db_path, 4).unwrap();
+        let manifest = Mutex::new(ManifestStore::create(&db_path).unwrap());
+
+        let file = "src/x.js".to_string();
+        let v1 = make_node("FUNCTION:old@src/x.js", "FUNCTION", "old", &file);
+        store
+            .commit_batch_private(vec![v1.clone()], vec![], &[file.clone()], HashMap::new(), &manifest, &[])
+            .unwrap();
+
+        // Re-analyze the file: drop `old`, add `new`.
+        let v2 = make_node("FUNCTION:new@src/x.js", "FUNCTION", "new", &file);
+        let delta = store
+            .commit_batch_private(vec![v2.clone()], vec![], &[file.clone()], HashMap::new(), &manifest, &[])
+            .unwrap();
+        assert_eq!(delta.nodes_added, 1, "new node is purely new");
+        assert_eq!(delta.nodes_removed, 1, "old node tombstoned");
+
+        let snap = store.snapshot(&manifest.lock().unwrap());
+        assert!(!store.node_exists_at(&snap, v1.id), "old node gone");
+        assert!(store.node_exists_at(&snap, v2.id), "new node present");
+        assert_eq!(store.node_count_at(&snap), 1);
+    }
+
+    /// Concurrency integrity + liveness: N threads each repeatedly commit their
+    /// OWN disjoint file via `commit_batch_private`. After the storm the live
+    /// node count == an independent oracle and no deadlock/hang occurred.
+    ///
+    /// MANDATORY in-process watchdog: aborts the process after a hard timeout so
+    /// a deadlock FAILS LOUD instead of hanging (per B4 acceptance).
+    #[test]
+    fn b4_private_commit_concurrent_disjoint_integrity() {
+        use std::sync::{Arc as StdArc, Mutex};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("b4_concurrent.rfdb");
+        std::fs::create_dir_all(&db_path).unwrap();
+
+        let store = StdArc::new(MultiShardStore::create(&db_path, 8).unwrap());
+        let manifest = StdArc::new(Mutex::new(ManifestStore::create(&db_path).unwrap()));
+
+        // ── Watchdog ──
+        let done = StdArc::new(AtomicBool::new(false));
+        let done_w = StdArc::clone(&done);
+        let watchdog = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while Instant::now() < deadline {
+                if done_w.load(Ordering::Relaxed) {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            eprintln!("B4 WATCHDOG: concurrent disjoint test exceeded 60s — DEADLOCK. Aborting.");
+            std::process::abort();
+        });
+
+        const THREADS: usize = 12;
+        const ROUNDS: usize = 8;
+
+        let handles: Vec<_> = (0..THREADS)
+            .map(|t| {
+                let store = StdArc::clone(&store);
+                let manifest = StdArc::clone(&manifest);
+                thread::spawn(move || {
+                    let file = format!("src/dir{}/file{}.js", t, t);
+                    for r in 0..ROUNDS {
+                        // Each round re-analyzes this thread's file with 1 fresh node.
+                        let node = make_node(
+                            &format!("FUNCTION:f{}_{}@{}", t, r, file),
+                            "FUNCTION",
+                            &format!("f{}_{}", t, r),
+                            &file,
+                        );
+                        // Disjoint files ⇒ never conflicts; .unwrap() asserts that.
+                        store
+                            .commit_batch_private(
+                                vec![node],
+                                vec![],
+                                &[file.clone()],
+                                HashMap::new(),
+                                &manifest,
+                                &[],
+                            )
+                            .expect("disjoint-file commit must not conflict");
+                    }
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().unwrap();
+        }
+        done.store(true, Ordering::Relaxed);
+        watchdog.join().unwrap();
+
+        // Oracle: each thread re-analyzed its file ROUNDS times, each commit
+        // tombstones the prior round's node and adds one ⇒ exactly THREADS live
+        // nodes survive (the last round of each file).
+        let snap = store.snapshot(&manifest.lock().unwrap());
+        assert_eq!(
+            store.node_count_at(&snap),
+            THREADS,
+            "live node count must equal #threads (one surviving node per disjoint file)"
+        );
+        // No conflicts on disjoint files.
+        assert_eq!(store.commit_conflict_retries(), 0, "disjoint files must not conflict");
+
+        // Reopen fidelity ×1: the published version replays bit-faithfully.
+        drop(snap);
+        let reopened_manifest = ManifestStore::open(&db_path).unwrap();
+        let reopened = MultiShardStore::open(&db_path, &reopened_manifest).unwrap();
+        let rsnap = reopened.snapshot(&reopened_manifest);
+        assert_eq!(
+            reopened.node_count_at(&rsnap),
+            THREADS,
+            "reopen must preserve the live node count"
+        );
+    }
+
+    /// Conflict-retry: two threads hammer the SAME file concurrently. The store
+    /// must detect write-write conflicts (counter increments), exactly one wins
+    /// per round, and the final state is correct (no corruption, no lost file).
+    #[test]
+    fn b4_private_commit_same_file_conflict_retry() {
+        use std::sync::{Arc as StdArc, Mutex};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("b4_conflict.rfdb");
+        std::fs::create_dir_all(&db_path).unwrap();
+
+        let store = StdArc::new(MultiShardStore::create(&db_path, 4).unwrap());
+        let manifest = StdArc::new(Mutex::new(ManifestStore::create(&db_path).unwrap()));
+
+        // Seed the file once so a conflict-map entry exists.
+        let file = "src/hot.js".to_string();
+        store
+            .commit_batch_private(
+                vec![make_node("FUNCTION:seed@src/hot.js", "FUNCTION", "seed", &file)],
+                vec![],
+                &[file.clone()],
+                HashMap::new(),
+                &manifest,
+                &[],
+            )
+            .unwrap();
+
+        let done = StdArc::new(AtomicBool::new(false));
+        let done_w = StdArc::clone(&done);
+        let watchdog = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while Instant::now() < deadline {
+                if done_w.load(Ordering::Relaxed) {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            eprintln!("B4 WATCHDOG: same-file conflict test exceeded 60s — DEADLOCK. Aborting.");
+            std::process::abort();
+        });
+
+        const THREADS: usize = 4;
+        const ROUNDS: usize = 10;
+
+        let handles: Vec<_> = (0..THREADS)
+            .map(|t| {
+                let store = StdArc::clone(&store);
+                let manifest = StdArc::clone(&manifest);
+                let file = file.clone();
+                thread::spawn(move || {
+                    for r in 0..ROUNDS {
+                        let node = make_node(
+                            &format!("FUNCTION:w{}_{}@{}", t, r, file),
+                            "FUNCTION",
+                            &format!("w{}_{}", t, r),
+                            &file,
+                        );
+                        // Bounded retry-on-conflict (the caller contract).
+                        let mut attempt = 0;
+                        loop {
+                            match store.commit_batch_private(
+                                vec![node.clone()],
+                                vec![],
+                                &[file.clone()],
+                                HashMap::new(),
+                                &manifest,
+                                &[],
+                            ) {
+                                Ok(_) => break,
+                                Err(GraphError::ConflictedCommit { .. }) => {
+                                    attempt += 1;
+                                    assert!(attempt < 64, "retry bound exceeded — livelock");
+                                    continue;
+                                }
+                                Err(e) => panic!("unexpected commit error: {}", e),
+                            }
+                        }
+                    }
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().unwrap();
+        }
+        done.store(true, Ordering::Relaxed);
+        watchdog.join().unwrap();
+
+        // Same-file contention ⇒ the conflict counter MUST have fired.
+        assert!(
+            store.commit_conflict_retries() > 0,
+            "concurrent same-file commits must produce conflict-retries (got 0)"
+        );
+
+        // Final state correct: exactly ONE live node remains for the file (each
+        // commit tombstones the file's prior node and adds one — last writer
+        // wins per round, no corruption, no lost file).
+        let snap = store.snapshot(&manifest.lock().unwrap());
+        assert_eq!(
+            store.node_count_at(&snap),
+            1,
+            "exactly one surviving node for the single hot file"
+        );
+    }
+
+    /// REAL parallelism measurement (B4 acceptance #2). N threads each commit
+    /// DISJOINT files repeatedly; compare wall-clock to the SAME work serialized
+    /// on one thread. Prints the speedup. The build+flush (segment I/O) runs
+    /// fully outside any lock, so it should overlap across cores. Asserts a
+    /// modest lower bound to guard against accidental re-serialization.
+    ///
+    /// `#[ignore]` by default (it's a timing probe; run with `--ignored`).
+    #[test]
+    #[ignore]
+    fn b4_private_commit_parallelism_speedup() {
+        use std::sync::{Arc as StdArc, Mutex};
+        use std::thread;
+        use std::time::Instant;
+        use crate::storage_v2::manifest::DurabilityMode;
+
+        const THREADS: usize = 8;
+        const COMMITS_PER_THREAD: usize = 8;
+        const NODES_PER_COMMIT: usize = 4000;
+        // Production uses Strict (fsync per commit). The fsync'd commit-point
+        // append serializes, but the lock-free build+flush (the bulk of a real
+        // whole-file re-analysis commit) overlaps across cores. With realistic
+        // commit sizes the build dominates ⇒ real speedup even under Strict.
+        let durability = DurabilityMode::Strict;
+
+        // Build the per-thread workload up front (excluded from timing).
+        let make_workload = |t: usize| -> Vec<(String, Vec<NodeRecordV2>)> {
+            (0..COMMITS_PER_THREAD)
+                .map(|c| {
+                    let file = format!("src/d{}/f{}_{}.js", t, t, c);
+                    let nodes: Vec<NodeRecordV2> = (0..NODES_PER_COMMIT)
+                        .map(|n| {
+                            make_node(
+                                &format!("FUNCTION:t{}c{}n{}@{}", t, c, n, file),
+                                "FUNCTION",
+                                &format!("t{}c{}n{}", t, c, n),
+                                &file,
+                            )
+                        })
+                        .collect();
+                    (file, nodes)
+                })
+                .collect()
+        };
+
+        // ── Serial baseline ──
+        let serial = {
+            let dir = tempfile::TempDir::new().unwrap();
+            let db_path = dir.path().join("b4_serial.rfdb");
+            std::fs::create_dir_all(&db_path).unwrap();
+            let store = MultiShardStore::create(&db_path, THREADS as u16).unwrap();
+            let manifest = Mutex::new(ManifestStore::create_with_config(&db_path, durability).unwrap());
+            let workloads: Vec<_> = (0..THREADS).map(make_workload).collect();
+            let t0 = Instant::now();
+            for wl in &workloads {
+                for (file, nodes) in wl {
+                    store
+                        .commit_batch_private(nodes.clone(), vec![], &[file.clone()], HashMap::new(), &manifest, &[])
+                        .unwrap();
+                }
+            }
+            t0.elapsed()
+        };
+
+        // ── Concurrent ──
+        let concurrent = {
+            let dir = tempfile::TempDir::new().unwrap();
+            let db_path = dir.path().join("b4_par.rfdb");
+            std::fs::create_dir_all(&db_path).unwrap();
+            let store = StdArc::new(MultiShardStore::create(&db_path, THREADS as u16).unwrap());
+            let manifest = StdArc::new(Mutex::new(ManifestStore::create_with_config(&db_path, durability).unwrap()));
+            let workloads: Vec<_> = (0..THREADS).map(make_workload).collect();
+            let t0 = Instant::now();
+            let handles: Vec<_> = workloads
+                .into_iter()
+                .map(|wl| {
+                    let store = StdArc::clone(&store);
+                    let manifest = StdArc::clone(&manifest);
+                    thread::spawn(move || {
+                        for (file, nodes) in wl {
+                            store
+                                .commit_batch_private(nodes, vec![], &[file], HashMap::new(), &manifest, &[])
+                                .unwrap();
+                        }
+                    })
+                })
+                .collect();
+            for h in handles {
+                h.join().unwrap();
+            }
+            t0.elapsed()
+        };
+
+        let speedup = serial.as_secs_f64() / concurrent.as_secs_f64();
+        eprintln!(
+            "B4 parallelism: serial={:?}, concurrent={:?}, speedup={:.2}x ({} threads, {} commits/thread, {} nodes/commit)",
+            serial, concurrent, speedup, THREADS, COMMITS_PER_THREAD, NODES_PER_COMMIT,
+        );
+        assert!(
+            speedup > 1.3,
+            "expected >1.3x speedup from concurrent commits, got {:.2}x (serial={:?}, concurrent={:?})",
+            speedup, serial, concurrent
+        );
+    }
+
+    /// MVCC C1 acceptance (group-commit). The B4 probe above uses BIG commits so
+    /// the lock-free build dominates and arrivals at the commit point are
+    /// staggered (batch size ≈ 1). C1's win is amortizing the commit-point fsync,
+    /// which is only the bottleneck when commits are SMALL and MANY (the
+    /// fsync-per-commit cost dominates the per-commit build). This probe uses
+    /// small commits under `Strict` durability so the durable manifest write is
+    /// the serial cost C1 batches away. It reports the wall speedup AND the
+    /// observed `group_commit_batch_size` (the amortization witness). Concurrent
+    /// ⇒ MANDATORY in-process watchdog (abort @60s) so a deadlock fails LOUD.
+    ///
+    /// `#[ignore]` by default (timing probe; run with `--ignored`).
+    #[test]
+    #[ignore]
+    fn c1_group_commit_speedup() {
+        use std::sync::{Arc as StdArc, Mutex};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::thread;
+        use std::time::{Duration, Instant};
+        use crate::storage_v2::manifest::DurabilityMode;
+
+        const THREADS: usize = 16;
+        const COMMITS_PER_THREAD: usize = 60;
+        const NODES_PER_COMMIT: usize = 4; // SMALL ⇒ fsync-per-commit dominates.
+        let durability = DurabilityMode::Strict;
+
+        let make_workload = |t: usize| -> Vec<(String, Vec<NodeRecordV2>)> {
+            (0..COMMITS_PER_THREAD)
+                .map(|c| {
+                    let file = format!("src/d{}/f{}_{}.js", t, t, c);
+                    let nodes: Vec<NodeRecordV2> = (0..NODES_PER_COMMIT)
+                        .map(|n| {
+                            make_node(
+                                &format!("FUNCTION:t{}c{}n{}@{}", t, c, n, file),
+                                "FUNCTION",
+                                &format!("t{}c{}n{}", t, c, n),
+                                &file,
+                            )
+                        })
+                        .collect();
+                    (file, nodes)
+                })
+                .collect()
+        };
+
+        // ── Serial baseline ──
+        let serial = {
+            let dir = tempfile::TempDir::new().unwrap();
+            let db_path = dir.path().join("c1_serial.rfdb");
+            std::fs::create_dir_all(&db_path).unwrap();
+            let store = MultiShardStore::create(&db_path, THREADS as u16).unwrap();
+            let manifest = Mutex::new(ManifestStore::create_with_config(&db_path, durability).unwrap());
+            let workloads: Vec<_> = (0..THREADS).map(make_workload).collect();
+            let t0 = Instant::now();
+            for wl in &workloads {
+                for (file, nodes) in wl {
+                    store
+                        .commit_batch_private(nodes.clone(), vec![], &[file.clone()], HashMap::new(), &manifest, &[])
+                        .unwrap();
+                }
+            }
+            t0.elapsed()
+        };
+
+        // In-process watchdog: covers ONLY the concurrent section (where a
+        // deadlock could occur). A hang must abort LOUD, never wait. The serial
+        // baseline above is excluded — it cannot deadlock and is just slow under
+        // many Strict fsyncs.
+        let done = StdArc::new(AtomicBool::new(false));
+        let done_w = StdArc::clone(&done);
+        let watchdog = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while Instant::now() < deadline {
+                if done_w.load(Ordering::Relaxed) {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            eprintln!("C1 WATCHDOG: group-commit concurrent section exceeded 60s — DEADLOCK. Aborting.");
+            std::process::abort();
+        });
+
+        // ── Concurrent (group-commit) ──
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("c1_par.rfdb");
+        std::fs::create_dir_all(&db_path).unwrap();
+        let store = StdArc::new(MultiShardStore::create(&db_path, THREADS as u16).unwrap());
+        let manifest = StdArc::new(Mutex::new(ManifestStore::create_with_config(&db_path, durability).unwrap()));
+        let workloads: Vec<_> = (0..THREADS).map(make_workload).collect();
+        let t0 = Instant::now();
+        let handles: Vec<_> = workloads
+            .into_iter()
+            .map(|wl| {
+                let store = StdArc::clone(&store);
+                let manifest = StdArc::clone(&manifest);
+                thread::spawn(move || {
+                    for (file, nodes) in wl {
+                        // Disjoint files ⇒ no conflicts; bounded retry just in case.
+                        let mut attempt = 0;
+                        loop {
+                            match store.commit_batch_private(
+                                nodes.clone(), vec![], &[file.clone()], HashMap::new(), &manifest, &[],
+                            ) {
+                                Ok(_) => break,
+                                Err(GraphError::ConflictedCommit { .. }) => {
+                                    attempt += 1;
+                                    assert!(attempt < 64, "retry bound exceeded");
+                                    continue;
+                                }
+                                Err(e) => panic!("unexpected commit error: {}", e),
+                            }
+                        }
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        let concurrent = t0.elapsed();
+        done.store(true, Ordering::Relaxed);
+        watchdog.join().unwrap();
+
+        let speedup = serial.as_secs_f64() / concurrent.as_secs_f64();
+        eprintln!(
+            "C1 group-commit: serial={:?}, concurrent={:?}, speedup={:.2}x | \
+             batches={}, mean_batch_size={:.2}, max_batch_size={}, conflict_retries={} \
+             ({} threads, {} commits/thread, {} nodes/commit, Strict)",
+            serial, concurrent, speedup,
+            store.group_commit_batches(),
+            store.group_commit_batch_size(),
+            store.group_commit_batch_size_max(),
+            store.commit_conflict_retries(),
+            THREADS, COMMITS_PER_THREAD, NODES_PER_COMMIT,
+        );
+
+        // Integrity: every disjoint file committed exactly its nodes, no loss.
+        let snap = store.snapshot(&manifest.lock().unwrap());
+        let expected = THREADS * COMMITS_PER_THREAD * NODES_PER_COMMIT;
+        assert_eq!(
+            store.node_count_at(&snap) as usize, expected,
+            "all disjoint nodes must survive (no lost update)"
+        );
+        assert_eq!(store.commit_conflict_retries(), 0, "disjoint files must not conflict");
+
+        // C1 headline: amortized fsync ⇒ materially better than the B4 baseline.
+        assert!(
+            speedup > 2.5,
+            "C1 group-commit expected >2.5x speedup, got {:.2}x (serial={:?}, concurrent={:?})",
+            speedup, serial, concurrent
+        );
+    }
+
+    // ── MVCC B5: segment GC vs live readers ────────────────────────────
+
+    /// Count `.seg` files under a database's `segments/` dir, recursing into the
+    /// per-shard `segments/NN/` subdirectories (the multi-shard disk layout).
+    fn count_seg_files(db_path: &std::path::Path) -> usize {
+        fn walk(dir: &std::path::Path) -> usize {
+            let mut n = 0;
+            if let Ok(rd) = std::fs::read_dir(dir) {
+                for e in rd.flatten() {
+                    let p = e.path();
+                    if p.is_dir() {
+                        n += walk(&p);
+                    } else if p.extension().and_then(|s| s.to_str()) == Some("seg") {
+                        n += 1;
+                    }
+                }
+            }
+            n
+        }
+        walk(&db_path.join("segments"))
+    }
+
+    /// B5.1 unit: a captured `ReadSnapshot` pins its version; the pin is released
+    /// exactly on drop (and a clone holds an independent pin).
+    #[test]
+    fn b5_snapshot_pins_version_until_drop() {
+        use std::sync::Mutex;
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("b5_pin.rfdb");
+        std::fs::create_dir_all(&db_path).unwrap();
+
+        let store = MultiShardStore::create(&db_path, 4).unwrap();
+        let manifest = Mutex::new(ManifestStore::create(&db_path).unwrap());
+
+        store
+            .commit_batch_private(
+                vec![make_node("FUNCTION:a@x.js", "FUNCTION", "a", "x.js")],
+                vec![],
+                &["x.js".to_string()],
+                HashMap::new(),
+                &manifest,
+                &[],
+            )
+            .unwrap();
+
+        // No live reader yet.
+        assert_eq!(manifest.lock().unwrap().min_pinned_version(), None);
+
+        let snap = store.snapshot(&manifest.lock().unwrap());
+        let v = snap.version;
+        assert_eq!(manifest.lock().unwrap().min_pinned_version(), Some(v));
+
+        // A clone is an independent live view ⇒ same min, two distinct pins.
+        let snap2 = snap.clone();
+        assert_eq!(manifest.lock().unwrap().min_pinned_version(), Some(v));
+
+        drop(snap);
+        // Still pinned by the clone.
+        assert_eq!(manifest.lock().unwrap().min_pinned_version(), Some(v));
+
+        drop(snap2);
+        // All readers gone ⇒ nothing pinned.
+        assert_eq!(manifest.lock().unwrap().min_pinned_version(), None);
+    }
+
+    /// B5 acceptance #1 — long reader vs churn (the core B5 property).
+    ///
+    /// A reader thread captures a `ReadSnapshot` of version V (content_hash 11,
+    /// node B alive, 1 edge) and reads through it continuously while OTHER
+    /// threads run many commits (re-analysing the file: new hash, B tombstoned)
+    /// + manifest GC (gc_manifests/gc_collect/gc_purge — the segment-file
+    /// deletion path). Throughout the storm the reader MUST keep observing its
+    /// own version's data — no panic, no missing segment, no wrong value. Then a
+    /// fresh snapshot sees the churned state.
+    ///
+    /// MANDATORY in-process watchdog: aborts the process at 60s so a hang/UAF
+    /// FAILS LOUD instead of hanging.
+    #[test]
+    fn b5_long_reader_vs_churn_keeps_pinned_data() {
+        use std::sync::{Arc as StdArc, Mutex};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("b5_churn.rfdb");
+        std::fs::create_dir_all(&db_path).unwrap();
+
+        let store = StdArc::new(MultiShardStore::create(&db_path, 4).unwrap());
+        let manifest = {
+            let mut m = ManifestStore::create(&db_path).unwrap();
+            // Small checkpoint interval ⇒ frequent checkpoints ⇒ GC actually
+            // reclaims unpinned versions during churn, exercising the B5
+            // replay-chain retention floor (`checkpoint_at_or_below`) under
+            // concurrent reads — not just the trivial "keep everything" path.
+            m.set_checkpoint_interval(4);
+            StdArc::new(Mutex::new(m))
+        };
+
+        let file = "src/churn.js".to_string();
+        let a_v1 = make_node_with_hash("a/A", "FUNCTION", "A", &file, 11);
+        let b = make_node_with_hash("a/B", "FUNCTION", "B", &file, 22);
+        store
+            .commit_batch_private(
+                vec![a_v1.clone(), b.clone()],
+                vec![make_edge("a/A", "a/B", "CALLS")],
+                &[file.clone()],
+                HashMap::new(),
+                &manifest,
+                &[],
+            )
+            .unwrap();
+
+        // The long reader pins this version.
+        let snap_pinned = store.snapshot(&manifest.lock().unwrap());
+        let pinned_version = snap_pinned.version;
+        assert_eq!(store.node_count_at(&snap_pinned), 2);
+        assert_eq!(
+            store.get_node_at(&snap_pinned, a_v1.id).unwrap().content_hash,
+            11
+        );
+
+        // ── Watchdog ──
+        let done = StdArc::new(AtomicBool::new(false));
+        let done_w = StdArc::clone(&done);
+        let watchdog = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while Instant::now() < deadline {
+                if done_w.load(Ordering::Relaxed) {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            eprintln!("B5 WATCHDOG: long-reader-vs-churn exceeded 60s — HANG/UAF. Aborting.");
+            std::process::abort();
+        });
+
+        // ── Reader thread: read through the pinned snapshot continuously ──
+        let store_r = StdArc::clone(&store);
+        let snap_for_reader = snap_pinned.clone(); // independent pin for the thread
+        let a_id = a_v1.id;
+        let b_id = b.id;
+        let reader_done = StdArc::new(AtomicBool::new(false));
+        let reader_done_w = StdArc::clone(&reader_done);
+        let reader = thread::spawn(move || {
+            // Read for a wall-clock window so the churn+GC loop runs many rounds
+            // concurrently (a fixed iteration count finishes in microseconds and
+            // would barely overlap the churn).
+            let deadline = Instant::now() + Duration::from_millis(1_500);
+            let mut reads = 0u64;
+            while Instant::now() < deadline {
+                // The pinned version: A=11, B alive, 1 edge — ALWAYS, despite churn.
+                assert_eq!(store_r.node_count_at(&snap_for_reader), 2, "pinned node count");
+                let a = store_r
+                    .get_node_at(&snap_for_reader, a_id)
+                    .expect("pinned node A must remain readable");
+                assert_eq!(a.content_hash, 11, "pinned snapshot must see A=11");
+                assert!(
+                    store_r.node_exists_at(&snap_for_reader, b_id),
+                    "pinned snapshot must still see B"
+                );
+                assert_eq!(
+                    store_r.iter_all_edges_at(&snap_for_reader).len(),
+                    1,
+                    "pinned snapshot must still see the 1 edge"
+                );
+                reads += 1;
+            }
+            reader_done_w.store(true, Ordering::Relaxed);
+            reads
+        });
+
+        // ── Churn: many re-analysis commits + manifest GC underneath the reader ──
+        // Keep churning until the reader has done its full pass (so GC has run
+        // many times WHILE the reader pins the old version).
+        let mut round = 0u32;
+        while !reader_done.load(Ordering::Relaxed) {
+            let hash = 100 + round as u64;
+            let a_new = make_node_with_hash("a/A", "FUNCTION", "A", &file, hash);
+            store
+                .commit_batch_private(
+                    vec![a_new],
+                    vec![],
+                    &[file.clone()],
+                    HashMap::new(),
+                    &manifest,
+                    &[],
+                )
+                .expect("churn commit");
+
+            // Run the full GC pipeline (the segment-file deletion path). With a
+            // live reader pinning `pinned_version`, gc_manifests must retain it.
+            {
+                let mut m = manifest.lock().unwrap();
+                m.gc_manifests(2).expect("gc_manifests");
+                m.gc_collect().expect("gc_collect");
+                m.gc_purge().expect("gc_purge");
+                // The pinned version must NEVER drop below the reader's version.
+                let mp = m.min_pinned_version();
+                assert!(
+                    mp.is_some() && mp.unwrap() <= pinned_version,
+                    "reader's version {pinned_version} must stay pinned during churn (min_pinned={mp:?})"
+                );
+            }
+            round += 1;
+            if round > 5_000 {
+                break; // safety: reader should finish well before this
+            }
+        }
+
+        let reads = reader.join().unwrap();
+        done.store(true, Ordering::Relaxed);
+        watchdog.join().unwrap();
+
+        // The reader saw correct pinned data throughout (asserted in-thread).
+        // The pinned snapshot in THIS thread still reads correctly post-churn.
+        assert_eq!(store.node_count_at(&snap_pinned), 2);
+        assert_eq!(
+            store.get_node_at(&snap_pinned, a_v1.id).unwrap().content_hash,
+            11
+        );
+
+        // A fresh snapshot sees the churned state: A=last-hash, B tombstoned.
+        let snap_fresh = store.snapshot(&manifest.lock().unwrap());
+        assert!(snap_fresh.version > pinned_version);
+        assert_eq!(store.node_count_at(&snap_fresh), 1, "fresh: only A survives");
+        assert!(
+            !store.node_exists_at(&snap_fresh, b.id),
+            "fresh: B is tombstoned"
+        );
+
+        eprintln!(
+            "B5 churn: {round} commit+GC rounds vs {reads} pinned reads while reader pinned v{pinned_version}"
+        );
+        assert!(round > 10, "churn must run many rounds concurrently (ran {round})");
+    }
+
+    /// B5 acceptance #2 — GC reclaims once unpinned.
+    ///
+    /// While a snapshot pins the old version, compaction + GC must NOT delete
+    /// the segment files it references (count stays). After the snapshot drops,
+    /// compaction + GC DO reclaim the now-unreferenced segments (count drops).
+    #[test]
+    fn b5_gc_reclaims_after_unpin() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("b5_reclaim.rfdb");
+        std::fs::create_dir_all(&db_path).unwrap();
+
+        let mut store = MultiShardStore::create(&db_path, 2).unwrap();
+        let mut manifest = ManifestStore::create(&db_path).unwrap();
+
+        // Several commits → several L0 segment files.
+        for r in 0..4 {
+            let n = make_node_with_hash(
+                "a/A",
+                "FUNCTION",
+                "A",
+                "src/r.js",
+                10 + r as u64,
+            );
+            store
+                .commit_batch(
+                    vec![n],
+                    vec![],
+                    &["src/r.js".to_string()],
+                    HashMap::new(),
+                    &mut manifest,
+                )
+                .unwrap();
+        }
+        let segs_before = count_seg_files(&db_path);
+        assert!(segs_before > 0, "expected L0 segment files on disk");
+
+        // Pin the current version with a live snapshot.
+        let snap = store.snapshot(&manifest);
+        let pinned_version = snap.version;
+        assert_eq!(manifest.min_pinned_version(), Some(pinned_version));
+
+        // Compaction orphans the old L0 files; GC tries to reclaim them. But the
+        // live reader pins them ⇒ files must survive.
+        let config = CompactionConfig { segment_threshold: 1 };
+        store.compact(&mut manifest, &config).unwrap();
+        manifest.gc_manifests(1).unwrap();
+        manifest.gc_collect().unwrap();
+        manifest.gc_purge().unwrap();
+
+        let segs_pinned = count_seg_files(&db_path);
+        // Every segment the pinned snapshot references must still be on disk and
+        // openable — prove by reading through the pinned snapshot.
+        assert_eq!(
+            store.get_node_at(&snap, snap_node_id()).map(|n| n.content_hash),
+            Some(13),
+            "pinned snapshot reads its version's data (A=last committed hash 13)"
+        );
+        assert!(
+            segs_pinned >= 1,
+            "pinned segment files must survive GC (had {segs_before}, now {segs_pinned})"
+        );
+
+        // Drop the reader → version unpinned.
+        drop(snap);
+        assert_eq!(manifest.min_pinned_version(), None);
+
+        // Now GC may reclaim the orphaned pre-compaction L0 segments.
+        store.compact(&mut manifest, &config).unwrap();
+        manifest.gc_manifests(1).unwrap();
+        manifest.gc_collect().unwrap();
+        let purged = manifest.gc_purge().unwrap();
+
+        let segs_after = count_seg_files(&db_path);
+        eprintln!(
+            "B5 reclaim: before={segs_before} pinned={segs_pinned} after={segs_after} purged={purged}"
+        );
+        assert!(
+            segs_after < segs_pinned,
+            "after unpin, GC must reclaim orphaned segments ({segs_pinned} -> {segs_after})"
+        );
+
+        // The live store is still consistent (1 node, last hash) after reclaim.
+        let snap_fresh = store.snapshot(&manifest);
+        assert_eq!(store.node_count_at(&snap_fresh), 1);
+        assert_eq!(
+            store.get_node_at(&snap_fresh, snap_node_id()).unwrap().content_hash,
+            13
+        );
+    }
+
+    /// Helper: id of the single `a/A` node used in the reclaim test.
+    fn snap_node_id() -> u128 {
+        u128::from_le_bytes(
+            blake3::hash("a/A".as_bytes()).as_bytes()[0..16]
+                .try_into()
+                .unwrap(),
+        )
     }
 }

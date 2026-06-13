@@ -7,13 +7,19 @@ import Data.Text (Text)
 import System.Environment (getArgs, lookupEnv)
 import System.IO (stdin, stdout, hSetBinaryMode)
 import Options.Applicative
-import qualified RustImportResolution
-import qualified RustCallResolution
 import qualified RustCrossMethodCalls
-import qualified RustTraitResolution
 import Grafema.Types (GraphNode, GraphEdge)
 import Grafema.Protocol (PluginCommand(..), readFrame, writeFrame, encodeMsgpack, decodeMsgpack, readNodesFromStdin, writeCommandsToStdout)
 import Grafema.RuntimeGlobals (NameStrategy(..), NodeFilter(..), SymbolDB, loadSymbolDB, resolveAll)
+
+-- NOTE (Wave 6, resolve→derive migration): the rust-imports, rust-calls and
+-- rust-trait-resolve commands (RustImportResolution / RustCallResolution /
+-- RustTraitResolution) were replaced by the rust_imports / rust_calls /
+-- rust_trait_resolve derive stdlib packs and DELETED — see
+-- the resolve-migration synthesis doc in _ai/research/ for the per-step
+-- evidence. The remaining native steps are rust-cross-methods (its
+-- dyn-dispatch and self-field arms have no pack) and rust-globals
+-- (effects-db driven; no facts pack exists for Rust).
 
 -- | Request from orchestrator in daemon mode.
 data DaemonRequest = DaemonRequest
@@ -80,26 +86,17 @@ daemonLoop symbolDb = do
 
 -- | Dispatch a command to the resolver.
 dispatch :: SymbolDB -> Text -> [GraphNode] -> [GraphEdge] -> IO DaemonResponse
-dispatch _        "rust-imports"       nodes _     = ResOk <$> RustImportResolution.resolveAll nodes
-dispatch _        "rust-calls"         nodes _     = ResOk <$> RustCallResolution.resolveAll nodes
 dispatch _        "rust-cross-methods" nodes edges = ResOk <$> RustCrossMethodCalls.resolveAll nodes edges
-dispatch _        "rust-trait-resolve" nodes _     = return $ ResOk (RustTraitResolution.resolveAll nodes)
 dispatch symbolDb "rust-globals"       nodes _     = return $ ResOk (resolveAll rustStrategy symbolDb nodes)
 dispatch _        cmd                  _     _     = return $ ResError ("unknown command: " ++ T.unpack cmd)
 
 -- | CLI subcommand parser.
-data Command = CmdRustImports | CmdRustCalls | CmdRustCrossMethods | CmdRustTraitResolve | CmdRustGlobals
+data Command = CmdRustCrossMethods | CmdRustGlobals
 
 commandParser :: Parser Command
 commandParser = subparser
-  ( command "rust-imports"
-    (info (pure CmdRustImports) (progDesc "Resolve Rust imports across files"))
- <> command "rust-calls"
-    (info (pure CmdRustCalls) (progDesc "Resolve Rust intra-file function calls"))
- <> command "rust-cross-methods"
+  ( command "rust-cross-methods"
     (info (pure CmdRustCrossMethods) (progDesc "Resolve Rust cross-file method calls via type annotations"))
- <> command "rust-trait-resolve"
-    (info (pure CmdRustTraitResolve) (progDesc "Emit IMPLEMENTS edges for Rust trait implementations"))
  <> command "rust-globals"
     (info (pure CmdRustGlobals) (progDesc "Resolve Rust stdlib globals for unresolved calls"))
   )
@@ -108,7 +105,7 @@ cliOpts :: ParserInfo Command
 cliOpts = info (commandParser <**> helper)
   ( fullDesc
   <> progDesc "Rust cross-file resolution plugins for Grafema"
-  <> header "rust-resolve - Rust import resolution for the Grafema graph"
+  <> header "rust-resolve - Rust resolution plugins for the Grafema graph"
   )
 
 main :: IO ()
@@ -123,12 +120,7 @@ main = do
     else do
       cmd <- execParser cliOpts
       case cmd of
-        CmdRustImports      -> RustImportResolution.run
-        CmdRustCalls        -> RustCallResolution.run
         CmdRustCrossMethods -> RustCrossMethodCalls.run
-        CmdRustTraitResolve -> do
-          nodes <- readNodesFromStdin
-          writeCommandsToStdout (RustTraitResolution.resolveAll nodes)
         CmdRustGlobals -> do
           symbolDb <- loadEffectsDB
           nodes <- readNodesFromStdin

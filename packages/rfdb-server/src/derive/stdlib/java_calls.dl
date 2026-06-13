@@ -1,0 +1,133 @@
+% java_calls.dl — in-engine replacement for CallResolution.hs of the
+% java-resolve binary (packages/java-resolve/src/CallResolution.hs):
+% INSTANTIATES + ctor CALLS (resolveConstructorCalls, Hs:146-176), same-class
+% method CALLS (resolveSameClassCalls, Hs:182-205 — production-latent-bugged,
+% spec §2 D3), static-style CALLS (resolveStaticCalls, Hs:208-226) and
+% super()/this() delegation CALLS (resolveSuperThisCalls, Hs:232-257).
+% Lang-spec: _ai/research/lang-spec-java.md §4.3 + VERDICT C3 (this pack is a
+% CALLS producer and MUST precede the CALLS negators method_calls /
+% shape_verifier in both registries).
+%
+% LEGACY SEMANTICS: class index by simple name (Hs:44-52, Map last-wins);
+% ctor index = FUNCTION kind ∈ {constructor, compact_constructor} keyed by
+% the sid's [in:Class] marker (Hs:70-85); method index keyed by
+% (className, methodName) from the FUNCTION sid (Hs:56-66). The pack replaces
+% every sid parse with GRAPH-NATIVE membership: HAS_METHOD covers methods and
+% constructors (Declarations.hs:402-410, :477-483); compact constructors get
+% CONTAINS-only from the record scope (:534-539) — the second ctor_of arm.
+% A CALL's enclosing body is its CONTAINS parent (blocks push no scopes,
+% spec §1). Java lambdas are CLOSURE nodes, NOT FUNCTIONs (Expressions.hs:
+% 352-355 expression body, :399-404 block body; both push the lambda scope,
+% so a CALL inside either lambda kind has the CLOSURE as CONTAINS parent) —
+% jbody = FUNCTION|CLOSURE and the fn_owner recursion hops CONTAINS parents
+% of either type, lifting lambda and local-fn nesting (CLOSUREs have no
+% HAS_METHOD). All edges EMPTY metadata (Hs:132-139) ⇒ no meta(...) columns;
+% every head additive (CALLS/INSTANTIATES shared vocab).
+%
+% NUMBERED DELTAS vs the legacy resolver (everything not listed is exact):
+%   DELTA 1 (superset, spec §5 class 1): set semantics on duplicate simple
+%     class names — an edge per candidate vs Map last-wins.
+%   DELTA 2 (superset, spec §5 class 2): ALL overloads/ctors derived vs
+%     legacy's head-of-list pick (Hs:174-175 — the argCount comment is NOT
+%     implemented). Neither side does real Java overload resolution
+%     (spec §10.2); exactly-one-edge semantics belongs to the binding-table/
+%     semiring layer, not a rule hack.
+%   DELTA 3 (DECLARED SUPERSET, spec §5 class 4 — the D3 fix): same-class
+%     no-receiver calls resolve in ALL method bodies. Legacy's method index
+%     is keyed by class name but probed with the CALL sid's [in:] marker —
+%     the enclosing METHOD name (Expressions.hs:101-103) — so it matched only
+%     where [in:] == class name: constructor bodies, PLUS expression-body
+%     lambdas directly under a constructor (LambdaExpr pushes no
+%     withEnclosingFn, Expressions.hs:343-386, so the [in:ctorName] sid leaks
+%     into the lambda body — that arm is PARITY, not delta). The pack's
+%     CONTAINS→HAS_METHOD route restores the resolver's documented intent
+%     (Hs:12-13; test/Spec.hs:214 fabricates [in:Service] to pass). Bound =
+%     plain calls outside ctor bodies and outside ctor expression-lambdas
+%     (ordinary methods, block lambdas — withEnclosingFn at :431 rebinds
+%     [in:] to "<lambda>"). No false-positive vector: the join requires an
+%     actual same-class method of that name.
+%   DELTA 4 (superset/fix, rare, spec §5 class 5): local classes nested in
+%     method bodies — legacy keyed their ctors under the WRONG name (sid
+%     parent = enclosing method); the edge-based ctor_of is correct.
+%   DELTA 5 (metadata): engine provenance _source/_generation (rust DELTA 6).
+% PARITY PINS (no delta):
+%   - field-initializer calls (CONTAINS parent is the CLASS node, not a
+%     FUNCTION/CLOSURE): nothing on BOTH sides — legacy's [in:] is absent,
+%     the pack's encl_fn requires a jbody-typed parent. Same for a lambda IN
+%     a field initializer: its CONTAINS parent is the CLASS, so the fn_owner
+%     recursion stops (legacy: no [in:] for the expression kind, dead
+%     [in:<lambda>] probe for the block kind).
+%   - expression-body lambda directly inside a constructor: legacy DOES emit
+%     (the [in:ctorName] leak above) and the pack's CLOSURE lift emits too —
+%     exact modulo DELTA 2's all-overloads.
+%   - a receiver naming a non-class identifier ("foo.bar()"): nothing on both
+%     sides (Hs test :243-249).
+%   - "new Unknown" (no such class): nothing on both sides.
+%
+% MAINTAIN ENVELOPE: node_attr + negation ⇒ scratch-only under maintain.
+
+% Java-gated kernels (§3 self-contained connectivity discipline).
+jdecl(T, F, N) :- node(T, "CLASS"),     attr(T, "file", F), ends_with(F, ".java"), attr(T, "name", N), neq(N, "").
+jdecl(T, F, N) :- node(T, "INTERFACE"), attr(T, "file", F), ends_with(F, ".java"), attr(T, "name", N), neq(N, "").
+jdecl(T, F, N) :- node(T, "ENUM"),      attr(T, "file", F), ends_with(F, ".java"), attr(T, "name", N), neq(N, "").
+jdecl(T, F, N) :- node(T, "RECORD"),    attr(T, "file", F), ends_with(F, ".java"), attr(T, "name", N), neq(N, "").
+jclass_named(N, T) :- jdecl(T, F, N).
+
+jcall(C, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".java"), attr(C, "name", N).
+jfn(Fn) :- node(Fn, "FUNCTION"), attr(Fn, "file", F), ends_with(F, ".java").
+% A callable BODY a CALL can sit in: methods/ctors (FUNCTION) and lambdas
+% (CLOSURE — Expressions.hs:352-355, :399-404).
+jbody(B) :- jfn(B).
+jbody(B) :- node(B, "CLOSURE"), attr(B, "file", F), ends_with(F, ".java").
+
+% — classification (Hs:260-270) —
+ctor_call(C, CN) :- jcall(C, N), strip_prefix(N, "new ", CN), neq(CN, "").
+is_ctor_call(C)  :- ctor_call(C, CN).
+is_ctor_call(C)  :- jcall(C, N), node_attr(C, "kind", "constructor_call").
+this_call(C)  :- jcall(C, "this").
+this_call(C)  :- jcall(C, N), node_attr(C, "isThis", "true").
+super_call(C) :- jcall(C, "super").
+super_this(C) :- this_call(C).
+super_this(C) :- super_call(C).
+has_recv(C) :- jcall(C, N), node_attr(C, "receiver", R), neq(R, ""), neq(R, "this").
+
+% — membership (graph-native replacement of the [in:Class] sid parse) —
+ctor_of(Cls, Fn) :- jfn(Fn), edge(Cls, Fn, "HAS_METHOD"), node_attr(Fn, "kind", "constructor").
+ctor_of(Cls, Fn) :- jfn(Fn), node(Cls, "RECORD"), edge(Cls, Fn, "CONTAINS"),
+    node_attr(Fn, "kind", "compact_constructor").
+% Nearest FUNCTION/CLOSURE ancestor of a CALL, then the HAS_METHOD owner;
+% the recursion hops CONTAINS parents of EITHER body type, lifting lambda
+% (CLOSURE) and local-fn nesting (CLOSUREs never carry HAS_METHOD, so only
+% the FUNCTION base arm grounds the chain).
+encl_fn(C, B) :- jcall(C, N), edge(B, C, "CONTAINS"), jbody(B).
+fn_owner(Fn, Cls) :- jfn(Fn), edge(Cls, Fn, "HAS_METHOD").
+fn_owner(B, Cls) :- jbody(B), edge(Outer, B, "CONTAINS"), jbody(Outer),
+    fn_owner(Outer, Cls).
+encl_class(C, Cls) :- encl_fn(C, Fn), fn_owner(Fn, Cls).
+
+% S10 — constructor calls: INSTANTIATES to the class + CALLS to its ctors.
+@materialize(edge_type = "INSTANTIATES", mode = "additive")
+instantiates(C, Cls) :- ctor_call(C, CN), jclass_named(CN, Cls).
+@materialize(edge_type = "CALLS", mode = "additive")
+ctor_calls(C, Fn) :- ctor_call(C, CN), jclass_named(CN, Cls), ctor_of(Cls, Fn).
+
+% S11 — same-class no-receiver calls (DELTA 3).
+plain_call(C, N) :- jcall(C, N), \+ is_ctor_call(C), \+ super_this(C), \+ has_recv(C).
+@materialize(edge_type = "CALLS", mode = "additive")
+same_class_calls(C, M) :- plain_call(C, N), encl_class(C, Cls),
+    edge(Cls, M, "HAS_METHOD"), attr(M, "name", N).
+
+% S12 — static-style calls (the receiver IS a class simple name).
+recv_class(C, N, Cls) :- jcall(C, N), \+ is_ctor_call(C), \+ super_this(C),
+    node_attr(C, "receiver", R), neq(R, ""), neq(R, "this"), jclass_named(R, Cls).
+@materialize(edge_type = "CALLS", mode = "additive")
+static_calls(C, M) :- recv_class(C, N, Cls), edge(Cls, M, "HAS_METHOD"), attr(M, "name", N).
+
+% S13 — this()/super() delegating ctor calls (legacy works here by the D3
+% accident — [in:ctorName] == class name inside constructors; exact parity
+% modulo DELTA 2's all-ctors).
+@materialize(edge_type = "CALLS", mode = "additive")
+this_ctor_calls(C, Fn) :- this_call(C), encl_class(C, Cls), ctor_of(Cls, Fn).
+@materialize(edge_type = "CALLS", mode = "additive")
+super_ctor_calls(C, Fn) :- super_call(C), encl_class(C, Cls),
+    node_attr(Cls, "extends", SN), neq(SN, ""), jclass_named(SN, SCls), ctor_of(SCls, Fn).

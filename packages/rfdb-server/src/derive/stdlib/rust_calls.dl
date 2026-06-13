@@ -1,0 +1,90 @@
+% rust_calls.dl — in-engine replacement for the RustCallResolution.hs resolver
+% (packages/rust-resolve/src/RustCallResolution.hs:37-80): same-file CALL →
+% FUNCTION CALLS edges for Rust.
+%
+% Resolver semantics reproduced EXACTLY — two ordered arms (Hs:60-71):
+%   R1 exact:  CALL.name == FUNCTION.name, same file. This arm also covers
+%      method calls (`self.process()` / `w.render()` — the analyzer emits the
+%      bare method name on the CALL node plus a direct CALL -READS_FROM->
+%      receiver REFERENCE, the Wave-0-verified Rust receiver shape) AND fully
+%      qualified assoc-fn paths whose FUNCTION node carries the same qualified
+%      name. The resolver never conditioned on the receiver, so neither does
+%      this pack — receiver-typed dispatch is Wave 1b (rust_cross_methods_ctor),
+%      deliberately NOT implemented here.
+%   R2 '::'-suffix fallback, ONLY when R1 found nothing for that call (the
+%      Hs ordered lookup, encoded as the preference negation \+ has_exact):
+%      the call's path name ends with "::" ++ FUNCTION.name — assoc-fn paths
+%      (`Widget::new()`, `utils::helper()`) resolved by their last segment.
+%      The concat-built "::"-prefixed suffix enforces the segment boundary
+%      (lastSegment, Hs:50-54), and only path calls (names containing "::")
+%      can ever match it — the resolver's seg /= name condition for free.
+%
+% CALLS is SHARED vocabulary (the Rust analyzer's defer_ref also emits CALLS)
+% ⇒ mode = "additive" is mandatory.
+%
+% NUMBERED DELTAS vs the resolver (everything not listed is exact):
+%   DELTA 1 (superset): duplicate (file, name) FUNCTIONs (two `fn new` in two
+%     impl blocks of one file) — the resolver's Map.fromList kept the LAST one
+%     and emitted a single arbitrary edge (Hs:38-44); set semantics derives an
+%     edge per candidate. Order-independent; mechanically classifiable.
+%   DELTA 2 (superset, rare): a FUNCTION whose own name contains "::"
+%     (multi-segment): the resolver compared only the call's LAST segment and
+%     could never match it (lastSegment("a::b::c") = "c" ≠ "b::c"); the pack's
+%     ends_with(N, "::" ++ FName) accepts the multi-segment suffix
+%     ("a::b::c" resolves to a FUNCTION named "b::c").
+%   DELTA 3 (metadata): resolvedVia="rust-calls" projected as a meta column;
+%     engine provenance (_source/_generation) added.
+%   DELTA 4 (file gate): the resolver's effective gate was the orchestrator
+%     streaming only detect_language == Rust nodes; rs/1 encodes the same.
+%   DELTA 5 (macro filter — Wave M): macro invocations are EXCLUDED from
+%     resolution. The analyzer emits every Rust macro invocation as a CALL
+%     node with metadata macro=true whose name is the macro path WITHOUT '!'
+%     (rust_analyzer.rs:1433-1457, walk_macro), and its contract is explicit:
+%     "foo! is not the function foo" (rust_analyzer.rs:1423-1424). The legacy
+%     resolver on a post-merge graph WOULD have matched a macro name against
+%     a same-file fn of the same name — we deliberately do not. rs_macro is
+%     non-recursive EDB-derived; \+ rs_macro(C) is plain stratified negation
+%     (the established \+ has_exact pattern). The maintain envelope already
+%     excludes this pack (negation), so node_attr adds no NEW envelope loss.
+%
+% NOT implemented (Wave 1b, by design): the resolved-constructor receiver-typing
+% arm (ASSIGNED_FROM → resolved init CALL → impl method) — that is
+% rust_cross_methods_ctor's job, ordered after this pack.
+
+% Same-file indexes (empty names never indexed, Hs:43). The .rs gate is the
+% inline ends_with filter (DELTA 4) — File is bound by the attr leg.
+rs_fn(File, N, T) :- node(T, "FUNCTION"), attr(T, "file", File), attr(T, "name", N), neq(N, "").
+
+% Macro invocations (CALL + metadata macro=true; the name is the macro path
+% without '!') — excluded from name resolution, DELTA 5.
+rs_macro(C) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".rs"), node_attr(C, "macro", "true").
+
+rs_call(C, File, N) :-
+    node(C, "CALL"), attr(C, "file", File), ends_with(File, ".rs"),
+    attr(C, "name", N), neq(N, ""),
+    \+ rs_macro(C).
+
+% R1: exact (file, name) match.
+exact_call(C, T) :- rs_call(C, File, N), rs_fn(File, N, T).
+has_exact(C) :- exact_call(C, T).
+
+% R2: last-'::'-segment fallback, only when R1 missed (the ordered-lookup
+% preference as negation). The "::"-prefixed concat suffix enforces the
+% segment boundary. The string_contains(N, "::") gate is IMPLIED by
+% ends_with(N, "::" ++ FN) — only a path call can ever carry the suffix — and
+% exists purely so the planner prunes non-path calls BEFORE pairing them with
+% every same-file FUNCTION (W9 fix: the unfiltered calls×fns pairing was 15.4s
+% of rust_calls' 21.7s on the 491k-node graph). Result set: UNCHANGED.
+suffix_call(C, T) :-
+    rs_call(C, File, N),
+    string_contains(N, "::"),
+    \+ has_exact(C),
+    rs_fn(File, FN, T),
+    concat("::", FN, Suf),
+    ends_with(N, Suf).
+
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+rust_call(C, T, "rust-calls") :- exact_call(C, T).
+
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+rust_suffix_call(C, T, "rust-calls") :- suffix_call(C, T).

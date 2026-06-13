@@ -796,6 +796,89 @@ pub fn phase_metrics_to_wire(
 }
 
 // ---------------------------------------------------------------------------
+// Workspace packages → wire nodes (Wave 3c)
+// ---------------------------------------------------------------------------
+
+/// Convert the discovered workspace-package map (config.rs `services` discovery
+/// plus alias-expanded virtual packages) into `WORKSPACE_PACKAGE` wire nodes —
+/// the graph facts the datalog packs join on (`js_module_imports` workspace
+/// arms: `attr(W, "name", <npm name>)` × `attr(W, "file", <entry point>)`).
+///
+/// Conventions (resolve-migration synthesis doc §4 item 3):
+/// - `name` = the npm package name (e.g. `"@grafema/util"`);
+/// - `file` = the entry point relative to the project root (the field the
+///   workspace arms join — and what ties the fact's lifecycle to the entry
+///   file: re-analyzing it tombstones the node, and the per-run re-emission
+///   below restores it before the pack phase);
+/// - `metadata.package_dir` = the package directory (carried for future
+///   arms; the legacy sub-path arm uses `dirname(entry_point)`, not this —
+///   ImportResolution.hs:195-200).
+///
+/// Semantic ids are `{entry_point}->WORKSPACE_PACKAGE->{name}` (the standard
+/// `file->TYPE->name` shape, stable across runs).
+pub fn workspace_packages_to_wire(
+    packages: &[crate::plugin::WorkspacePackageWire],
+    authority: &str,
+) -> Vec<WireNode> {
+    let mut nodes = Vec::new();
+    for pkg in packages {
+        let compact_id = format!("{}->WORKSPACE_PACKAGE->{}", pkg.entry_point, pkg.name);
+        let node_id = compact_to_uri(&compact_id, authority);
+
+        let mut meta = HashMap::new();
+        meta.insert("package_dir".to_string(), serde_json::json!(pkg.package_dir));
+
+        nodes.push(WireNode {
+            id: node_id.clone(),
+            semantic_id: Some(node_id),
+            node_type: Some("WORKSPACE_PACKAGE".to_string()),
+            name: Some(pkg.name.clone()),
+            file: Some(pkg.entry_point.clone()),
+            exported: false,
+            metadata: Some(serde_json::to_string(&meta).unwrap()),
+        });
+    }
+    nodes
+}
+
+/// The GO module-path fact (precondition P1 of the go pack migration): the
+/// go.mod module path the legacy `go-resolve` daemon consumed over the wire
+/// (`workspace_packages` — main.rs wraps `discover_go_module_path` as a single
+/// WorkspacePackageWire) becomes a graph fact the go packs can join:
+/// `go_mod(MP) :- node(W, "WORKSPACE_PACKAGE"), node_attr(W, "language", "go"),
+/// attr(W, "name", MP)` (go_imports.dl / go_calls.dl).
+///
+/// Shape (the [`workspace_packages_to_wire`] conventions, plus the language
+/// discriminator):
+/// - `name` = the Go module path (e.g. `"github.com/user/project"`);
+/// - `file` = `"go.mod"` (the declaring file — js workspace facts never carry
+///   it, so the js packs' `ws_pkg` arms cannot confuse the fact with an npm
+///   package, and vice versa the go packs key on `language`);
+/// - `metadata.language` = `"go"` — the discriminator the packs join;
+/// - `metadata.package_dir` = the project root.
+///
+/// Semantic id `go.mod->WORKSPACE_PACKAGE-><module path>` (stable across runs;
+/// re-emitted every analyze like the js facts — upsert dedups).
+pub fn go_module_workspace_fact(module_path: &str, root: &str, authority: &str) -> WireNode {
+    let compact_id = format!("go.mod->WORKSPACE_PACKAGE->{module_path}");
+    let node_id = compact_to_uri(&compact_id, authority);
+
+    let mut meta = HashMap::new();
+    meta.insert("language".to_string(), serde_json::json!("go"));
+    meta.insert("package_dir".to_string(), serde_json::json!(root));
+
+    WireNode {
+        id: node_id.clone(),
+        semantic_id: Some(node_id),
+        node_type: Some("WORKSPACE_PACKAGE".to_string()),
+        name: Some(module_path.to_string()),
+        file: Some("go.mod".to_string()),
+        exported: false,
+        metadata: Some(serde_json::to_string(&meta).unwrap()),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Single-file analysis
 // ---------------------------------------------------------------------------
 
@@ -7403,5 +7486,90 @@ mod tests {
         // Should be unchanged — file couldn't be read
         assert_eq!(analysis.nodes[0].line, 100);
         assert_eq!(analysis.nodes[0].end_line, 200);
+    }
+
+    // ── workspace_packages_to_wire (Wave 3c) ────────────────────────────────
+
+    fn ws_pkg(name: &str, entry: &str, dir: &str) -> crate::plugin::WorkspacePackageWire {
+        crate::plugin::WorkspacePackageWire {
+            name: name.to_string(),
+            entry_point: entry.to_string(),
+            package_dir: dir.to_string(),
+        }
+    }
+
+    #[test]
+    fn workspace_packages_to_wire_emits_fact_shape() {
+        let pkgs = vec![ws_pkg(
+            "@grafema/util",
+            "packages/util/src/index.ts",
+            "packages/util",
+        )];
+        let nodes = workspace_packages_to_wire(&pkgs, "github.com/o/r");
+        assert_eq!(nodes.len(), 1);
+        let n = &nodes[0];
+        // The pack joins attr(W,"name") × attr(W,"file") — both first-class.
+        assert_eq!(n.node_type.as_deref(), Some("WORKSPACE_PACKAGE"));
+        assert_eq!(n.name.as_deref(), Some("@grafema/util"));
+        assert_eq!(n.file.as_deref(), Some("packages/util/src/index.ts"));
+        assert!(!n.exported);
+        // package_dir rides in metadata (synthesis §4 item 3 convention).
+        let meta: serde_json::Value =
+            serde_json::from_str(n.metadata.as_deref().unwrap()).unwrap();
+        assert_eq!(meta["package_dir"], "packages/util");
+        // file->TYPE->name semantic-id shape under the authority URI.
+        assert!(
+            n.id.starts_with("grafema://github.com/o/r/packages/util/src/index.ts#"),
+            "uri id keeps the file prefix: {}",
+            n.id
+        );
+        assert!(n.id.contains("WORKSPACE_PACKAGE"), "typed id: {}", n.id);
+        assert_eq!(n.semantic_id.as_deref(), Some(n.id.as_str()));
+    }
+
+    #[test]
+    fn workspace_packages_to_wire_is_stable_across_runs_and_covers_aliases() {
+        // Alias-expanded virtual packages (main.rs) use the same wire type —
+        // they must become facts too (the legacy wsMap included them).
+        let pkgs = vec![
+            ws_pkg("@grafema/util", "packages/util/src/index.ts", "packages/util"),
+            ws_pkg("jodit/esm", "jodit/src/index.ts", "jodit/src"),
+        ];
+        let a = workspace_packages_to_wire(&pkgs, "github.com/o/r");
+        let b = workspace_packages_to_wire(&pkgs, "github.com/o/r");
+        assert_eq!(a.len(), 2);
+        // Same input ⇒ byte-identical ids (stable across runs — upsert dedups).
+        let ids_a: Vec<&str> = a.iter().map(|n| n.id.as_str()).collect();
+        let ids_b: Vec<&str> = b.iter().map(|n| n.id.as_str()).collect();
+        assert_eq!(ids_a, ids_b);
+        // Distinct packages get distinct ids.
+        assert_ne!(ids_a[0], ids_a[1]);
+        assert_eq!(b[1].name.as_deref(), Some("jodit/esm"));
+    }
+
+    #[test]
+    fn workspace_packages_to_wire_empty_is_empty() {
+        assert!(workspace_packages_to_wire(&[], "github.com/o/r").is_empty());
+    }
+
+    /// The GO module-path fact (P1): the go packs join
+    /// `node_attr(W, "language", "go")` × `attr(W, "name", MP)` — the language
+    /// discriminator MUST ride metadata and the module path MUST be the
+    /// first-class name; ids stable across runs (upsert dedups).
+    #[test]
+    fn go_module_workspace_fact_shape_and_stability() {
+        let a = go_module_workspace_fact("github.com/user/project", ".", "github.com/o/r");
+        assert_eq!(a.node_type.as_deref(), Some("WORKSPACE_PACKAGE"));
+        assert_eq!(a.name.as_deref(), Some("github.com/user/project"));
+        assert_eq!(a.file.as_deref(), Some("go.mod"));
+        assert!(!a.exported);
+        let meta: serde_json::Value =
+            serde_json::from_str(a.metadata.as_deref().unwrap()).unwrap();
+        assert_eq!(meta["language"], "go", "the go packs' discriminator key");
+        assert_eq!(meta["package_dir"], ".");
+        let b = go_module_workspace_fact("github.com/user/project", ".", "github.com/o/r");
+        assert_eq!(a.id, b.id, "stable id across runs");
+        assert_eq!(a.semantic_id.as_deref(), Some(a.id.as_str()));
+        assert!(a.id.contains("WORKSPACE_PACKAGE"), "typed id: {}", a.id);
     }
 }

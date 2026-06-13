@@ -1,0 +1,186 @@
+% kotlin_inheritance.dl — Kotlin EXTENDS / IMPLEMENTS edges from the analyzer's
+% supertype metadata stamps. Closes the kotlin-spec step-5 gap (lang-spec-kotlin
+% §Step 5): kotlin classes had ZERO inheritance edges in production — supertypes
+% went ONLY into deferred InheritanceResolve refs (kotlin-analyzer Types.hs
+% emitInheritanceEdge) which the orchestrator drops (FileAnalysis has no
+% unresolvedRefs field, analyzer.rs:41-49), and the kotlin-resolve
+% resolveExtends/resolveImplements arms read `extends`/`implements` metadata the
+% analyzer never stamped (those arms are retired in this wave — DELTA 7).
+% EVERYTHING this pack derives is therefore a declared SUPERSET vs the
+% legacy-zero baseline (DELTA 7 below).
+%
+% EDB CONTRACT (the analyzer-side stamps, Rules/Declarations.hs inheritanceMeta):
+%   CLASS node metadata
+%     "extends"          — the single class supertype name (the parser's
+%                          constructor-call supertype entry; `class C : Base(1)`),
+%     "implements_0..n"  — indexed interface supertype names (bare / delegated
+%                          entries; the list-valued metadata convention —
+%                          node_attr-addressable, no split builtin needed).
+%   Names are simple ("Base") or scope-qualified as written ("java.util.List");
+%   generic type arguments are stripped at stamp time. Interfaces / enums /
+%   objects are all CLASS nodes with a `kind` metadata discriminator
+%   (kind = "interface" marks interfaces — kotlin-analyzer emits NO INTERFACE
+%   node type). CAVEAT: the parser's kind cascade checks isSealed() BEFORE
+%   isInterface() (kotlin-parser KotlinAstSerializer.kt:83-92), so a
+%   `sealed interface` serializes kind = "sealed" — indistinguishable from a
+%   sealed CLASS in the EDB. See DELTA 8.
+%
+% CLASSIFICATION RULE (the Kotlin syntactic ambiguity): the parser classifies a
+% supertype entry by the constructor-call '()' suffix — `Base(1)` → "extends",
+% bare `Greeter` → "implements". A class with NO primary constructor may extend
+% a class via a BARE entry (`class X : Base { constructor() : super() }`), which
+% lands in implements_N. This pack re-classifies by the RESOLVED declaration's
+% own kind: target kind = "interface" → IMPLEMENTS, anything else → EXTENDS
+% (the recovery arms). The ambiguity is thus resolved whenever the declaration
+% is in scope; out-of-scope names derive nothing either way (DELTA 2).
+%
+% RESOLUTION SCOPE (SUBSET DELTA 1): same-file + same-package-by-directory arms
+% ONLY. Kotlin import resolution is a separate migration step (lang-spec-kotlin
+% steps 1-2); cross-file resolution through imports is the next wave. Bound =
+% stamps whose names resolve only via an import.
+%
+% NUMBERED DELTAS (vs legacy kotlin-resolve AND vs ideal Kotlin semantics):
+%   DELTA 1 (scope subset): same-file + same-directory arms only — see above.
+%   DELTA 2 (classification): bare class supertypes of no-primary-ctor classes
+%     arrive in implements_N; re-classified by target kind (recovery arms).
+%     Residual: such a supertype that is OUT of resolution scope derives no
+%     edge — same as every out-of-scope name.
+%   DELTA 3 (ambiguity discipline): duplicate same-name declarations in the
+%     resolution scope are SKIPPED (the \+ ambig idiom — js_this_method_calls
+%     precedent), not derived per-candidate. Bound = duplicate (scope, name)
+%     pairs, measurable.
+%   DELTA 4 (index cap): want_impl enumerates implements_0..15 — a class with
+%     more than 16 interface supertypes loses the tail (real Kotlin: unheard of).
+%   DELTA 5 (qualified stamps): dotted names ("java.util.AbstractList") join
+%     only a declaration literally so named — practically never; external
+%     supertypes derive nothing (parity with the legacy zero).
+%   DELTA 6 (directory ≈ package): the same-package arm joins by the file's
+%     directory prefix (last_segment/strip_suffix peel), not the MODULE
+%     `package` metadata — files in one directory with different package
+%     declarations (or one package split across directories) deviate from true
+%     package scope. Top-level files (no '/') share the "" directory.
+%   DELTA 7 (baseline): legacy production output is ZERO (header) — every edge
+%     is new, resolvedVia = "kotlin-inheritance" meta marks the producer.
+%     KEPT TRUE BY CONSTRUCTION: the kotlin-resolve resolveExtends /
+%     resolveImplements arms (which read the same `extends` / un-suffixed
+%     `implements` metadata through an UNSCOPED project-wide last-wins
+%     simple-name index) are retired in the same wave that lands the analyzer
+%     stamps — otherwise the `extends` stamp would wake resolveExtends into a
+%     second, scope-undisciplined EXTENDS producer (kotlin-resolve
+%     TypeResolution.hs — see the retirement note there).
+%   DELTA 8 (sealed targets of bare entries): kind = "sealed" is BOTH sealed
+%     classes and sealed interfaces (the parser cascade, EDB contract above).
+%     A bare supertype entry (implements_N stamp) resolving to a kind="sealed"
+%     declaration is therefore unclassifiable — the recovery arms refuse it
+%     (\+ kind=sealed guard) rather than derive EXTENDS toward what may be a
+%     sealed INTERFACE. Bound = bare entries naming an in-scope sealed
+%     declaration: `class C : SealedIface` derives nothing (was: silent wrong
+%     EXTENDS). Constructor-call supertypes are unaffected — `class C :
+%     SealedClass()` arrives as the `extends` stamp and kt_ext_file/dir carry
+%     no kind guard. Full fix is parser-side (an explicit interface flag).
+%
+% MAINTAIN ENVELOPE: node_attr reads metadata blobs outside the delta algebra —
+% maintain-incremental refuses this pack; it runs at the scratch floor (the
+% accepted stance of every node_attr pack — js_class_inheritance precedent).
+%
+% ORDERING (producer): EXTENDS is consumed by shape_verifier's EXTENDS-closed
+% member lookup — this pack MUST run before shape_verifier. It consumes
+% analyzer EDB only (no pack-produced inputs), so it has no run-after seam.
+
+% Every CLASS in a Kotlin file — file gate inlined per base relation
+% (ends_with is a filter, it cannot generate F; config.rs:749 maps both
+% .kt and .kts to Language::Kotlin).
+ktc(C, F) :- node(C, "CLASS"), attr(C, "file", F), ends_with(F, ".kt").
+ktc(C, F) :- node(C, "CLASS"), attr(C, "file", F), ends_with(F, ".kts").
+
+% The stamped class-supertype want: one per class ("extends" is single-valued).
+want_ext(C, F, N) :- ktc(C, F), node_attr(C, "extends", N), neq(N, "").
+
+% The stamped interface-supertype wants: many per class, one clause per
+% indexed key implements_0..15 (DELTA 4) — node_attr requires a bound key and
+% a fact-table key generator is a planner-rejected cross-join (E-PLAN-003,
+% observed on this pack), so the keys are inlined per clause (the
+% one-clause-per-constant idiom — js file-extension gates precedent).
+want_impl(C, F, N) :- ktc(C, F), node_attr(C, "implements_0", N), neq(N, "").
+want_impl(C, F, N) :- ktc(C, F), node_attr(C, "implements_1", N), neq(N, "").
+want_impl(C, F, N) :- ktc(C, F), node_attr(C, "implements_2", N), neq(N, "").
+want_impl(C, F, N) :- ktc(C, F), node_attr(C, "implements_3", N), neq(N, "").
+want_impl(C, F, N) :- ktc(C, F), node_attr(C, "implements_4", N), neq(N, "").
+want_impl(C, F, N) :- ktc(C, F), node_attr(C, "implements_5", N), neq(N, "").
+want_impl(C, F, N) :- ktc(C, F), node_attr(C, "implements_6", N), neq(N, "").
+want_impl(C, F, N) :- ktc(C, F), node_attr(C, "implements_7", N), neq(N, "").
+want_impl(C, F, N) :- ktc(C, F), node_attr(C, "implements_8", N), neq(N, "").
+want_impl(C, F, N) :- ktc(C, F), node_attr(C, "implements_9", N), neq(N, "").
+want_impl(C, F, N) :- ktc(C, F), node_attr(C, "implements_10", N), neq(N, "").
+want_impl(C, F, N) :- ktc(C, F), node_attr(C, "implements_11", N), neq(N, "").
+want_impl(C, F, N) :- ktc(C, F), node_attr(C, "implements_12", N), neq(N, "").
+want_impl(C, F, N) :- ktc(C, F), node_attr(C, "implements_13", N), neq(N, "").
+want_impl(C, F, N) :- ktc(C, F), node_attr(C, "implements_14", N), neq(N, "").
+want_impl(C, F, N) :- ktc(C, F), node_attr(C, "implements_15", N), neq(N, "").
+
+% Same-file declaration index (file, name) → CLASS node.
+cls_in(F, N, T) :- ktc(T, F), attr(T, "name", N), neq(N, "").
+
+% Duplicate same-name declarations in one file — the exactly-one guard.
+amb_f(F, N) :- cls_in(F, N, T1), cls_in(F, N, T2), neq(T1, T2).
+
+% Directory of a kotlin file: F = D ++ Base, Base the post-'/' tail
+% (identity when no '/' → D = "", DELTA 6).
+dir_of(F, D) :- ktc(_, F), last_segment(F, "/", B), strip_suffix(F, B, D).
+
+% Same-directory declaration index + its exactly-one guard (same-file
+% duplicates are dir duplicates too — the dir arm inherits the skip).
+cls_dir(D, N, T) :- cls_in(F, N, T), dir_of(F, D).
+amb_d(D, N) :- cls_dir(D, N, T1), cls_dir(D, N, T2), neq(T1, T2).
+
+% Interface discriminator (kotlin interfaces are CLASS kind=interface).
+iface(T) :- ktc(T, _), node_attr(T, "kind", "interface").
+
+% Sealed discriminator — covers sealed classes AND sealed interfaces (the
+% parser cascade collapses both to kind="sealed", DELTA 8).
+sealed_t(T) :- ktc(T, _), node_attr(T, "kind", "sealed").
+
+% Fall-through gates: a same-file candidate suppresses the directory arm
+% (js_class_inheritance has_local precedent; per-name for the multi-valued
+% implements list).
+has_f_ext(C) :- want_ext(C, F, N), cls_in(F, N, _).
+has_f_impl(C, N) :- want_impl(C, F, N), cls_in(F, N, _).
+
+% ── EXTENDS from the "extends" stamp ────────────────────────────────────────
+
+@materialize(edge_type = "EXTENDS", mode = "additive", meta(resolvedVia))
+kt_ext_file(C, T, "kotlin-inheritance") :-
+    want_ext(C, F, N), cls_in(F, N, T), \+ amb_f(F, N), neq(C, T).
+
+@materialize(edge_type = "EXTENDS", mode = "additive", meta(resolvedVia))
+kt_ext_dir(C, T, "kotlin-inheritance") :-
+    want_ext(C, F, N), \+ has_f_ext(C),
+    dir_of(F, D), cls_dir(D, N, T), \+ amb_d(D, N), neq(C, T).
+
+% ── IMPLEMENTS from implements_N stamps resolving to an interface ───────────
+
+@materialize(edge_type = "IMPLEMENTS", mode = "additive", meta(resolvedVia))
+kt_impl_file(C, T, "kotlin-inheritance") :-
+    want_impl(C, F, N), cls_in(F, N, T), iface(T), \+ amb_f(F, N), neq(C, T).
+
+@materialize(edge_type = "IMPLEMENTS", mode = "additive", meta(resolvedVia))
+kt_impl_dir(C, T, "kotlin-inheritance") :-
+    want_impl(C, F, N), \+ has_f_impl(C, N),
+    dir_of(F, D), cls_dir(D, N, T), iface(T), \+ amb_d(D, N), neq(C, T).
+
+% ── EXTENDS recovery: implements_N stamp resolving to a NON-interface — the
+%    no-primary-constructor bare class supertype (DELTA 2). kind = "sealed"
+%    targets are REFUSED (DELTA 8): sealed interfaces also serialize
+%    kind="sealed", so re-classifying a bare entry toward a sealed target as
+%    EXTENDS would silently mis-edge `class C : SealedIface` ────────────────
+
+@materialize(edge_type = "EXTENDS", mode = "additive", meta(resolvedVia))
+kt_ext_rec_file(C, T, "kotlin-inheritance") :-
+    want_impl(C, F, N), cls_in(F, N, T), \+ iface(T), \+ sealed_t(T),
+    \+ amb_f(F, N), neq(C, T).
+
+@materialize(edge_type = "EXTENDS", mode = "additive", meta(resolvedVia))
+kt_ext_rec_dir(C, T, "kotlin-inheritance") :-
+    want_impl(C, F, N), \+ has_f_impl(C, N),
+    dir_of(F, D), cls_dir(D, N, T), \+ iface(T), \+ sealed_t(T),
+    \+ amb_d(D, N), neq(C, T).

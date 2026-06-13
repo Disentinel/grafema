@@ -1,0 +1,462 @@
+% js_module_imports.dl — the JS module-path kernel (Wave 3b): IMPORT → MODULE
+% IMPORTS_FROM resolution + star re-export EXPORT → MODULE RE_EXPORTS, the
+% in-engine replacement for the module-level arms of ImportResolution.hs
+% (packages/grafema-resolve/src/ImportResolution.hs: resolveModuleImports
+% :526-552 via resolveModulePath:189-208 / resolveRelative:218-235 /
+% makeCandidates:240-254, and resolveStarReExports:563-606 with the
+% resolveModulePathDirect ModuleIndex fallback :597-606). Built on the Wave-3a
+% path/string kit: path_resolve/3 (dirname + join + '.'/'..' normalize, lexical
+% only — candidate existence is a JOIN below, never fs), strip_suffix/3 (the
+% TS-ESM extension swap), strip_prefix/3 (the "*:" star-source split), concat/3.
+%
+% GATING (Wave 3c): the legacy "import-resolution" step is now skipped via
+% GRAFEMA_SKIP_RESOLVE_STEPS (grafema-resolve Main.hs getSkipSteps) — this pack
+% plus js_import_bindings own the IMPORTS_FROM / RE_EXPORTS vocabulary for JS.
+% Both heads stay additive (shared vocabulary; re-running over a legacy-built
+% graph dedups).
+%
+% THE CANDIDATE LADDER (makeCandidates:240-254, first-match-wins encoded as the
+% rank negation chain): for resolved base path P,
+%   rank 0      exact P            — only when P already has a known extension
+%                                    (hasKnownExtension:269-271 ≡ ∃ stem strip)
+%   ranks 1-4   extension swap     — strip any of the 9 known suffixes
+%                                    {.d.ts,.js,.jsx,.ts,.tsx,.mjs,.cjs,.mts,.cts}
+%                                    (swapExtension:259-266), append .js/.ts/.tsx/.jsx
+%                                    (one rank per NEW extension, legacy newExt order),
+%                                    skip-if-identical (the neq)
+%   ranks 5-8   append .js/.ts/.tsx/.jsx
+%   ranks 9-12  append /index.js|.ts|.tsx|.jsx
+%   ranks 13-14 append .d.ts, /index.d.ts (last resort)
+% Existence probe per rank = exporting_file(R) — ExportIndex membership, NOT
+% MODULE presence (resolveModulePath probes the ExportIndex :193,200,206; the
+% ModuleIndex probe exists ONLY in the star-re-export fallback :579-581). The
+% final edge additionally requires the MODULE node at the winner (the
+% moduleIndex lookup :544-552, with NO next-candidate retry — encoded by
+% joining MODULE on the winner only).
+%
+% exporting_file = EXACT buildExportIndex membership (:108-140) since Wave 3c
+% (was: any EXPORT/EXPORT_BINDING marker — an undeclared SUPERSET on files
+% whose only marker is a named EXPORT container, which contributes NOTHING to
+% the legacy index :133-134; live bound 0, but gating made the probe
+% load-bearing so the arm was tightened to the four legacy entry classes:
+% EXPORT_BINDING :117-122, EXPORT "default" :125-126, EXPORT "*:…" :129-131,
+% and __exported declarations of the 8 types :137 — gnExported = the stored
+% `__exported` metadata key, the rust_imports precedent, cost-gated by
+% cand_path so the per-row metadata parse touches only probed files).
+%
+% WORKSPACE ARMS (Wave 3c, closes DELTA 1): WORKSPACE_PACKAGE facts (name =
+% npm package name, file = entry point, package_dir in metadata) are committed
+% by the orchestrator (config.rs discovery + alias virtual packages) before
+% the pack phase. Arm 1 (exact, :191-193): specifier IS a package name and the
+% entry point is an exporting file ⇒ resolved = entry point, NO ladder. Arm 2
+% (sub-path, :195-200): longest '/'-boundary package-name prefix wins
+% (findWorkspacePrefix :70-81; any two matches are comparable — the longer
+% extends the shorter at a '/' boundary — so longest ≡ not-shadowed); base =
+% dirname(entryPoint) ++ "/" ++ subPath via RAW concat, NO normalization
+% ('.'/'..' in the sub-path stay literal — legacy parity; path_resolve is
+% deliberately NOT used, the Wave-3a advisory drift does not apply). The
+% sub-path base rides the SAME candidate ladder (per source the relative and
+% workspace arms are disjoint — a specifier is './'-relative XOR
+% workspace-prefixed — so ranks never mix bases). Direct arm (:599-600): star
+% fallback ws-exact against the ModuleIndex.
+%
+% NUMBERED DELTAS vs the resolver (everything not listed is exact):
+%   DELTA 1 (CLOSED, Wave 3c): the three workspace arms are IN (see above) —
+%     they join WORKSPACE_PACKAGE facts; a graph without the facts derives
+%     nothing from them (the pre-3c subset behavior).
+%   DELTA 2 (SUPERSET, expected 0): within-rank order loss for specifiers
+%     already ending in .d.ts — swapExtension strips both .d.ts and .ts, two
+%     candidates in ONE rank here vs ordered in legacy; both-exist files would
+%     derive 2 edges. Live bound: zero relative specifiers end in .d.ts.
+%   DELTA 3 (SUBSET, expected 0): degenerate specifiers ("./" resolving to the
+%     importer's own dir, or past-root "../" chains emptying the path) —
+%     path_resolve yields NO row where legacy probed the bare dir string as a
+%     candidate base; such candidates never hit a real file.
+%   DELTA 4 (SUPERSET, expected 0): duplicate MODULE nodes on one file derive
+%     one edge each (set semantics) vs the ModuleIndex Map's last-write-wins.
+%   DELTA 5 (gate nuance): the star arm has no importer-extension gate — the
+%     legacy gate was the orchestrator's detect_language stream filter; live:
+%     every EXPORT-bearing file is a JS file (293/293). The IMPORT arm keeps
+%     the 8-extension gate (one clause per extension, js_import_bindings
+%     precedent).
+%   DELTA 6 (diagnostics): the resolver's stderr warnings (unresolvable
+%     relative module :311-313) have no pack analog; unresolvable = no edge,
+%     byte-identical edge output.
+%   DELTA 7 (degenerate exact-key arm-2, both directions, expected 0): when a
+%     specifier IS a workspace package name but the entry point is NOT an
+%     exporting file, legacy arm 1 fails and arm 2 still matches it (exact
+%     match qualifies findWorkspacePrefix :80) with an EMPTY sub-path —
+%     candidates over the literal base "srcRoot/" ("srcRoot/.js",
+%     "srcRoot//index.js", …). The pack's sub-path arm requires "name/"-prefix
+%     extraction, so it derives nothing there (SUBSET if such a candidate ever
+%     names a real file); conversely, for a STAR export legacy only reaches
+%     the Direct ws-exact fallback when that degenerate ladder missed, while
+%     the pack's mwin_ws fires whenever no export-rank hit (SUPERSET in the
+%     same absurd-filename corner). Both need a file whose basename is ".js"/
+%     "index.js"-after-double-slash — 0 everywhere real.
+% Meta parity: both legacy module-level edge kinds stamp meta resolvedPath
+% (:550, :591) — projected here as the meta(resolvedPath) head column, exact.
+%
+% MAINTAIN ENVELOPE: negation (the rank ladder) ⇒ maintain-incremental refuses
+% this pack; scratch floor (accepted, same stance as every resolver pack).
+%
+% ORDERING (PRODUCER): produces the IMPORT → MODULE IMPORTS_FROM seam consumed
+% as committed EDB by js_import_bindings (b_mod / resolved_at / star_src joins),
+% js_cross_file_calls, js_property_access_ns and depends. MUST run before
+% js_import_bindings and the other consumers. Legacy import-resolution is
+% gated (Wave 3c), so this ordering IS load-bearing — depends moved after the
+% IMPORTS_FROM producers in both registries. The RE_EXPORTS head feeds
+% js_import_bindings' star_src in the same way.
+
+% ── Importer-side sources ───────────────────────────────────────────────────
+
+% Every IMPORT in a JS/TS file, name = the module specifier (first-class,
+% Declarations.hs:466). The 8-extension gate, one clause per extension.
+js_import(I, F, S) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".js"), attr(I, "name", S).
+js_import(I, F, S) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".jsx"), attr(I, "name", S).
+js_import(I, F, S) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".ts"), attr(I, "name", S).
+js_import(I, F, S) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".tsx"), attr(I, "name", S).
+js_import(I, F, S) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".mjs"), attr(I, "name", S).
+js_import(I, F, S) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".cjs"), attr(I, "name", S).
+js_import(I, F, S) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".mts"), attr(I, "name", S).
+js_import(I, F, S) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".cts"), attr(I, "name", S).
+
+% Star re-exports: EXPORT named "*:<source>" (nodeToExportEntries:129-131);
+% strip_prefix both gates (no row on non-star names) and extracts the source.
+star_export(E, F, S) :-
+    node(E, "EXPORT"), attr(E, "file", F), attr(E, "name", N),
+    strip_prefix(N, "*:", S).
+
+% Named re-export sources (Wave 4, closes js_import_bindings DELTA 1):
+% `export { x } from './y'` is an EXPORT_BINDING with `source` metadata
+% (Declarations.hs:599-644) and NO IMPORT node — the legacy resolver resolved
+% the hop's source INTERNALLY (handleExportEntry, ImportResolution.hs:368-386:
+% resolveModulePath exportFile reExportSource — the FULL kernel incl. the
+% workspace arms, NO ModuleIndex fallback). This pack materializes that
+% internal resolution as a committed seam edge EXPORT_BINDING → MODULE
+% (RE_EXPORTS, the eb_reexport_hop head below) so js_import_bindings'
+% visible() chain can follow seam-less named hops. NEW vocabulary (legacy
+% committed no such edge — it chain-collapsed instead); same seam-fact class
+% as the orchestrator's WORKSPACE_PACKAGE nodes.
+% DELTA 8 (hop seam, subset): the head requires a MODULE node at the winner;
+% legacy recursed into the resolved FILE directly. Every analyzed file has a
+% MODULE node (the js_import_bindings DELTA-3 equivalence) — recorded.
+% No importer-extension gate, the star-arm stance (DELTA 5): EXPORT_BINDINGs
+% with `source` exist only in JS analyzer output.
+eb_src(EB, F, S) :-
+    node(EB, "EXPORT_BINDING"), attr(EB, "file", F),
+    node_attr(EB, "source", S), neq(S, "").
+
+% ── Workspace facts + arms (Wave 3c, closes DELTA 1 — see header) ───────────
+
+% (source X, specifier S) — shared by the workspace arms below.
+src(X, S) :- js_import(X, _, S).
+src(X, S) :- star_export(X, _, S).
+src(X, S) :- eb_src(X, _, S).
+
+% WORKSPACE_PACKAGE facts: name = npm package name, file = entry point.
+ws_pkg(W, N, E) :- node(W, "WORKSPACE_PACKAGE"), attr(W, "name", N), attr(W, "file", E).
+
+% Arm 1 (exact, :191-193): specifier IS a package name, entry point is an
+% exporting file (Map.member entryPoint exportIndex) — resolved, no ladder.
+ws_exact(X, E) :- src(X, S), ws_pkg(_, S, E), exporting_file(E).
+
+% Arm 2 (sub-path, :195-200): '/'-boundary prefix extraction; the LONGEST
+% matching package name wins (findWorkspacePrefix :70-81) — encoded as
+% not-shadowed-by-a-longer-match (exact matches count as matches :80, which
+% is what keeps the shorter package out of the DELTA-7 exact-key corner).
+% "Package name is a '/'-boundary prefix of S" must be an EQUALITY join (the
+% E-PLAN-003 cross-join guard rejects the filter-connected spelling — the
+% rust_imports f_anc lesson), so derive every '/'-boundary prefix of each
+% specifier (strictly shrinking ⇒ the fixpoint terminates at segment depth)
+% and join ws_pkg on it.
+spec_pfx(X, S) :- src(X, S).
+spec_pfx(X, D) :-
+    spec_pfx(X, P), last_segment(P, "/", L),
+    concat("/", L, Tail), strip_suffix(P, Tail, D).
+ws_sub(X, W, Sub) :-
+    spec_pfx(X, N), ws_pkg(W, N, _),
+    src(X, S), concat(N, "/", Np), strip_prefix(S, Np, Sub).
+ws_match(X, W) :- src(X, S), ws_pkg(W, S, _).
+ws_match(X, W) :- ws_sub(X, W, _).
+ws_shadowed(X, W) :-
+    ws_match(X, W), ws_pkg(W, N1, _), concat(N1, "/", N1s),
+    ws_match(X, W2), ws_pkg(W2, N2, _), starts_with(N2, N1s).
+% Base = dirname(entryPoint) ++ "/" ++ subPath — RAW concat, legacy parity
+% (:196-198; basename/strip_suffix yields the dirname WITH its trailing
+% slash, and "" for a root-level entry point — both match the Hs string).
+ws_base(X, P) :-
+    ws_sub(X, W, Sub), \+ ws_shadowed(X, W),
+    ws_pkg(W, _, E), basename(E, B), strip_suffix(E, B, D), concat(D, Sub, P).
+ws_based(X) :- ws_base(X, _).
+
+% Resolved base path P — relative specifiers (path_resolve refuses bare, the
+% isRelativeSpecifier gate :211-212) plus the workspace sub-path bases (the
+% arms are disjoint per source, so the ladder never mixes bases for one X).
+rel(X, P) :- js_import(X, F, S), path_resolve(F, S, P).
+rel(X, P) :- star_export(X, F, S), path_resolve(F, S, P).
+rel(X, P) :- eb_src(X, F, S), path_resolve(F, S, P).
+rel(X, P) :- ws_base(X, P).
+
+% ── The candidate ladder ────────────────────────────────────────────────────
+
+% stem(X, P, B): base P minus one known extension — exists iff P has one
+% (hasKnownExtension). The 9 suffixes of swapExtension:262.
+stem(X, P, B) :- rel(X, P), strip_suffix(P, ".d.ts", B).
+stem(X, P, B) :- rel(X, P), strip_suffix(P, ".js", B).
+stem(X, P, B) :- rel(X, P), strip_suffix(P, ".jsx", B).
+stem(X, P, B) :- rel(X, P), strip_suffix(P, ".ts", B).
+stem(X, P, B) :- rel(X, P), strip_suffix(P, ".tsx", B).
+stem(X, P, B) :- rel(X, P), strip_suffix(P, ".mjs", B).
+stem(X, P, B) :- rel(X, P), strip_suffix(P, ".cjs", B).
+stem(X, P, B) :- rel(X, P), strip_suffix(P, ".mts", B).
+stem(X, P, B) :- rel(X, P), strip_suffix(P, ".cts", B).
+
+% rank 0: exact — P itself when it already has a known extension.
+cand0(X, P) :- stem(X, P, _).
+% ranks 1-4: extension swap, one rank per NEW extension in legacy order
+% (makeCandidates extensions list :242), skip-if-identical (:265).
+cand1(X, C) :- stem(X, P, B), concat(B, ".js", C), neq(C, P).
+cand2(X, C) :- stem(X, P, B), concat(B, ".ts", C), neq(C, P).
+cand3(X, C) :- stem(X, P, B), concat(B, ".tsx", C), neq(C, P).
+cand4(X, C) :- stem(X, P, B), concat(B, ".jsx", C), neq(C, P).
+% ranks 5-8: append extension.
+cand5(X, C) :- rel(X, P), concat(P, ".js", C).
+cand6(X, C) :- rel(X, P), concat(P, ".ts", C).
+cand7(X, C) :- rel(X, P), concat(P, ".tsx", C).
+cand8(X, C) :- rel(X, P), concat(P, ".jsx", C).
+% ranks 9-12: directory index files.
+cand9(X, C) :- rel(X, P), concat(P, "/index.js", C).
+cand10(X, C) :- rel(X, P), concat(P, "/index.ts", C).
+cand11(X, C) :- rel(X, P), concat(P, "/index.tsx", C).
+cand12(X, C) :- rel(X, P), concat(P, "/index.jsx", C).
+% ranks 13-14: .d.ts last resort (:253).
+cand13(X, C) :- rel(X, P), concat(P, ".d.ts", C).
+cand14(X, C) :- rel(X, P), concat(P, "/index.d.ts", C).
+
+% ── Existence probes ────────────────────────────────────────────────────────
+
+% Paths the ladder (or a workspace exact probe) actually tests — the cost
+% gate for the __exported metadata arm below (the rs_macro ×3 lesson:
+% per-row JSON parses only where a probe can land).
+cand_path(C) :- cand0(_, C).
+cand_path(C) :- cand1(_, C).
+cand_path(C) :- cand2(_, C).
+cand_path(C) :- cand3(_, C).
+cand_path(C) :- cand4(_, C).
+cand_path(C) :- cand5(_, C).
+cand_path(C) :- cand6(_, C).
+cand_path(C) :- cand7(_, C).
+cand_path(C) :- cand8(_, C).
+cand_path(C) :- cand9(_, C).
+cand_path(C) :- cand10(_, C).
+cand_path(C) :- cand11(_, C).
+cand_path(C) :- cand12(_, C).
+cand_path(C) :- cand13(_, C).
+cand_path(C) :- cand14(_, C).
+cand_path(E) :- ws_pkg(_, _, E).
+
+% ExportIndex membership — EXACT buildExportIndex semantics (:108-140), the
+% four legacy entry classes (see header; tightened in Wave 3c). A named
+% EXPORT container alone contributes NOTHING (:133-134).
+exporting_file(F) :- node(B, "EXPORT_BINDING"), attr(B, "file", F).
+exporting_file(F) :- node(E, "EXPORT"), attr(E, "name", "default"), attr(E, "file", F).
+exporting_file(F) :- node(E, "EXPORT"), attr(E, "name", N), strip_prefix(N, "*:", S), attr(E, "file", F).
+exporting_file(F) :- exp_decl_file(F).
+% gnExported declarations of the 8 legacy types (:137) — `__exported` is the
+% stored metadata key (engine_v2 writes it from the wire `exported` flag).
+exp_decl_file(F) :- cand_path(F), node(D, "FUNCTION"),   attr(D, "file", F), node_attr(D, "__exported", "true").
+exp_decl_file(F) :- cand_path(F), node(D, "VARIABLE"),   attr(D, "file", F), node_attr(D, "__exported", "true").
+exp_decl_file(F) :- cand_path(F), node(D, "CONSTANT"),   attr(D, "file", F), node_attr(D, "__exported", "true").
+exp_decl_file(F) :- cand_path(F), node(D, "CLASS"),      attr(D, "file", F), node_attr(D, "__exported", "true").
+exp_decl_file(F) :- cand_path(F), node(D, "INTERFACE"),  attr(D, "file", F), node_attr(D, "__exported", "true").
+exp_decl_file(F) :- cand_path(F), node(D, "TYPE_ALIAS"), attr(D, "file", F), node_attr(D, "__exported", "true").
+exp_decl_file(F) :- cand_path(F), node(D, "ENUM"),       attr(D, "file", F), node_attr(D, "__exported", "true").
+exp_decl_file(F) :- cand_path(F), node(D, "NAMESPACE"),  attr(D, "file", F), node_attr(D, "__exported", "true").
+
+% MODULE presence — the edge-target lookup and the star Direct fallback probe.
+module_file(F) :- node(M, "MODULE"), attr(M, "file", F).
+
+% ── Export-ladder first-match (resolveModulePath relative arm :202-206) ─────
+
+eh0(X, R)  :- cand0(X, R),  exporting_file(R).
+eh1(X, R)  :- cand1(X, R),  exporting_file(R).
+eh2(X, R)  :- cand2(X, R),  exporting_file(R).
+eh3(X, R)  :- cand3(X, R),  exporting_file(R).
+eh4(X, R)  :- cand4(X, R),  exporting_file(R).
+eh5(X, R)  :- cand5(X, R),  exporting_file(R).
+eh6(X, R)  :- cand6(X, R),  exporting_file(R).
+eh7(X, R)  :- cand7(X, R),  exporting_file(R).
+eh8(X, R)  :- cand8(X, R),  exporting_file(R).
+eh9(X, R)  :- cand9(X, R),  exporting_file(R).
+eh10(X, R) :- cand10(X, R), exporting_file(R).
+eh11(X, R) :- cand11(X, R), exporting_file(R).
+eh12(X, R) :- cand12(X, R), exporting_file(R).
+eh13(X, R) :- cand13(X, R), exporting_file(R).
+eh14(X, R) :- cand14(X, R), exporting_file(R).
+
+% Cumulative "hit at an earlier rank" chain (the firstJust:444-448 encoding).
+e_lt1(X)  :- eh0(X, _).
+e_lt2(X)  :- e_lt1(X).
+e_lt2(X)  :- eh1(X, _).
+e_lt3(X)  :- e_lt2(X).
+e_lt3(X)  :- eh2(X, _).
+e_lt4(X)  :- e_lt3(X).
+e_lt4(X)  :- eh3(X, _).
+e_lt5(X)  :- e_lt4(X).
+e_lt5(X)  :- eh4(X, _).
+e_lt6(X)  :- e_lt5(X).
+e_lt6(X)  :- eh5(X, _).
+e_lt7(X)  :- e_lt6(X).
+e_lt7(X)  :- eh6(X, _).
+e_lt8(X)  :- e_lt7(X).
+e_lt8(X)  :- eh7(X, _).
+e_lt9(X)  :- e_lt8(X).
+e_lt9(X)  :- eh8(X, _).
+e_lt10(X) :- e_lt9(X).
+e_lt10(X) :- eh9(X, _).
+e_lt11(X) :- e_lt10(X).
+e_lt11(X) :- eh10(X, _).
+e_lt12(X) :- e_lt11(X).
+e_lt12(X) :- eh11(X, _).
+e_lt13(X) :- e_lt12(X).
+e_lt13(X) :- eh12(X, _).
+e_lt14(X) :- e_lt13(X).
+e_lt14(X) :- eh13(X, _).
+
+% First-match winner against the ExportIndex.
+ewin(X, R) :- eh0(X, R).
+ewin(X, R) :- eh1(X, R),  \+ e_lt1(X).
+ewin(X, R) :- eh2(X, R),  \+ e_lt2(X).
+ewin(X, R) :- eh3(X, R),  \+ e_lt3(X).
+ewin(X, R) :- eh4(X, R),  \+ e_lt4(X).
+ewin(X, R) :- eh5(X, R),  \+ e_lt5(X).
+ewin(X, R) :- eh6(X, R),  \+ e_lt6(X).
+ewin(X, R) :- eh7(X, R),  \+ e_lt7(X).
+ewin(X, R) :- eh8(X, R),  \+ e_lt8(X).
+ewin(X, R) :- eh9(X, R),  \+ e_lt9(X).
+ewin(X, R) :- eh10(X, R), \+ e_lt10(X).
+ewin(X, R) :- eh11(X, R), \+ e_lt11(X).
+ewin(X, R) :- eh12(X, R), \+ e_lt12(X).
+ewin(X, R) :- eh13(X, R), \+ e_lt13(X).
+ewin(X, R) :- eh14(X, R), \+ e_lt14(X).
+
+% ── Star ModuleIndex fallback (resolveModulePathDirect :597-606) ────────────
+% Fires ONLY for star EXPORTs where resolveModulePath produced NOTHING: no
+% export-rank hit AND no workspace-exact hit (the resolver falls back
+% per-export, not per-candidate :579-581). The Direct arm has NO workspace
+% sub-path clause (:598-606), so workspace-based stars never enter the
+% m-ladder (\+ ws_based). Same ladder, MODULE probe.
+
+e_any(X) :- ewin(X, _).
+e_any(X) :- ws_exact(X, _).
+mstar(X) :- star_export(X, _, _), \+ e_any(X), \+ ws_based(X).
+
+% Direct workspace-exact arm (:599-600): entry point against the ModuleIndex
+% (the MODULE join happens in the head clause below).
+mwin_ws(X, E) :- star_export(X, _, S), \+ e_any(X), ws_pkg(_, S, E).
+
+mh0(X, R)  :- mstar(X), cand0(X, R),  module_file(R).
+mh1(X, R)  :- mstar(X), cand1(X, R),  module_file(R).
+mh2(X, R)  :- mstar(X), cand2(X, R),  module_file(R).
+mh3(X, R)  :- mstar(X), cand3(X, R),  module_file(R).
+mh4(X, R)  :- mstar(X), cand4(X, R),  module_file(R).
+mh5(X, R)  :- mstar(X), cand5(X, R),  module_file(R).
+mh6(X, R)  :- mstar(X), cand6(X, R),  module_file(R).
+mh7(X, R)  :- mstar(X), cand7(X, R),  module_file(R).
+mh8(X, R)  :- mstar(X), cand8(X, R),  module_file(R).
+mh9(X, R)  :- mstar(X), cand9(X, R),  module_file(R).
+mh10(X, R) :- mstar(X), cand10(X, R), module_file(R).
+mh11(X, R) :- mstar(X), cand11(X, R), module_file(R).
+mh12(X, R) :- mstar(X), cand12(X, R), module_file(R).
+mh13(X, R) :- mstar(X), cand13(X, R), module_file(R).
+mh14(X, R) :- mstar(X), cand14(X, R), module_file(R).
+
+m_lt1(X)  :- mh0(X, _).
+m_lt2(X)  :- m_lt1(X).
+m_lt2(X)  :- mh1(X, _).
+m_lt3(X)  :- m_lt2(X).
+m_lt3(X)  :- mh2(X, _).
+m_lt4(X)  :- m_lt3(X).
+m_lt4(X)  :- mh3(X, _).
+m_lt5(X)  :- m_lt4(X).
+m_lt5(X)  :- mh4(X, _).
+m_lt6(X)  :- m_lt5(X).
+m_lt6(X)  :- mh5(X, _).
+m_lt7(X)  :- m_lt6(X).
+m_lt7(X)  :- mh6(X, _).
+m_lt8(X)  :- m_lt7(X).
+m_lt8(X)  :- mh7(X, _).
+m_lt9(X)  :- m_lt8(X).
+m_lt9(X)  :- mh8(X, _).
+m_lt10(X) :- m_lt9(X).
+m_lt10(X) :- mh9(X, _).
+m_lt11(X) :- m_lt10(X).
+m_lt11(X) :- mh10(X, _).
+m_lt12(X) :- m_lt11(X).
+m_lt12(X) :- mh11(X, _).
+m_lt13(X) :- m_lt12(X).
+m_lt13(X) :- mh12(X, _).
+m_lt14(X) :- m_lt13(X).
+m_lt14(X) :- mh13(X, _).
+
+mwin(X, R) :- mh0(X, R).
+mwin(X, R) :- mh1(X, R),  \+ m_lt1(X).
+mwin(X, R) :- mh2(X, R),  \+ m_lt2(X).
+mwin(X, R) :- mh3(X, R),  \+ m_lt3(X).
+mwin(X, R) :- mh4(X, R),  \+ m_lt4(X).
+mwin(X, R) :- mh5(X, R),  \+ m_lt5(X).
+mwin(X, R) :- mh6(X, R),  \+ m_lt6(X).
+mwin(X, R) :- mh7(X, R),  \+ m_lt7(X).
+mwin(X, R) :- mh8(X, R),  \+ m_lt8(X).
+mwin(X, R) :- mh9(X, R),  \+ m_lt9(X).
+mwin(X, R) :- mh10(X, R), \+ m_lt10(X).
+mwin(X, R) :- mh11(X, R), \+ m_lt11(X).
+mwin(X, R) :- mh12(X, R), \+ m_lt12(X).
+mwin(X, R) :- mh13(X, R), \+ m_lt13(X).
+mwin(X, R) :- mh14(X, R), \+ m_lt14(X).
+
+% ── The materialized edges ──────────────────────────────────────────────────
+
+% IMPORT → MODULE (resolveModuleImport :536-552): winner against the
+% ExportIndex (relative or workspace-sub-path ladder) OR the workspace-exact
+% entry point; edge only when a MODULE node exists at the winner — no
+% next-candidate retry (legacy parity). meta resolvedPath = the winner file.
+@materialize(edge_type = "IMPORTS_FROM", mode = "additive", meta(resolvedPath))
+import_module(I, M, R) :-
+    js_import(I, _, _), ewin(I, R),
+    node(M, "MODULE"), attr(M, "file", R).
+import_module(I, M, R) :-
+    js_import(I, _, _), ws_exact(I, R),
+    node(M, "MODULE"), attr(M, "file", R).
+
+% EXPORT "*:src" → MODULE (resolveStarReExport :572-593): ExportIndex winner
+% first; the ModuleIndex-ladder fallback fires only when NO export-probe rank
+% hit (mwin is gated on mstar). meta resolvedPath, legacy parity (:591).
+@materialize(edge_type = "RE_EXPORTS", mode = "additive", meta(resolvedPath))
+star_reexport(E, M, R) :-
+    star_export(E, _, _), ewin(E, R),
+    node(M, "MODULE"), attr(M, "file", R).
+star_reexport(E, M, R) :-
+    star_export(E, _, _), ws_exact(E, R),
+    node(M, "MODULE"), attr(M, "file", R).
+star_reexport(E, M, R) :-
+    mwin(E, R),
+    node(M, "MODULE"), attr(M, "file", R).
+star_reexport(E, M, R) :-
+    mwin_ws(E, R),
+    node(M, "MODULE"), attr(M, "file", R).
+
+% EXPORT_BINDING "from" hop → MODULE (Wave 4 seam; handleExportEntry
+% :368-386): the named re-export's source through the SAME resolveModulePath
+% winner (export-ladder OR workspace-exact; NO ModuleIndex fallback — the
+% Direct arm is star-only, :597-606). meta resolvedPath, the module-edge
+% convention. Consumed by js_import_bindings' reexp (and the duplicated
+% preludes in js_class_inheritance / js_cross_file_calls) as committed EDB.
+@materialize(edge_type = "RE_EXPORTS", mode = "additive", meta(resolvedPath))
+eb_reexport_hop(EB, M, R) :-
+    eb_src(EB, _, _), ewin(EB, R),
+    node(M, "MODULE"), attr(M, "file", R).
+eb_reexport_hop(EB, M, R) :-
+    eb_src(EB, _, _), ws_exact(EB, R),
+    node(M, "MODULE"), attr(M, "file", R).

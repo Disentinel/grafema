@@ -106,7 +106,7 @@ ruleCallExpression node = do
       forM_ mCalleeId $ \calleeId ->
         emitEdge GraphEdge
           { geSource = nodeId, geTarget = calleeId
-          , geType = "DERIVED_FROM"
+          , geType = "DERIVES_FROM"
           , geMetadata = Map.singleton "kind" (MetaText "callee")
           }
     Nothing -> return ()
@@ -672,7 +672,7 @@ ruleBinaryExpression node = do
       forM_ mLeftId $ \leftId ->
         emitEdge GraphEdge
           { geSource = nodeId, geTarget = leftId
-          , geType = "DERIVED_FROM", geMetadata = Map.empty
+          , geType = "DERIVES_FROM", geMetadata = Map.empty
           }
     Nothing -> return ()
 
@@ -682,7 +682,7 @@ ruleBinaryExpression node = do
       forM_ mRightId $ \rightId ->
         emitEdge GraphEdge
           { geSource = nodeId, geTarget = rightId
-          , geType = "DERIVED_FROM", geMetadata = Map.empty
+          , geType = "DERIVES_FROM", geMetadata = Map.empty
           }
     Nothing -> return ()
 
@@ -713,7 +713,7 @@ ruleLogicalExpression node = do
       forM_ mLeftId $ \leftId ->
         emitEdge GraphEdge
           { geSource = nodeId, geTarget = leftId
-          , geType = "DERIVED_FROM", geMetadata = Map.empty
+          , geType = "DERIVES_FROM", geMetadata = Map.empty
           }
     Nothing -> return ()
 
@@ -723,7 +723,7 @@ ruleLogicalExpression node = do
       forM_ mRightId $ \rightId ->
         emitEdge GraphEdge
           { geSource = nodeId, geTarget = rightId
-          , geType = "DERIVED_FROM", geMetadata = Map.empty
+          , geType = "DERIVES_FROM", geMetadata = Map.empty
           }
     Nothing -> return ()
 
@@ -754,7 +754,7 @@ ruleUnaryExpression node = do
       forM_ mArgId $ \argId ->
         emitEdge GraphEdge
           { geSource = nodeId, geTarget = argId
-          , geType = "DERIVED_FROM", geMetadata = Map.empty
+          , geType = "DERIVES_FROM", geMetadata = Map.empty
           }
     Nothing -> return ()
 
@@ -811,12 +811,12 @@ ruleTaggedTemplateExpression node = do
             , geMetadata = Map.singleton "index" (MetaInt (idx + 1))
             }
         ) (zip [0..] exprs)
-      -- Walk quasi itself for DERIVED_FROM
+      -- Walk quasi itself for DERIVES_FROM
       mQuasiId <- withAncestor node (walkNode quasi)
       forM_ mQuasiId $ \quasiId ->
         emitEdge GraphEdge
           { geSource = nodeId, geTarget = quasiId
-          , geType = "DERIVED_FROM", geMetadata = Map.empty
+          , geType = "DERIVES_FROM", geMetadata = Map.empty
           }
     Nothing -> return ()
 
@@ -827,7 +827,7 @@ ruleTaggedTemplateExpression node = do
       forM_ mTagId $ \tagId ->
         emitEdge GraphEdge
           { geSource = nodeId, geTarget = tagId
-          , geType = "DERIVED_FROM"
+          , geType = "DERIVES_FROM"
           , geMetadata = Map.singleton "kind" (MetaText "callee")
           }
     Nothing  -> return ()

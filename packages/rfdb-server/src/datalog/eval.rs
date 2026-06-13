@@ -19,17 +19,55 @@ pub const HASH_JOIN_THRESHOLD: usize = 16;
 /// and processed through the remaining pipeline before fetching the next chunk.
 const PIPELINE_CHUNK_SIZE: usize = 4096;
 
-/// A value in Datalog bindings
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+/// A value in Datalog bindings (spec §5).
+///
+/// `Int`/`Float` are typed numeric literals — a bare `0` / `3.14` in a rule parses to one of
+/// these (not a string round-trip, not a node id). Comparison builtins coerce at the literal
+/// level (`as_f64`); `Eq`/`Hash` are hand-written because `f64` is neither (`Float` compares and
+/// hashes by `to_bits`, so fact-set dedup over numeric tuples stays well-defined and consistent).
+#[derive(Clone, Debug)]
 pub enum Value {
     /// Node ID (u128)
     Id(u128),
     /// String value
     Str(String),
+    /// Signed integer literal (`i64`)
+    Int(i64),
+    /// Floating-point literal (`f64`)
+    Float(f64),
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Value::Id(a), Value::Id(b)) => a == b,
+            (Value::Str(a), Value::Str(b)) => a == b,
+            (Value::Int(a), Value::Int(b)) => a == b,
+            // Bit-equality so `Eq` agrees with `Hash` (NaN==NaN, -0.0≠0.0) — consistent fact
+            // identity, not IEEE numeric equality (which `gt`/`lt` provide via coercion).
+            (Value::Float(a), Value::Float(b)) => a.to_bits() == b.to_bits(),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Value {}
+
+impl std::hash::Hash for Value {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match self {
+            Value::Id(x) => x.hash(state),
+            Value::Str(s) => s.hash(state),
+            Value::Int(i) => i.hash(state),
+            Value::Float(f) => f.to_bits().hash(state),
+        }
+    }
 }
 
 impl Value {
-    /// Parse a string as an ID or keep as string
+    /// Parse a string as an ID or keep as string. Used for unquoted/quoted Term::Const surfaces;
+    /// typed numeric literals arrive via `Term::Lit` and do NOT pass through here.
     pub fn from_term_const(s: &str) -> Self {
         if let Ok(id) = s.parse::<u128>() {
             Value::Id(id)
@@ -38,19 +76,34 @@ impl Value {
         }
     }
 
-    /// Get as u128 if possible
+    /// Get as u128 if possible (node-id interpretation). Numeric literals are values, not ids.
     pub fn as_id(&self) -> Option<u128> {
         match self {
             Value::Id(id) => Some(*id),
             Value::Str(s) => s.parse().ok(),
+            Value::Int(_) | Value::Float(_) => None,
         }
     }
 
-    /// Get as string
+    /// Get as string (the wire/attr surface; ids and numbers render to their decimal text).
     pub fn as_str(&self) -> String {
         match self {
             Value::Id(id) => id.to_string(),
             Value::Str(s) => s.clone(),
+            Value::Int(i) => i.to_string(),
+            Value::Float(f) => f.to_string(),
+        }
+    }
+
+    /// Coerce to `f64` for numeric comparison (spec §5: coercion at the literal level). Typed
+    /// numerics read directly; an `Id`/`Str` surface parses, returning `None` on a non-numeric
+    /// surface (the caller treats that as a tuple non-match + `coercion_miss`, never a crash).
+    pub fn as_f64(&self) -> Option<f64> {
+        match self {
+            Value::Int(i) => Some(*i as f64),
+            Value::Float(f) => Some(*f),
+            Value::Id(id) => Some(*id as f64),
+            Value::Str(s) => s.parse().ok(),
         }
     }
 }
@@ -163,6 +216,7 @@ impl Bindings {
 /// Checked at hot paths (after each literal, before each derived predicate entry).
 /// All limits are cooperative — the evaluator checks them periodically and returns
 /// an error if any limit is exceeded.
+#[derive(Clone)]
 pub struct EvalLimits {
     /// Absolute wall-clock deadline (default: 30s from now)
     pub deadline: Option<Instant>,
@@ -679,6 +733,7 @@ impl<'a> Evaluator<'a> {
                     match dst_term {
                         Term::Var(var) => new_bindings.set(var, Value::Id(dst_id)),
                         Term::Const(_) => {} // already checked above
+                        Term::Lit(_) => {}   // already checked above
                         Term::Wildcard => {}
                     }
 
@@ -754,6 +809,7 @@ impl<'a> Evaluator<'a> {
                     match src_term {
                         Term::Var(var) => new_bindings.set(var, Value::Id(src_id)),
                         Term::Const(_) => {} // already checked above
+                        Term::Lit(_) => {}   // already checked above
                         Term::Wildcard => {}
                     }
 
@@ -820,6 +876,9 @@ impl<'a> Evaluator<'a> {
             "not_starts_with" => self.eval_not_starts_with(atom),
             "string_contains" => self.eval_string_contains(atom),
             "parent_function" => self.eval_parent_function(atom),
+            "resolved_import" => self.eval_resolved_import(atom),
+            "same_dir_module" => self.eval_same_dir_module(atom),
+            "shared_import_count" => self.eval_shared_import_count(atom),
             _ => self.eval_derived(atom, state)?,
         })
     }
@@ -831,10 +890,30 @@ impl<'a> Evaluator<'a> {
             return vec![];
         }
 
-        let id_term = &args[0];
-        let type_term = &args[1];
+        // A numeric literal behaves like the equivalent quoted constant (spec §5):
+        // normalize `Term::Lit` to its string surface so the match below treats it
+        // identically to a quoted const.
+        let id_norm;
+        let id_term = match &args[0] {
+            Term::Lit(v) => {
+                id_norm = Term::Const(v.as_str());
+                &id_norm
+            }
+            other => other,
+        };
+        let type_norm;
+        let type_term = match &args[1] {
+            Term::Lit(v) => {
+                type_norm = Term::Const(v.as_str());
+                &type_norm
+            }
+            other => other,
+        };
 
         match (id_term, type_term) {
+            // A `Term::Lit` is normalized to `Term::Const` above, so these are unreachable
+            // in practice; mirror the empty/non-matching case to stay total without panicking.
+            (Term::Lit(_), _) | (_, Term::Lit(_)) => vec![],
             // node(X, "type") - find all nodes of type
             (Term::Var(var), Term::Const(node_type)) => {
                 let ids = self.engine.find_by_type(node_type);
@@ -951,9 +1030,22 @@ impl<'a> Evaluator<'a> {
             return vec![];
         }
 
-        let src_term = &args[0];
-        let dst_term = &args[1];
-        let type_term = args.get(2);
+        // A numeric literal behaves like the equivalent quoted constant (spec §5).
+        let src_term = match &args[0] {
+            Term::Lit(v) => Term::Const(v.as_str()),
+            other => other.clone(),
+        };
+        let dst_term = match &args[1] {
+            Term::Lit(v) => Term::Const(v.as_str()),
+            other => other.clone(),
+        };
+        let type_term = args.get(2).map(|t| match t {
+            Term::Lit(v) => Term::Const(v.as_str()),
+            other => other.clone(),
+        });
+        let src_term = &src_term;
+        let dst_term = &dst_term;
+        let type_term = type_term.as_ref();
 
         match src_term {
             Term::Const(src_str) => {
@@ -990,6 +1082,8 @@ impl<'a> Evaluator<'a> {
                                     return None;
                                 }
                             }
+                            // Lit is normalized to Const above; never reached.
+                            Term::Lit(_) => {}
                             Term::Wildcard => {}
                         }
 
@@ -1115,6 +1209,8 @@ impl<'a> Evaluator<'a> {
                     })
                     .collect()
             }
+            // Lit is normalized to Const above; never reached.
+            Term::Lit(_) => vec![],
         }
     }
 
@@ -1125,9 +1221,22 @@ impl<'a> Evaluator<'a> {
             return vec![];
         }
 
-        let dst_term = &args[0];
-        let src_term = &args[1];
-        let type_term = args.get(2);
+        // A numeric literal behaves like the equivalent quoted constant (spec §5).
+        let dst_term = match &args[0] {
+            Term::Lit(v) => Term::Const(v.as_str()),
+            other => other.clone(),
+        };
+        let src_term = match &args[1] {
+            Term::Lit(v) => Term::Const(v.as_str()),
+            other => other.clone(),
+        };
+        let type_term = args.get(2).map(|t| match t {
+            Term::Lit(v) => Term::Const(v.as_str()),
+            other => other.clone(),
+        });
+        let dst_term = &dst_term;
+        let src_term = &src_term;
+        let type_term = type_term.as_ref();
 
         match dst_term {
             Term::Const(dst_str) => {
@@ -1167,6 +1276,8 @@ impl<'a> Evaluator<'a> {
                                     return None;
                                 }
                             }
+                            // Lit is normalized to Const above; never reached.
+                            Term::Lit(_) => {}
                             Term::Wildcard => {}
                         }
 
@@ -1224,6 +1335,8 @@ impl<'a> Evaluator<'a> {
                                     return None;
                                 }
                             }
+                            // Lit is normalized to Const above; never reached.
+                            Term::Lit(_) => {}
                             Term::Wildcard => {}
                         }
 
@@ -1286,6 +1399,8 @@ impl<'a> Evaluator<'a> {
                                     return None;
                                 }
                             }
+                            // Lit is normalized to Const above; never reached.
+                            Term::Lit(_) => {}
                             Term::Wildcard => {}
                         }
 
@@ -1302,6 +1417,8 @@ impl<'a> Evaluator<'a> {
                     })
                     .collect()
             }
+            // Lit is normalized to Const above; never reached.
+            Term::Lit(_) => vec![],
         }
     }
 
@@ -1393,6 +1510,13 @@ impl<'a> Evaluator<'a> {
             }
             Term::Const(expected) => {
                 if &attr_value == expected {
+                    vec![Bindings::new()]
+                } else {
+                    vec![]
+                }
+            }
+            Term::Lit(v) => {
+                if attr_value == v.as_str() {
                     vec![Bindings::new()]
                 } else {
                     vec![]
@@ -1572,6 +1696,13 @@ impl<'a> Evaluator<'a> {
             }
             Term::Const(expected) => {
                 if &attr_value == expected {
+                    vec![Bindings::new()] // Match succeeded
+                } else {
+                    vec![] // No match
+                }
+            }
+            Term::Lit(v) => {
+                if attr_value == v.as_str() {
                     vec![Bindings::new()] // Match succeeded
                 } else {
                     vec![] // No match
@@ -1869,6 +2000,209 @@ impl<'a> Evaluator<'a> {
         }
     }
 
+    /// Evaluate resolved_import(ModFile, TargetFn) predicate.
+    ///
+    /// Joins IMPORTS_FROM edges with the source binding's `file` attribute.
+    /// - TargetFn bound (Const id) → yields each importing ModFile (string)
+    /// - ModFile bound (Const string) → yields each imported TargetFn (node id)
+    /// - Both Const → check membership
+    /// - Both Var → refused (planner prevents via utils.rs)
+    fn eval_resolved_import(&self, atom: &Atom) -> Vec<Bindings> {
+        let args = atom.args();
+        if args.len() < 2 {
+            return vec![];
+        }
+        let mod_term = &args[0];
+        let fn_term = &args[1];
+
+        let edges = self.engine.get_edges_by_type("IMPORTS_FROM");
+        let mut out = Vec::new();
+
+        match fn_term {
+            Term::Const(fn_str) => {
+                // TargetFn bound: find importers (files that import this fn id)
+                let fid: u128 = match fn_str.parse() {
+                    Ok(v) => v,
+                    Err(_) => return vec![],
+                };
+                for e in &edges {
+                    if e.dst != fid {
+                        continue;
+                    }
+                    if let Some(src) = self.engine.get_node(e.src) {
+                        if let Some(f) = src.file {
+                            out.extend(Self::bind_str(mod_term, &f));
+                        }
+                    }
+                }
+            }
+            _ => {
+                // ModFile must be bound
+                let mod_file = match mod_term {
+                    Term::Const(s) => s.as_str(),
+                    _ => return vec![], // both unbound — refuse
+                };
+                for e in &edges {
+                    if let Some(src) = self.engine.get_node(e.src) {
+                        if src.file.as_deref() == Some(mod_file) {
+                            out.extend(Self::bind_id(fn_term, e.dst));
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Evaluate same_dir_module(AnchorFile, SiblingFile) predicate.
+    ///
+    /// AnchorFile must be bound (Const string). Yields every MODULE node whose
+    /// `file` shares the same directory prefix as AnchorFile, excluding the anchor itself.
+    fn eval_same_dir_module(&self, atom: &Atom) -> Vec<Bindings> {
+        let args = atom.args();
+        if args.len() < 2 {
+            return vec![];
+        }
+        let anchor_file = match &args[0] {
+            Term::Const(s) => s.clone(),
+            _ => return vec![], // anchor must be bound
+        };
+        let sibling_term = &args[1];
+        let anchor_dir = anchor_file
+            .rsplit_once('/')
+            .map(|(dir, _)| dir)
+            .unwrap_or("");
+
+        let module_ids = self.engine.find_by_type("MODULE");
+        let mut out = Vec::new();
+        for id in module_ids {
+            if let Some(node) = self.engine.get_node(id) {
+                if let Some(f) = node.file {
+                    if f == anchor_file {
+                        continue; // exclude the anchor itself
+                    }
+                    let sibling_dir = f.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+                    if sibling_dir == anchor_dir {
+                        out.extend(Self::bind_str(sibling_term, &f));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Evaluate shared_import_count(FileA, FileB, N) predicate.
+    ///
+    /// Both FileA and FileB must be bound (Const strings). Counts the intersection
+    /// of IMPORT_BINDING node names between the two files and binds N to that count.
+    fn eval_shared_import_count(&self, atom: &Atom) -> Vec<Bindings> {
+        let args = atom.args();
+        if args.len() < 3 {
+            return vec![];
+        }
+        let file_a = match &args[0] {
+            Term::Const(s) => s.clone(),
+            _ => return vec![],
+        };
+        let file_b = match &args[1] {
+            Term::Const(s) => s.clone(),
+            _ => return vec![],
+        };
+        let n_term = &args[2];
+
+        let names_for = |file: &str| -> HashSet<String> {
+            let query = crate::storage::AttrQuery {
+                node_type: Some("IMPORT_BINDING".to_string()),
+                file: Some(file.to_string()),
+                ..Default::default()
+            };
+            let ids = self.engine.find_by_attr(&query);
+            ids.into_iter()
+                .filter_map(|id| self.engine.get_node(id)?.name)
+                .collect()
+        };
+
+        let names_a = names_for(&file_a);
+        let names_b = names_for(&file_b);
+        let count = names_a.intersection(&names_b).count();
+        let count_str = count.to_string();
+
+        match n_term {
+            Term::Var(v) => {
+                let mut b = Bindings::new();
+                b.set(v, Value::Str(count_str));
+                vec![b]
+            }
+            Term::Const(expected) => {
+                if expected == &count_str {
+                    vec![Bindings::new()]
+                } else {
+                    vec![]
+                }
+            }
+            Term::Lit(v) => {
+                if v.as_str() == count_str {
+                    vec![Bindings::new()]
+                } else {
+                    vec![]
+                }
+            }
+            Term::Wildcard => vec![Bindings::new()],
+        }
+    }
+
+    /// Bind a string value to a term (Var → bind, Const → check equality, Wildcard → succeed).
+    fn bind_str(term: &Term, val: &str) -> Vec<Bindings> {
+        match term {
+            Term::Var(v) => {
+                let mut b = Bindings::new();
+                b.set(v, Value::Str(val.to_string()));
+                vec![b]
+            }
+            Term::Const(c) => {
+                if c.as_str() == val {
+                    vec![Bindings::new()]
+                } else {
+                    vec![]
+                }
+            }
+            Term::Lit(v) => {
+                if v.as_str() == val {
+                    vec![Bindings::new()]
+                } else {
+                    vec![]
+                }
+            }
+            Term::Wildcard => vec![Bindings::new()],
+        }
+    }
+
+    /// Bind a node ID to a term (Var → bind, Const → check equality, Wildcard → succeed).
+    fn bind_id(term: &Term, id: u128) -> Vec<Bindings> {
+        match term {
+            Term::Var(v) => {
+                let mut b = Bindings::new();
+                b.set(v, Value::Id(id));
+                vec![b]
+            }
+            Term::Const(c) => {
+                if c.parse::<u128>().ok() == Some(id) {
+                    vec![Bindings::new()]
+                } else {
+                    vec![]
+                }
+            }
+            Term::Lit(v) => {
+                if v.as_str().parse::<u128>().ok() == Some(id) {
+                    vec![Bindings::new()]
+                } else {
+                    vec![]
+                }
+            }
+            Term::Wildcard => vec![Bindings::new()],
+        }
+    }
+
     /// Evaluate parent_function(NodeId, FunctionId) predicate.
     ///
     /// Finds the nearest containing FUNCTION or METHOD node by traversing
@@ -1975,6 +2309,13 @@ impl<'a> Evaluator<'a> {
             }
             Term::Const(expected) => {
                 if expected.parse::<u128>().ok() == Some(parent_id) {
+                    vec![Bindings::new()]
+                } else {
+                    vec![]
+                }
+            }
+            Term::Lit(v) => {
+                if v.as_str().parse::<u128>().ok() == Some(parent_id) {
                     vec![Bindings::new()]
                 } else {
                     vec![]

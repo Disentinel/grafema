@@ -40,7 +40,7 @@ import Grafema.SemanticId (semanticId, contentHash)
 walkDeclTypeRefs :: KotlinDecl -> Analyzer ()
 
 -- Class: superTypes + type params + member types
-walkDeclTypeRefs (ClassDecl name _kind _mods typeParams _mCtor supers members _annots sp) = do
+walkDeclTypeRefs (ClassDecl name _kind _mods typeParams _mCtor supers _exts _impls members _annots sp) = do
   file   <- askFile
   parent <- askNamedParent
   let nodeId = semanticId file "CLASS" name parent Nothing
@@ -58,7 +58,7 @@ walkDeclTypeRefs (ClassDecl name _kind _mods typeParams _mCtor supers members _a
   mapM_ (walkMemberTypeRefs file nodeId) members
 
 -- Object: superTypes + member types
-walkDeclTypeRefs (ObjectDecl name _mods supers members _annots sp) = do
+walkDeclTypeRefs (ObjectDecl name _mods supers _exts _impls members _annots sp) = do
   file   <- askFile
   parent <- askNamedParent
   let nodeId = semanticId file "CLASS" name parent Nothing
