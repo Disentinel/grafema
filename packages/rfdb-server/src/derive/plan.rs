@@ -634,8 +634,18 @@ fn positive_can_place_and_provides(
         // (STR_FN2_MODES / CONCAT_MODES / EDGE_ATTR_MODES), so a rule whose output is
         // genuinely underivable stays unplaceable here (E-PLAN-002 unsafe rule) instead of
         // reaching eval and tripping a confusing E-PLAN-001.
+        // The function-shaped builtins deriving an output (or, for `split`, a SET of element
+        // rows) from already-bound inputs: every position except the LAST must be bound
+        // before the leg is placeable; the last position is the output, provided if free
+        // (else an equality/membership check). `split` is a MULTI-ROW generator over a bound
+        // string but is placed under the SAME rule — its inputs (subject, separator) must be
+        // bound, and it binds the element variable; the executor's per-row loop materializes
+        // every produced element row. Mirrors the registry modes exactly so a rule whose
+        // output is genuinely underivable stays unplaceable here (E-PLAN-002 unsafe rule)
+        // instead of reaching eval and tripping a confusing E-PLAN-001.
         "concat" | "str_lower" | "basename" | "strip_quotes" | "strip_prefix" | "strip_suffix"
         | "method_suffix" | "last_segment" | "first_segment" | "replace_all" | "path_resolve"
+        | "split" | "relative_import_resolve"
         | "edge_attr"
         | "node_attr" => {
             if args.is_empty() {
@@ -705,6 +715,15 @@ fn is_filter_or_function(pred: &str) -> bool {
             | "first_segment"
             | "replace_all"
             | "path_resolve"
+            // `split` introduces MULTIPLE rows from a bound string, but is a function for the
+            // CROSS-JOIN guard's purposes: it derives its element rows from already-bound
+            // inputs (it cannot be a Cartesian product — its subject/separator are bound, so
+            // it always shares a binding) and never reads a base relation. Classifying it
+            // here keeps it off the tuple-introducing path the guard polices, and its small
+            // per-string fan-out is folded as a function (estimate 1) — never over-estimated
+            // as a relation magnitude that would spuriously trip E-PLAN-003.
+            | "split"
+            | "relative_import_resolve"
             | "edge_attr"
             | "node_attr"
             | "attr"
