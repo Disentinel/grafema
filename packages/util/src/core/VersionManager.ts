@@ -13,6 +13,7 @@
  */
 
 import { createHash } from 'crypto';
+import { canonicalEndpointType } from './nodes/NodeKind.js';
 
 /**
  * Version constants
@@ -186,12 +187,18 @@ export class VersionManager {
       return `${type}:${file}:${line || 0}:${column || 0}`;
     }
 
-    // Для EXTERNAL нод (DATABASE_QUERY, HTTP_REQUEST) - используем содержимое
-    if (['DATABASE_QUERY', 'HTTP_REQUEST', 'FILESYSTEM', 'NETWORK'].includes(type)) {
+    // Для EXTERNAL нод (DATABASE_QUERY, HTTP_REQUEST, ...) - используем содержимое.
+    // canonicalEndpointType сводит namespaced написания (db:query, http:request,
+    // fs:operation, net:request, net:stdio) к их legacy-эквивалентам, чтобы
+    // namespaced ноды хешировались по содержимому так же, как legacy, и не
+    // падали в default-ветку (где две db:query с одинаковым name коллизировали).
+    const canonicalType = canonicalEndpointType(type);
+    if (['DATABASE_QUERY', 'HTTP_REQUEST', 'FILESYSTEM', 'NETWORK'].includes(canonicalType)) {
       // Используем хеш содержимого для уникальности
       const content = node.query || node.url || node.path || node.endpoint || '';
       const hash = createHash('sha256').update(content).digest('hex').substring(0, 16);
-      return `${type}:${hash}`;
+      // Канонический префикс => db:query ≡ DATABASE_QUERY дают одинаковый stable ID
+      return `${canonicalType}:${hash}`;
     }
 
     // По умолчанию - используем все доступные поля
@@ -260,7 +267,10 @@ export class VersionManager {
       ENDPOINT: ['path', 'method', 'handler']
     };
 
-    return [...commonKeys, ...(typeSpecificKeys[nodeType] || [])];
+    // canonicalEndpointType сводит namespaced endpoint-типы к legacy-ключам
+    // таблицы, чтобы изменения query/operation/url/method/endpoint у db:query /
+    // http:request детектировались так же, как у DATABASE_QUERY / HTTP_REQUEST.
+    return [...commonKeys, ...(typeSpecificKeys[canonicalEndpointType(nodeType)] || [])];
   }
 
   /**

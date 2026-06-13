@@ -942,7 +942,7 @@ impl ManifestStore {
         // happened after writing current.json but before writing index, or
         // vice versa), rebuild the index from the manifests/ directory.
         if index.latest_version != current_pointer.version {
-            index = rebuild_index(db_path)?;
+            index = rebuild_index(db_path, current_pointer.version)?;
         }
 
         let max_segment_id = index.referenced_segments.iter().max().copied().unwrap_or(0);
@@ -1616,17 +1616,13 @@ impl ManifestStore {
         let version = edit.version;
         let is_checkpoint = version == 1 || version % self.checkpoint_interval == 0;
 
-        // Advance the in-memory snapshot in place (O(Δ) segment splice). The
-        // edit's tombstone delta is replayed onto self.current's cumulative set
-        // by apply(), so after this self.current.tombstoned_* IS the version's
-        // authoritative cumulative tombstone set (MVCC B3 — we no longer clear
-        // it). At checkpoints we re-materialise the full set from the caller's
-        // copy (identical, but it is what we persist verbatim to disk).
-        self.current.apply(&edit);
-
-        // Ephemeral: cache only, no disk artifacts. Keep the cumulative set in
-        // memory (apply already maintained it) and refresh the derived Arc.
+        // Ephemeral: cache only, no disk artifacts. There are no fallible
+        // durable writes, so advancing the in-memory snapshot in place is safe.
+        // The edit's tombstone delta is replayed onto self.current's cumulative
+        // set by apply(), so after this self.current.tombstoned_* IS the
+        // version's authoritative cumulative set (MVCC B3 — we no longer clear).
         if self.db_path.is_none() {
+            self.current.apply(&edit);
             self.index.add_snapshot(&self.current);
             self.rebuild_current_tombstones();
             return Ok(());
@@ -1634,14 +1630,28 @@ impl ManifestStore {
 
         let db_path = self.db_path.as_ref().unwrap().clone();
 
+        // R2 (crash-consistency): compute the new version on a SCRATCH copy and
+        // run every fallible durable write against it BEFORE mutating any
+        // in-memory authority (`self.current` / `self.index`). If any write
+        // returns Err the caller's store is byte-for-byte unchanged — no version
+        // skip, no "manifest edit chain broken" on reopen. This mirrors legacy
+        // commit()'s write-then-publish ordering (self.current is assigned only
+        // after the manifest, index, and pointer writes all succeed). Manifest
+        // segment vecs are Arc-backed, so the clone is cheap (Arc bumps + the
+        // tombstone vecs).
+        let mut new_current = self.current.clone();
+        new_current.apply(&edit);
+
+        let mut new_index = self.index.clone();
+
         if is_checkpoint {
             // Materialize the full cumulative tombstone set for the snapshot,
-            // then write self.current verbatim (the replay base for later edits).
-            self.current.tombstoned_node_ids = checkpoint_tombstone_nodes.to_vec();
-            self.current.tombstoned_edge_keys = checkpoint_tombstone_edges.to_vec();
+            // then write new_current verbatim (the replay base for later edits).
+            new_current.tombstoned_node_ids = checkpoint_tombstone_nodes.to_vec();
+            new_current.tombstoned_edge_keys = checkpoint_tombstone_edges.to_vec();
             let manifest_path = manifest_file_path(&db_path, version);
-            atomic_write_json(&manifest_path, &self.current, self.durability)?;
-            self.index.add_snapshot(&self.current);
+            atomic_write_json(&manifest_path, &new_current, self.durability)?;
+            new_index.add_snapshot(&new_current);
         } else {
             // Delta only — O(Δ) write.
             let edit_path = manifest_edit_file_path(&db_path, version);
@@ -1653,10 +1663,25 @@ impl ManifestStore {
                 .iter()
                 .chain(edit.added_edge_segments.iter())
             {
-                self.index.referenced_segments.insert(seg.segment_id);
+                new_index.referenced_segments.insert(seg.segment_id);
             }
-            self.index.latest_version = version;
+            new_index.latest_version = version;
         }
+
+        // Persist index (updated in both branches) against the scratch copy.
+        let index_path = db_path.join("manifest_index.json");
+        atomic_write_json(&index_path, &new_index, self.durability)?;
+
+        // Commit marker (atomic rename) — the last fallible durable write.
+        let current_pointer = CurrentPointer::new(version);
+        current_pointer.write_to(&db_path, self.durability)?;
+
+        // PUBLISH: all durable writes succeeded — now (and only now) advance the
+        // in-memory authority. After this point nothing below may fail in a way
+        // that leaves memory ahead of disk (GC failure is reported but the
+        // version is already durably committed).
+        self.current = new_current;
+        self.index = new_index;
 
         // MVCC B3: keep the cumulative tombstone set in memory (it is the
         // version authority that snapshots read) and refresh the derived Arc.
@@ -1664,14 +1689,6 @@ impl ManifestStore {
         // full set is reconstructed on open by replaying edits onto the latest
         // checkpoint, so memory and disk stay consistent.
         self.rebuild_current_tombstones();
-
-        // Persist index (updated in both branches).
-        let index_path = db_path.join("manifest_index.json");
-        atomic_write_json(&index_path, &self.index, self.durability)?;
-
-        // Commit marker (atomic rename).
-        let current_pointer = CurrentPointer::new(version);
-        current_pointer.write_to(&db_path, self.durability)?;
 
         // Periodic checkpoint-aware GC (also reaps orphaned edit files).
         const MANIFEST_GC_INTERVAL: u64 = 10;
@@ -2068,6 +2085,12 @@ fn atomic_write_json<T: Serialize>(
     data: &T,
     durability: DurabilityMode,
 ) -> Result<()> {
+    // Test-only fault injection: simulate a durable-write failure (ENOSPC/EIO)
+    // mid commit_edit so crash-consistency tests can assert no memory/disk
+    // desync. Compiled out entirely in non-test builds (zero prod overhead).
+    #[cfg(test)]
+    fault::maybe_fail(path)?;
+
     let temp_path = path.with_extension("tmp");
 
     let file = File::create(&temp_path)?;
@@ -2231,11 +2254,23 @@ fn parse_segment_id_from_filename(filename: &str) -> Option<u64> {
 
 /// Rebuild ManifestIndex from manifests/ directory (crash recovery).
 ///
-/// Scans all .json files in manifests/, loads each manifest, and rebuilds
-/// the index from scratch. Writes the rebuilt index to disk.
+/// Scans `manifests/`, adds every checkpoint snapshot (full `{v:06}.json`
+/// files), then replays the `.edit.json` delta chain to reconstruct the
+/// CURRENT manifest at `current_version` and adds that too. Writes the rebuilt
+/// index to disk.
+///
+/// Why the delta replay matters (data-loss fix): the index's
+/// `referenced_segments` seeds `next_segment_id` on open
+/// (`max(referenced_segments) + 1`). Delta (`.edit.json`) files have stem
+/// `{v:06}.edit`, which does NOT parse as a bare `u64`, so a checkpoint-only
+/// scan SILENTLY omits every segment introduced by an edit since the last
+/// checkpoint. That seeds `next_segment_id` too low → subsequent commits reuse
+/// on-disk `seg_{id}_*` ids → silent overwrite / data loss. The read path
+/// (`load_current_with_replay`) already replays deltas; rebuild_index must do
+/// the same so the two paths agree.
 ///
 /// Called when open_with_config() detects index.latest_version != current_pointer.version.
-fn rebuild_index(db_path: &Path) -> Result<ManifestIndex> {
+fn rebuild_index(db_path: &Path, current_version: u64) -> Result<ManifestIndex> {
     let manifests_dir = db_path.join("manifests");
     let mut index = ManifestIndex::new();
 
@@ -2259,9 +2294,28 @@ fn rebuild_index(db_path: &Path) -> Result<ManifestIndex> {
     // Sort ascending so index.snapshots are in version order
     versions.sort_unstable();
 
-    for version in versions {
+    for &version in &versions {
         let manifest = load_manifest_file(db_path, version)?;
         index.add_snapshot(&manifest);
+    }
+
+    // Replay the `.edit.json` delta chain on top of the latest checkpoint to
+    // reconstruct the manifest at `current_version` — the SAME logic the read
+    // path uses (`load_current_with_replay`). Adding this snapshot unions in
+    // every delta-added segment (so `referenced_segments`/`next_segment_id` are
+    // correct) and sets `latest_version = current_version`. Skip when the
+    // current version is itself a checkpoint already added above (it would be a
+    // duplicate SnapshotInfo), since a checkpoint file already carries the full
+    // segment set with no deltas to replay.
+    if !versions.contains(&current_version) {
+        let current = load_current_with_replay(db_path, current_version)?;
+        index.add_snapshot(&current);
+    } else {
+        // Ensure latest_version reflects the current pointer even if the
+        // ascending checkpoint scan ended on a higher historical version
+        // (cannot happen today — checkpoints are monotone — but keep the index
+        // authoritative regardless of scan order).
+        index.latest_version = current_version;
     }
 
     // Persist rebuilt index
@@ -2277,6 +2331,57 @@ fn current_timestamp() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs()
+}
+
+// ── Test-only durable-write fault injection ────────────────────────
+
+/// Thread-local fault hook consulted by `atomic_write_json` under `#[cfg(test)]`
+/// only. Lets crash-consistency tests fail a specific durable write (the Nth
+/// call, or the first write to a path matching a substring) to prove that a
+/// commit aborted mid-flight leaves the in-memory store consistent with the
+/// durable CURRENT pointer. Compiled out of production builds.
+#[cfg(test)]
+mod fault {
+    use super::{GraphError, Result};
+    use std::cell::Cell;
+    use std::path::Path;
+
+    thread_local! {
+        /// When > 0, decremented on every `atomic_write_json`; the call that
+        /// brings it to 0 fails. 0 = disarmed.
+        static FAIL_AFTER: Cell<u64> = const { Cell::new(0) };
+    }
+
+    /// Arm: the `n`-th subsequent `atomic_write_json` call (1-based) on this
+    /// thread fails with a simulated I/O error; earlier calls succeed.
+    pub(super) fn fail_on_nth_write(n: u64) {
+        FAIL_AFTER.with(|c| c.set(n));
+    }
+
+    /// Disarm any pending fault injection.
+    pub(super) fn clear() {
+        FAIL_AFTER.with(|c| c.set(0));
+    }
+
+    /// Consulted at the top of `atomic_write_json`. Returns Err exactly once
+    /// when the armed countdown reaches the target call.
+    pub(super) fn maybe_fail(path: &Path) -> Result<()> {
+        FAIL_AFTER.with(|c| {
+            let remaining = c.get();
+            if remaining == 0 {
+                return Ok(());
+            }
+            let remaining = remaining - 1;
+            c.set(remaining);
+            if remaining == 0 {
+                return Err(GraphError::InvalidFormat(format!(
+                    "injected durable-write fault writing {}",
+                    path.display()
+                )));
+            }
+            Ok(())
+        })
+    }
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
@@ -2606,6 +2711,161 @@ mod tests {
             21,
             "all 21 added segments (v2..v22) must survive GC + replay"
         );
+    }
+
+    // ── RFD-74 crash-injection regressions ─────────────────────────
+
+    /// Commit one delta (edit) version adding a single node segment whose id is
+    /// `seg_id`, advancing the store by one version via the delta write path.
+    fn commit_one_edit_segment(store: &mut ManifestStore, seg_id: u64) {
+        let v = store.current().version + 1;
+        let mut e = empty_edit(v, v - 1);
+        e.added_node_segments = vec![make_node_descriptor(seg_id, 100)];
+        let mut m = store.current().clone();
+        m.apply(&e);
+        e.stats = ManifestStats::from_segments(&m.node_segments, &m.edge_segments);
+        store.commit_edit(e, &[], &[]).unwrap();
+    }
+
+    /// RFD-74 Regression 1 (BLOCKER, data loss): rebuild_index() must replay
+    /// `.edit.json` deltas, or it omits delta-added segments from
+    /// referenced_segments → next_segment_id is seeded too low → a later commit
+    /// REUSES an on-disk segment id → silent overwrite.
+    ///
+    /// Repro of the exact crash window: commit_edit writes the index (with
+    /// latest_version = V) BEFORE renaming the CURRENT pointer. A crash in that
+    /// window leaves latest_version (V) != current_pointer.version on reopen,
+    /// firing rebuild_index. Here the current pointer lands on a DELTA version
+    /// whose only segment lives in a `.edit.json`, and we force the index stale
+    /// so rebuild_index runs. The graceful drop()+reopen tests cannot catch this
+    /// because they reopen with a coherent index (latest_version == pointer) and
+    /// so never enter rebuild_index.
+    #[test]
+    fn test_rfd74_r1_rebuild_index_replays_deltas_no_segment_reuse() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.rfdb");
+
+        // v1 checkpoint (seg 1). v2 is a DELTA adding seg 4242 (> checkpoint id,
+        // so a checkpoint-only rebuild would miss it).
+        {
+            let mut store = ManifestStore::create(&db_path).unwrap();
+            store.set_checkpoint_interval(8); // v2 is an edit, not a checkpoint
+            commit_one_edit_segment(&mut store, 4242);
+            assert_eq!(store.current().version, 2);
+            // Sanity: the delta artifact exists on disk.
+            assert!(
+                manifest_edit_file_path(&db_path, 2).exists(),
+                "v2 must be a .edit.json delta for this regression to bite"
+            );
+        }
+
+        // Simulate the crash window: CURRENT pointer is at v2 (delta), but the
+        // index on disk is stale (latest_version = 1) so reopen MUST rebuild.
+        let stale_index = ManifestIndex {
+            latest_version: 1,
+            snapshots: vec![],
+            tag_index: HashMap::new(),
+            referenced_segments: HashSet::new(),
+        };
+        atomic_write_json(
+            &db_path.join("manifest_index.json"),
+            &stale_index,
+            DurabilityMode::Relaxed,
+        )
+        .unwrap();
+
+        // Reopen → rebuild_index fires. With the fix it replays the v2 delta.
+        let mut store = ManifestStore::open(&db_path).unwrap();
+        assert_eq!(store.current().version, 2);
+        assert_eq!(
+            sorted_node_ids(store.current()),
+            vec![4242],
+            "delta-added seg 4242 must survive rebuild (v1 checkpoint is empty)"
+        );
+
+        // The bug's payload: next_segment_id seeded from referenced_segments.
+        // Must be > 4242 so the next commit cannot reuse the delta segment id.
+        assert!(
+            store.index.referenced_segments.contains(&4242),
+            "rebuild_index must record the delta-added segment as referenced"
+        );
+        assert_eq!(
+            store.next_segment_id(),
+            4243,
+            "next_segment_id must clear the delta segment id (no reuse / no overwrite)"
+        );
+
+        // A subsequent commit must NOT collide with seg 4242, and reopen must
+        // see a contiguous, lossless chain (both pre-crash and new segments).
+        let next_id = store.next_segment_id();
+        commit_one_edit_segment(&mut store, next_id);
+        assert_eq!(store.current().version, 3);
+        let store2 = ManifestStore::open(&db_path).unwrap();
+        assert_eq!(store2.current().version, 3);
+        let ids = sorted_node_ids(store2.current());
+        assert!(ids.contains(&4242), "pre-crash segment must not be lost");
+        assert!(ids.contains(&next_id), "newly committed segment present");
+        assert_ne!(next_id, 4242, "new segment id must not reuse the delta id");
+        assert_eq!(ids.len(), 2, "no segment overwritten: 4242 + new");
+    }
+
+    /// RFD-74 Regression 2 (HIGH, memory/durable desync): commit_edit must not
+    /// advance the in-memory version when a durable write fails. We fault-inject
+    /// a failure on the CURRENT-pointer write (the last durable write) and
+    /// assert the store's in-memory version stays at the durable version, the
+    /// next commit does NOT skip a version, and reopen does NOT error "manifest
+    /// edit chain broken". The graceful drop()+reopen tests cannot catch this:
+    /// they never fail a durable write, so apply()-before-persist never desyncs.
+    #[test]
+    fn test_rfd74_r2_commit_edit_no_version_desync_on_durable_write_failure() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.rfdb");
+        let mut store = ManifestStore::create(&db_path).unwrap();
+        store.set_checkpoint_interval(8); // keep v2.. as deltas
+
+        // A clean delta commit (v2) so we are past the checkpoint.
+        commit_one_edit_segment(&mut store, 20);
+        assert_eq!(store.current().version, 2);
+
+        // Attempt v3 but fail the durable writes. commit_edit issues, in order,
+        // the delta-manifest write, the index write, then the CURRENT-pointer
+        // write. Fail the 3rd (pointer) write — the most adversarial case, since
+        // the manifest + index already hit disk.
+        let v = store.current().version + 1; // 3
+        let mut e = empty_edit(v, v - 1);
+        e.added_node_segments = vec![make_node_descriptor(30, 100)];
+        let mut m = store.current().clone();
+        m.apply(&e);
+        e.stats = ManifestStats::from_segments(&m.node_segments, &m.edge_segments);
+
+        fault::fail_on_nth_write(3);
+        let res = store.commit_edit(e, &[], &[]);
+        fault::clear();
+        assert!(res.is_err(), "injected pointer-write failure must surface");
+
+        // In-memory version MUST still be 2 (the durable CURRENT), not 3.
+        assert_eq!(
+            store.current().version,
+            2,
+            "in-memory version must not advance when a durable write fails"
+        );
+        assert!(
+            !store.current().node_segments.iter().any(|s| s.segment_id == 30),
+            "failed commit's segment must not leak into in-memory state"
+        );
+
+        // The next commit derives v3 from the (still-2) in-memory state — no
+        // version skip. This is exactly what blows up if self.current was left
+        // at v3: the retry would try v4, leaving a hole.
+        commit_one_edit_segment(&mut store, 31);
+        assert_eq!(store.current().version, 3);
+
+        // Reopen replays the chain; it must NOT error "manifest edit chain
+        // broken" (which is the symptom of a version skip on disk).
+        let store2 = ManifestStore::open(&db_path).unwrap();
+        assert_eq!(store2.current().version, 3);
+        let ids = sorted_node_ids(store2.current());
+        assert_eq!(ids, vec![20, 31], "v2 seg + retried-v3 seg, no seg 30");
     }
 
     // ── Phase 1: Data Structures + Serde ──────────────────────────

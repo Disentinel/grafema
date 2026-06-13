@@ -1069,6 +1069,136 @@ fn eval_path_resolve(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> B
     Ok(())
 }
 
+/// `split(S, Sep, Elem)` — split the bound string `S` on the bound separator `Sep` into its
+/// individual elements, emitting ONE row per element (a MULTI-ROW generator, unlike the
+/// single-output `bind_or_check` function family). This is the comma-joined-metadata splitter
+/// the beam/python multi-value packs need: a CLASS `implements="A,B,C"` / FUNCTION
+/// `throws="E1,E2"` / class `bases="User,Auditable"` string becomes one `Elem` row per name.
+///
+/// Element semantics match the dominant cross-language resolver idiom verbatim —
+/// `splitTypes = filter (not . T.null) . map T.strip . T.splitOn ","`
+/// (java/kotlin/php/swift/jvm/apple/cpp TypeResolution; python ClassInheritance.hs:136 is the
+/// strip-less variant, subsumed): split on `Sep`, **trim Unicode whitespace** from each piece
+/// (`str::trim` ≡ `T.strip`), then **drop empty pieces**. Consequences, each pinned by a test:
+///
+/// * `split("User,Auditable", ",", E)` → 2 rows (`User`, `Auditable`).
+/// * `split("a, b ,c", ",", E)` → 3 rows (`a`, `b`, `c`) — interior whitespace trimmed.
+/// * `split("a,,b", ",", E)` → 2 rows (`a`, `b`) — the empty interior piece is dropped (the
+///   resolver's `filter (not . T.null)`; `T.splitOn` itself yields `["a","","b"]`).
+/// * Leading/trailing separator (`",a"`, `"a,"`) → the empty edge piece is dropped.
+/// * A single element with no separator (`"User"`) → 1 row (the whole trimmed string).
+/// * The empty string `""` → 0 rows (`T.splitOn "," "" = [""]`, trimmed to `""`, dropped — the
+///   resolver's `splitTypes "" = []`). A blanks-only string (`"  "`) → 0 rows likewise.
+/// * An empty separator `Sep` is a degenerate pattern that names no split (Haskell's
+///   `T.splitOn ""` is partial); it yields 0 rows — the no-row stance `replace_all` takes for
+///   an empty `From`, never an error.
+///
+/// Modes: `split(S, Sep, FreeElem)` (`[B,B,F]`) GENERATES one element row each; `split(S, Sep,
+/// "elem")` (`[B,B,B]`) is a membership CHECK — passes once iff `elem` is among the produced
+/// (trimmed, non-empty) elements (set-membership: one pass row, not one per duplicate match).
+fn eval_split(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    let (Some(s), Some(sep)) = (bound_str(&spec.args[0]), bound_str(&spec.args[1])) else {
+        return Ok(());
+    };
+    // Degenerate empty separator: names no split (T.splitOn "" is partial) — no row.
+    if sep.is_empty() {
+        return Ok(());
+    }
+    // The dominant resolver idiom: splitOn → trim each → drop empties.
+    let elems = s
+        .split(sep.as_str())
+        .map(str::trim)
+        .filter(|piece| !piece.is_empty());
+
+    match &spec.args[2] {
+        // Generator mode: one row per element binding the free output slot.
+        ArgValue::Free { slot } => {
+            let width = spec.output_arity();
+            for piece in elems {
+                out.push(emit_row(width, &[(*slot, Value::Str(piece.to_string()))]));
+            }
+        }
+        // Wildcard output column: pure existence of ANY element (one pass row).
+        ArgValue::Wildcard => {
+            if elems.into_iter().next().is_some() {
+                out.push_pass();
+            }
+        }
+        // Membership check: pass ONCE iff the bound elem is among the produced elements.
+        ArgValue::Bound(expected) => {
+            let target = expected.as_str();
+            if elems.into_iter().any(|piece| piece == target) {
+                out.push_pass();
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `relative_import_resolve(ImporterModPath, RawSpec, Out)` — resolve a Python DOTTED relative
+/// import specifier against the importing module's DOTTED path, producing the absolute dotted
+/// module path. The exact port of `resolveRelativeImport` (python-resolve
+/// ImportResolution.hs:126-148), given the importer module path directly (the builtin's caller
+/// supplies the modpath; the resolver's file→modpath lookup is the pack's `node_attr` join):
+///
+/// 1. Count the leading-dot run of `RawSpec` (`T.span (== '.')`); `level` = its length, `rest`
+///    = the remainder after the dots.
+/// 2. `level == 0` ⇒ NON-relative (absolute) — NO row. (The resolver returns `rawSource`
+///    as-is; absolute imports are a SEPARATE pack arm joining NameIndex, never this builtin,
+///    so this builtin declines them rather than echoing — the lang-spec-python.md §4.1
+///    contract: "non-relative spec → no row".)
+/// 3. Split `ImporterModPath` on `"."` into components; drop `level` components from the END
+///    (`take (max 0 (len - level))`). Past-root is the legacy CLAMP: dropping more components
+///    than exist yields the empty base, never an error.
+/// 4. Re-join: `rest` empty ⇒ `base`; else `base` empty ⇒ `rest`; else `base ++ "." ++ rest`.
+/// 5. An empty produced path (e.g. a bare `"."` clamped past root with no `rest`) names no
+///    module ⇒ NO row (the `path_resolve`/`basename` empty-skip discipline; the resolver's
+///    empty-string result is an equivalent no-match when joined as a target).
+///
+/// Examples (all pinned by tests):
+/// * importer `"pkg.sub.mod"` + `".base"` (1 dot) → `"pkg.sub.base"`.
+/// * importer `"pkg.sub.mod"` + `"..other"` (2 dots) → `"pkg.other"`.
+/// * importer `"pkg.sub.mod"` + `"."` (1 dot, no rest) → `"pkg.sub"` (the parent package).
+/// * past-root: importer `"pkg"` + `"..x"` (2 dots) → base empty → `"x"` (clamp).
+/// * non-relative `"pkg.mod"` (no leading dot) → NO row.
+///
+/// A FUNCTION builtin (single derived output), NOT a generator. Modes: `[B,B,F]` binds `Out`;
+/// `[B,B,B]` equality-checks it.
+fn eval_relative_import_resolve(
+    _v: &dyn StorageView,
+    out: &mut Batch,
+    spec: &ArgSpec,
+) -> BuiltinResult<()> {
+    let (Some(importer), Some(raw)) = (bound_str(&spec.args[0]), bound_str(&spec.args[1])) else {
+        return Ok(());
+    };
+    // 1. Count the leading-dot run.
+    let level = raw.chars().take_while(|c| *c == '.').count();
+    let rest = &raw[level..];
+    // 2. Non-relative (no leading dot): NOT this builtin's arm → no row.
+    if level == 0 {
+        return Ok(());
+    }
+    // 3. Drop `level` components from the END of the importer's dotted path (clamp at root).
+    let parts: Vec<&str> = importer.split('.').collect();
+    let keep = parts.len().saturating_sub(level);
+    let base = parts[..keep].join(".");
+    // 4. Re-join base and rest, matching the resolver's three arms exactly.
+    let produced = if rest.is_empty() {
+        base
+    } else if base.is_empty() {
+        rest.to_string()
+    } else {
+        format!("{base}.{rest}")
+    };
+    // 5. An empty produced module path names nothing — no row.
+    if produced.is_empty() {
+        return Ok(());
+    }
+    bind_or_check(out, spec, 2, &produced);
+    Ok(())
+}
+
 // ── Function: edge_attr (edge-metadata point probe) ────────────────
 
 /// `edge_attr(Src, Dst, Type, Key, Val)` — read a TOP-LEVEL string/number field `Key`
@@ -1191,6 +1321,19 @@ const REPLACE_ALL_MODES: &[Mode] = &[
     Mode { args: &[B, B, B, F] },
     Mode { args: &[B, B, B, B] },
 ];
+
+/// `split/3` modes: the subject and separator are bound; the element position is free
+/// (GENERATE one row per element) or bound (membership CHECK). Same bind WIDTHS as
+/// [`CONCAT_MODES`], but the `[B,B,F]` mode is a MULTI-ROW generator (one row per split
+/// element), not a single derived output — the planner places it like a function (output
+/// derivable from bound inputs) while the executor's per-row loop emits every produced row.
+const SPLIT_MODES: &[Mode] = &[Mode { args: &[B, B, F] }, Mode { args: &[B, B, B] }];
+
+/// `relative_import_resolve/3` modes: the importer module path and the raw relative specifier
+/// are bound; the resolved absolute path is free (bind) or bound (equality check) — the
+/// [`CONCAT_MODES`] discipline (single derived output).
+const RELATIVE_IMPORT_RESOLVE_MODES: &[Mode] =
+    &[Mode { args: &[B, B, F] }, Mode { args: &[B, B, B] }];
 
 /// `edge_attr/5` modes: the edge triple (src, dst, type) and the metadata key are always
 /// bound (a point probe on a bound edge); the value is free (bind) or bound (check).
@@ -1389,6 +1532,24 @@ pub fn registry() -> Vec<BuiltinDef> {
             eval: eval_path_resolve,
         },
         BuiltinDef {
+            name: "split",
+            arity: 3,
+            modes: SPLIT_MODES,
+            // A generator over a bound string (multi-row): the planner places it like a
+            // function (output derivable once the subject + separator are bound; not a
+            // tuple-introducing relational leg the cross-join guard polices), while the
+            // executor's per-row eval loop emits one bound row per split element.
+            kind: BuiltinKind::Generator,
+            eval: eval_split,
+        },
+        BuiltinDef {
+            name: "relative_import_resolve",
+            arity: 3,
+            modes: RELATIVE_IMPORT_RESOLVE_MODES,
+            kind: BuiltinKind::Function,
+            eval: eval_relative_import_resolve,
+        },
+        BuiltinDef {
             name: "edge_attr",
             arity: 5,
             modes: EDGE_ATTR_MODES,
@@ -1522,6 +1683,8 @@ mod tests {
             "first_segment",
             "replace_all",
             "path_resolve",
+            "split",
+            "relative_import_resolve",
             "edge_attr",
             "node_attr",
         ] {
@@ -2770,6 +2933,297 @@ mod tests {
         let err = def.check_mode(&spec).unwrap_err();
         assert_eq!(err.code.as_str(), "E-PLAN-001");
         assert!(err.required_bindings.contains(&1), "must name the free input");
+    }
+
+    // ── split (multi-row generator) ────────────────────────────────
+
+    /// The set of element strings `split` produces for a (subject, separator) pair, via the
+    /// generator mode — the multi-row contract the comma-joined-metadata packs depend on.
+    fn split_elems(subject: &str, sep: &str) -> Vec<String> {
+        let spec = ArgSpec::new(vec![
+            ArgValue::Bound(s(subject)),
+            ArgValue::Bound(s(sep)),
+            ArgValue::Free { slot: 0 },
+        ]);
+        run("split", spec)
+            .rows
+            .iter()
+            .map(|r| match &r[0] {
+                Value::Str(v) => v.clone(),
+                other => panic!("expected a string element, got {other:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn split_generates_one_row_per_trimmed_nonempty_element() {
+        // The headline: a comma-joined `implements`/`throws`/`bases` string → element rows.
+        assert_eq!(
+            split_elems("User,Auditable", ","),
+            vec!["User".to_string(), "Auditable".to_string()],
+            "multi-element split",
+        );
+        // Interior + edge whitespace is trimmed (the resolver's `map T.strip`).
+        assert_eq!(
+            split_elems("a, b ,c", ","),
+            vec!["a".to_string(), "b".to_string(), "c".to_string()],
+            "whitespace trimmed per element",
+        );
+        // The empty interior piece of "a,,b" is dropped (the resolver's filter-not-null;
+        // T.splitOn yields ["a","","b"], filtered to ["a","b"]).
+        assert_eq!(
+            split_elems("a,,b", ","),
+            vec!["a".to_string(), "b".to_string()],
+            "empty interior piece dropped",
+        );
+        // Leading / trailing separator → the empty edge piece is dropped.
+        assert_eq!(split_elems(",a", ","), vec!["a".to_string()], "leading sep");
+        assert_eq!(split_elems("a,", ","), vec!["a".to_string()], "trailing sep");
+        // A single element with no separator occurrence → 1 row (the whole trimmed string).
+        assert_eq!(
+            split_elems(" User ", ","),
+            vec!["User".to_string()],
+            "single element, trimmed",
+        );
+        // A multi-char separator (the Rust '::' / qualified-name shape).
+        assert_eq!(
+            split_elems("crate::foo::Bar", "::"),
+            vec!["crate".to_string(), "foo".to_string(), "Bar".to_string()],
+            "multi-char separator",
+        );
+        // Unicode element + interior unicode whitespace trims (str::trim ≡ T.strip).
+        assert_eq!(
+            split_elems("café,\u{00A0}naïve\u{00A0}", ","),
+            vec!["café".to_string(), "naïve".to_string()],
+            "unicode element + nbsp trim",
+        );
+    }
+
+    #[test]
+    fn split_empty_and_blank_subjects_produce_no_rows() {
+        // "" → T.splitOn "," "" = [""] → trimmed "" → filtered out → 0 rows (splitTypes "" = []).
+        assert_eq!(split_elems("", ",").len(), 0, "empty string yields no elements");
+        // A blanks-only string trims to "" everywhere → 0 rows.
+        assert_eq!(split_elems("  ", ",").len(), 0, "blanks-only yields no elements");
+        // A string of only separators → every piece empty → 0 rows.
+        assert_eq!(split_elems(",,", ",").len(), 0, "only-separators yields no elements");
+    }
+
+    #[test]
+    fn split_empty_separator_is_no_row() {
+        // An empty separator is the degenerate pattern (T.splitOn "" is partial); like
+        // replace_all's empty-`From`, it names no split → 0 rows, never an error.
+        assert_eq!(split_elems("abc", "").len(), 0, "empty separator yields no elements");
+    }
+
+    #[test]
+    fn split_membership_check_mode() {
+        // [B, B, B] — pass ONCE iff the bound element is among the produced (trimmed) set.
+        let present = ArgSpec::new(vec![
+            ArgValue::Bound(s("User, Auditable ,Serializable")),
+            ArgValue::Bound(s(",")),
+            ArgValue::Bound(s("Auditable")),
+        ]);
+        assert_eq!(run("split", present).rows.len(), 1, "Auditable is a member");
+        // A duplicate element still passes exactly ONCE (set-membership, not per-match).
+        let dup = ArgSpec::new(vec![
+            ArgValue::Bound(s("A,A,A")),
+            ArgValue::Bound(s(",")),
+            ArgValue::Bound(s("A")),
+        ]);
+        assert_eq!(run("split", dup).rows.len(), 1, "membership passes once, not per duplicate");
+        // A non-member → no row.
+        let absent = ArgSpec::new(vec![
+            ArgValue::Bound(s("User,Auditable")),
+            ArgValue::Bound(s(",")),
+            ArgValue::Bound(s("Missing")),
+        ]);
+        assert_eq!(run("split", absent).rows.len(), 0, "non-member is a non-match");
+        // The membership target must match a TRIMMED element (the untrimmed "User " misses).
+        let untrimmed = ArgSpec::new(vec![
+            ArgValue::Bound(s("User , Auditable")),
+            ArgValue::Bound(s(",")),
+            ArgValue::Bound(s("User ")),
+        ]);
+        assert_eq!(run("split", untrimmed).rows.len(), 0, "target compared against trimmed element");
+    }
+
+    #[test]
+    fn split_free_inputs_are_unsupported_mode() {
+        // split(B, Free, F) — both inputs (subject, separator) must be bound first;
+        // E-PLAN-001 names the free separator (arg 1).
+        let def = lookup("split").unwrap();
+        let spec = ArgSpec::new(vec![
+            ArgValue::Bound(s("a,b")),
+            ArgValue::Free { slot: 0 },
+            ArgValue::Free { slot: 1 },
+        ]);
+        let err = def.check_mode(&spec).unwrap_err();
+        assert_eq!(err.code.as_str(), "E-PLAN-001");
+        assert!(err.required_bindings.contains(&1), "must name the free separator");
+    }
+
+    /// PLANNER PLACEMENT: a rule using `split` in a GENERATOR position (the element variable
+    /// is free, fed downstream) must PLAN under dogfood-scale stats — `split` is placed as a
+    /// function (output derivable from the bound subject + separator), never a tuple-
+    /// introducing relational leg that the cross-join guard would police or the §3 estimate
+    /// guard would size at a relation magnitude. The shape mirrors the python multi-value
+    /// pack: a CLASS node, read its `implements` metadata, split it into element names.
+    #[test]
+    fn split_generator_rule_plans_under_dogfood_scale_stats() {
+        use crate::derive::parser_ext::parse_ext_program;
+        use crate::derive::plan::plan_program;
+        use crate::derive::stratify::stratify;
+
+        // class_impl(Class, IfaceName) :- node(Class, "CLASS"), node_attr(Class, "implements", Impls),
+        //                                 split(Impls, ",", IfaceName).
+        // The split's subject `Impls` is bound by the preceding node_attr; its element output
+        // `IfaceName` is free and projected into the head — a genuine generator position.
+        let prog = parse_ext_program(
+            "class_impl(Class, IfaceName) :- \
+                 node(Class, \"CLASS\"), \
+                 node_attr(Class, \"implements\", Impls), \
+                 split(Impls, \",\", IfaceName).",
+        )
+        .expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        // Dogfood-scale magnitudes: a 413k-node graph with a populated per-type oracle.
+        let stats = Stats {
+            total_nodes: 413_000,
+            total_edges: 1_200_000,
+            nodes_by_type: [("CLASS".to_string(), 12_000u64)].into_iter().collect(),
+        };
+        let plans = plan_program(&rules, &strat, &stats)
+            .expect("a split generator rule must plan under dogfood-scale stats");
+        assert_eq!(plans.len(), 1);
+        let plan = &plans[0];
+        // The split leg is a no-join builtin (it binds within the current row, never a join).
+        let split_leg = plan
+            .legs
+            .iter()
+            .find(|l| l.literal.atom().predicate() == "split")
+            .expect("split leg present in the plan");
+        assert_eq!(
+            split_leg.join,
+            crate::derive::plan::JoinKind::None,
+            "split is a builtin (no-join) leg, not a relational generator",
+        );
+        // The element variable IS bound by the split leg's pattern (its output is free, [B,B,F]).
+        assert_eq!(
+            split_leg.pattern,
+            vec![ArgMode::Bound, ArgMode::Bound, ArgMode::Free],
+            "split runs with bound inputs and a free element output",
+        );
+        // The rule estimate stays well under the §3 guard (split folded as a function, not a
+        // relation magnitude product).
+        assert!(
+            plan.estimate <= crate::derive::plan::MAX_MATERIALIZED_FACTS,
+            "split must not inflate the per-rule estimate, got {}",
+            plan.estimate,
+        );
+    }
+
+    // ── relative_import_resolve ─────────────────────────────────────
+
+    #[test]
+    fn relative_import_resolve_drops_components_per_dot_level() {
+        let case = |importer: &str, raw: &str, expect: &str| {
+            let spec = ArgSpec::new(vec![
+                ArgValue::Bound(s(importer)),
+                ArgValue::Bound(s(raw)),
+                ArgValue::Free { slot: 0 },
+            ]);
+            let out = run("relative_import_resolve", spec);
+            assert_eq!(
+                out.rows.len(),
+                1,
+                "relative_import_resolve({importer:?}, {raw:?}) must produce one row",
+            );
+            assert_eq!(out.rows[0][0], s(expect), "relative_import_resolve({importer:?}, {raw:?})");
+        };
+        // 1 dot: drop the module name, append the rest → sibling in the same package.
+        case("pkg.sub.mod", ".base", "pkg.sub.base");
+        // 2 dots: drop two components → the parent package.
+        case("pkg.sub.mod", "..other", "pkg.other");
+        // A bare "." (1 dot, no rest) → the parent package itself.
+        case("pkg.sub.mod", ".", "pkg.sub");
+        // A bare ".." (2 dots, no rest) → the grandparent package.
+        case("pkg.sub.mod", "..", "pkg");
+        // The spec's `gnName` glob shape: ".models" off a deep importer.
+        case("a.b.c.d", ".models", "a.b.c.models");
+    }
+
+    #[test]
+    fn relative_import_resolve_clamps_past_root() {
+        // Dropping MORE components than the importer has clamps to the empty base (the legacy
+        // `take (max 0 ...)`): the rest becomes the whole resolved path.
+        let spec = ArgSpec::new(vec![
+            ArgValue::Bound(s("pkg")),
+            ArgValue::Bound(s("..x")), // 2 dots, importer has 1 component → base empty → "x"
+            ArgValue::Free { slot: 0 },
+        ]);
+        let out = run("relative_import_resolve", spec);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s("x"), "past-root clamp: base empty, rest stands alone");
+
+        // Past-root with NO rest (a lone "..." off a shallow importer) → empty base, empty
+        // rest → an empty module path names nothing → NO row.
+        let empty = ArgSpec::new(vec![
+            ArgValue::Bound(s("pkg")),
+            ArgValue::Bound(s("...")),
+            ArgValue::Free { slot: 0 },
+        ]);
+        assert_eq!(run("relative_import_resolve", empty).rows.len(), 0, "empty result is no row");
+    }
+
+    #[test]
+    fn relative_import_resolve_non_relative_is_no_row() {
+        // No leading dot ⇒ an ABSOLUTE import: a SEPARATE pack arm, not this builtin → no row.
+        let abs = ArgSpec::new(vec![
+            ArgValue::Bound(s("pkg.sub.mod")),
+            ArgValue::Bound(s("other.module")),
+            ArgValue::Free { slot: 0 },
+        ]);
+        assert_eq!(run("relative_import_resolve", abs).rows.len(), 0, "absolute spec is no row");
+        // A bare name (no dot at all) is likewise absolute → no row.
+        let bare = ArgSpec::new(vec![
+            ArgValue::Bound(s("pkg")),
+            ArgValue::Bound(s("os")),
+            ArgValue::Free { slot: 0 },
+        ]);
+        assert_eq!(run("relative_import_resolve", bare).rows.len(), 0, "bare name is no row");
+    }
+
+    #[test]
+    fn relative_import_resolve_check_mode() {
+        // [B, B, B] — equality check: pass and non-match.
+        let hit = ArgSpec::new(vec![
+            ArgValue::Bound(s("pkg.sub.mod")),
+            ArgValue::Bound(s(".base")),
+            ArgValue::Bound(s("pkg.sub.base")),
+        ]);
+        assert_eq!(run("relative_import_resolve", hit).rows.len(), 1);
+        let miss = ArgSpec::new(vec![
+            ArgValue::Bound(s("pkg.sub.mod")),
+            ArgValue::Bound(s(".base")),
+            ArgValue::Bound(s("pkg.base")),
+        ]);
+        assert_eq!(run("relative_import_resolve", miss).rows.len(), 0);
+    }
+
+    #[test]
+    fn relative_import_resolve_free_inputs_are_unsupported_mode() {
+        // relative_import_resolve(B, Free, F) — both inputs must be bound; E-PLAN-001 names arg 1.
+        let def = lookup("relative_import_resolve").unwrap();
+        let spec = ArgSpec::new(vec![
+            ArgValue::Bound(s("pkg.mod")),
+            ArgValue::Free { slot: 0 },
+            ArgValue::Free { slot: 1 },
+        ]);
+        let err = def.check_mode(&spec).unwrap_err();
+        assert_eq!(err.code.as_str(), "E-PLAN-001");
+        assert!(err.required_bindings.contains(&1), "must name the free raw specifier");
     }
 
     // ── edge_attr ──────────────────────────────────────────────────

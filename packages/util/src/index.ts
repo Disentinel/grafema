@@ -169,7 +169,7 @@ export { GuaranteeAPI } from './api/GuaranteeAPI.js';
 export type { GuaranteeGraphBackend } from './api/GuaranteeAPI.js';
 
 // Node kinds
-export { isGuaranteeType, isGrafemaType } from './core/nodes/NodeKind.js';
+export { isGuaranteeType, isGrafemaType, canonicalEndpointType, ENDPOINT_TYPE_ALIASES } from './core/nodes/NodeKind.js';
 
 // Issue nodes (detected problems)
 export { IssueNode, type IssueNodeRecord, type IssueSeverity, type IssueType } from './core/nodes/IssueNode.js';

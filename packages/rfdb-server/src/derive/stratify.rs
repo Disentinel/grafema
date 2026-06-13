@@ -206,6 +206,8 @@ const BUILTINS: &[&str] = &[
     "first_segment",
     "replace_all",
     "path_resolve",
+    "split",
+    "relative_import_resolve",
     "edge_attr",
     "node_attr",
     "path",
