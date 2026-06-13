@@ -1,90 +1,164 @@
-% rust_calls.dl — in-engine replacement for the RustCallResolution.hs resolver
-% (packages/rust-resolve/src/RustCallResolution.hs:37-80): same-file CALL →
-% FUNCTION CALLS edges for Rust.
+% rust_calls.dl — in-engine Rust same-file CALL → FUNCTION resolution.
+% (Originally the in-engine replacement for RustCallResolution.hs, Hs:37-80.)
 %
-% Resolver semantics reproduced EXACTLY — two ordered arms (Hs:60-71):
-%   R1 exact:  CALL.name == FUNCTION.name, same file. This arm also covers
-%      method calls (`self.process()` / `w.render()` — the analyzer emits the
-%      bare method name on the CALL node plus a direct CALL -READS_FROM->
-%      receiver REFERENCE, the Wave-0-verified Rust receiver shape) AND fully
-%      qualified assoc-fn paths whose FUNCTION node carries the same qualified
-%      name. The resolver never conditioned on the receiver, so neither does
-%      this pack — receiver-typed dispatch is Wave 1b (rust_cross_methods_ctor),
-%      deliberately NOT implemented here.
-%   R2 '::'-suffix fallback, ONLY when R1 found nothing for that call (the
-%      Hs ordered lookup, encoded as the preference negation \+ has_exact):
-%      the call's path name ends with "::" ++ FUNCTION.name — assoc-fn paths
+% RESOLUTION MODEL — two ordered arms:
+%   R1 SCOPE-WALK exact: a bare-name CALL resolves to the same-name FUNCTION
+%      that is LEXICALLY VISIBLE from the call's nearest enclosing FUNCTION
+%      binder, found by graph-recursion over CONTAINS/HAS_SCOPE — NOT a flat
+%      (file, name) match (see SCOPE-WALK below). This is SOUND + PRECISE:
+%      a call `helper()` inside an `impl A` method resolves to `A::helper`, not
+%      to a same-name `B::helper` in an unrelated impl block of the same file.
+%      Live-verified on the 503k-node graph: the flat (file,name) arm produced
+%      13107 (C,T) pairs; the scope-walk arm produces 8556 — a STRICT SUBSET
+%      (8556 common, 4551 removed, 0 added). 4521/4551 removed pairs are
+%      cross-impl same-method-name collisions (`len`, `iter`, `commit_batch`,
+%      `get_node`, `write_to` …) that flat resolution emitted to EVERY impl;
+%      0 removed pairs are MODULE-level / free-function recall losses.
+%      This arm also covers `self.method()` / `w.method()` (the analyzer emits
+%      the bare method name on the CALL node) — now SCOPE-precise rather than
+%      flat. Receiver-typed cross-impl dispatch stays Wave 1b
+%      (rust_cross_methods_ctor / rust_receiver_typing), deliberately NOT here.
+%   R2 '::'-suffix fallback, ONLY when R1 resolved nothing for that call
+%      (the ordered-lookup preference, encoded as \+ has_scoped): the call's
+%      path name ends with "::" ++ FUNCTION.name — assoc-fn / qualified paths
 %      (`Widget::new()`, `utils::helper()`) resolved by their last segment.
-%      The concat-built "::"-prefixed suffix enforces the segment boundary
-%      (lastSegment, Hs:50-54), and only path calls (names containing "::")
-%      can ever match it — the resolver's seg /= name condition for free.
+%      A qualified path NAMES its type, so it is callable from anywhere and is
+%      NOT lexically scope-restricted — scope-walk does not apply; this arm is
+%      kept FLAT by design. The concat-built "::"-prefixed suffix enforces the
+%      segment boundary (Hs:50-54); only path calls (names containing "::") can
+%      match it. R2 is the EDB seam the downstream Rust packs depend on:
+%      rust_cross_methods_ctor / rust_receiver_typing read the committed CALLS
+%      edge of a `Type::new()` init call to type a variable — R2 produces those
+%      5374 path resolutions and they are preserved unchanged.
+%
+% SCOPE-WALK (Rust scope shape, verified in rust_analyzer.rs):
+%   - A Rust FUNCTION IS its own scope node — NO separate SCOPE node for a fn
+%     body (push_scope, rust_analyzer.rs:178-201). Only Block scopes (if /
+%     match-arm / loop / while / closure bodies) emit a SCOPE node.
+%   - Every non-MODULE node, CALLs included, carries exactly one CONTAINS edge
+%     from its innermost scope (emit_node, rust_analyzer.rs:133-143). So a CALL's
+%     CONTAINS parent is a FUNCTION (call at fn-body top level — the dominant
+%     case), a block SCOPE (call inside if/match/loop/closure), a MODULE
+%     (top-level const-initializer call), or an IMPL_BLOCK (rare).
+%   - HAS_SCOPE chains parent → child-scope (rust_analyzer.rs:204-209): the
+%     test fixtures assert "MODULE HAS_SCOPE FUNCTION" and
+%     "FUNCTION HAS_SCOPE block SCOPE".
+%   The encl/2 closure therefore (a) seeds on the call's DIRECT CONTAINS parent
+%   of ANY type — unlike the JS scope-walk which seeds on SCOPE only, because in
+%   JS the FUNCTION/METHOD is a separate HAS_SCOPE owner of its body SCOPE,
+%   whereas in Rust the FUNCTION IS the body scope and directly CONTAINS its
+%   top-level calls — and (b) walks UP through block SCOPEs via HAS_SCOPE until
+%   it reaches a FUNCTION. Live-verified: every SCOPE-contained Rust call reaches
+%   exactly one enclosing FUNCTION (NEAREST-binder uniqueness: 0 calls with two
+%   distinct enclosing FUNCTIONs — nested fns are not reachable past their own
+%   binder), and the 60 MODULE/IMPL_BLOCK-level calls with no enclosing FUNCTION
+%   resolve free functions via the file-MODULE arm.
+%
+% VISIBILITY MODEL (why the owner join is sound): inline `mod foo { }` blocks
+%   are walked INLINE (walk_mod, rust_analyzer.rs:1197-1203) — no nested MODULE
+%   node, no scope push — so a file is a single flat MODULE whose CONTAINS
+%   children are the free FUNCTIONs and the IMPL_BLOCKs. IMPL_BLOCKs are almost
+%   always MODULE-owned and CONTAINS their methods (MODULE→CONTAINS→MODULE = 0);
+%   the rare function-local impl (e.g. `BuildGuard` in multi_shard.rs) is owned
+%   by its enclosing fn/scope, not a MODULE, and is still handled correctly
+%   because fn_owner reads the enclosing FUNCTION's generic CONTAINS parent.
+%   A FUNCTION named N is visible from a
+%   call iff (i) N shares the call's enclosing-fn owner O (sibling free fn in the
+%   same module, or sibling method in the same impl), OR (ii) N is a free
+%   function owned by the file MODULE (visible from anywhere in the file,
+%   including MODULE-level calls with no enclosing fn). These two arms are the
+%   exact_scoped clauses below.
 %
 % CALLS is SHARED vocabulary (the Rust analyzer's defer_ref also emits CALLS)
 % ⇒ mode = "additive" is mandatory.
 %
-% NUMBERED DELTAS vs the resolver (everything not listed is exact):
-%   DELTA 1 (superset): duplicate (file, name) FUNCTIONs (two `fn new` in two
-%     impl blocks of one file) — the resolver's Map.fromList kept the LAST one
-%     and emitted a single arbitrary edge (Hs:38-44); set semantics derives an
-%     edge per candidate. Order-independent; mechanically classifiable.
-%   DELTA 2 (superset, rare): a FUNCTION whose own name contains "::"
-%     (multi-segment): the resolver compared only the call's LAST segment and
-%     could never match it (lastSegment("a::b::c") = "c" ≠ "b::c"); the pack's
-%     ends_with(N, "::" ++ FName) accepts the multi-segment suffix
-%     ("a::b::c" resolves to a FUNCTION named "b::c").
+% NUMBERED DELTAS vs the original flat resolver (everything not listed is exact):
+%   DELTA 1 (PRECISION — the rework): duplicate-name FUNCTIONs in one file (two
+%     `fn new` in two impl blocks) are NO LONGER all resolved. The original flat
+%     resolver matched ANY same-(file,name) FUNCTION; the scope-walk resolves
+%     only the FUNCTION lexically visible from the call (same impl/module owner,
+%     or a file-level free fn). 4551 cross-scope flat pairs are dropped; 0 are
+%     added. This is a soundness/precision fix, not a superset.
+%   DELTA 2 (superset, rare, R2 only): a FUNCTION whose own name contains "::"
+%     (multi-segment): the original compared only the call's LAST segment; the
+%     pack's ends_with(N, "::" ++ FName) accepts the multi-segment suffix.
 %   DELTA 3 (metadata): resolvedVia="rust-calls" projected as a meta column;
 %     engine provenance (_source/_generation) added.
-%   DELTA 4 (file gate): the resolver's effective gate was the orchestrator
-%     streaming only detect_language == Rust nodes; rs/1 encodes the same.
+%   DELTA 4 (file gate): the rs/1 .rs gate encodes the orchestrator's
+%     detect_language == Rust stream filter.
 %   DELTA 5 (macro filter — Wave M): macro invocations are EXCLUDED from
-%     resolution. The analyzer emits every Rust macro invocation as a CALL
-%     node with metadata macro=true whose name is the macro path WITHOUT '!'
-%     (rust_analyzer.rs:1433-1457, walk_macro), and its contract is explicit:
-%     "foo! is not the function foo" (rust_analyzer.rs:1423-1424). The legacy
-%     resolver on a post-merge graph WOULD have matched a macro name against
-%     a same-file fn of the same name — we deliberately do not. rs_macro is
-%     non-recursive EDB-derived; \+ rs_macro(C) is plain stratified negation
-%     (the established \+ has_exact pattern). The maintain envelope already
-%     excludes this pack (negation), so node_attr adds no NEW envelope loss.
+%     resolution. The analyzer emits every Rust macro invocation as a CALL node
+%     with metadata macro=true whose name is the macro path WITHOUT '!'
+%     (rust_analyzer.rs:1433-1457, walk_macro): "foo! is not the function foo".
+%     rs_macro is non-recursive EDB-derived; \+ rs_macro(C) is plain stratified
+%     negation. The maintain envelope already excludes this pack (negation).
 %
-% NOT implemented (Wave 1b, by design): the resolved-constructor receiver-typing
-% arm (ASSIGNED_FROM → resolved init CALL → impl method) — that is
-% rust_cross_methods_ctor's job, ordered after this pack.
+% NOT implemented (Wave 1b, by design): receiver-typed cross-impl dispatch
+% (ASSIGNED_FROM → resolved init CALL → impl method) — rust_cross_methods_ctor /
+% rust_receiver_typing, ordered after this pack, reading R2's CALLS as EDB.
 
-% Same-file indexes (empty names never indexed, Hs:43). The .rs gate is the
-% inline ends_with filter (DELTA 4) — File is bound by the attr leg.
+% Same-file FUNCTION index (empty names never indexed, Hs:43).
 rs_fn(File, N, T) :- node(T, "FUNCTION"), attr(T, "file", File), attr(T, "name", N), neq(N, "").
 
-% Macro invocations (CALL + metadata macro=true; the name is the macro path
-% without '!') — excluded from name resolution, DELTA 5.
+% Macro invocations (CALL + metadata macro=true) — excluded from name
+% resolution, DELTA 5.
 rs_macro(C) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".rs"), node_attr(C, "macro", "true").
 
+% Every resolvable Rust CALL with its (file, name). The .rs gate is DELTA 4.
 rs_call(C, File, N) :-
     node(C, "CALL"), attr(C, "file", File), ends_with(File, ".rs"),
     attr(C, "name", N), neq(N, ""),
     \+ rs_macro(C).
 
-% R1: exact (file, name) match.
-exact_call(C, T) :- rs_call(C, File, N), rs_fn(File, N, T).
-has_exact(C) :- exact_call(C, T).
+% ── SCOPE-WALK: nearest enclosing FUNCTION binder ─────────────────────────────
+% Seed on the call's DIRECT CONTAINS parent of ANY type (Rust FUNCTIONs directly
+% CONTAIN their top-level calls — do NOT filter the seed to SCOPE-only like the
+% JS scope-walk, that would drop every fn-body-top-level call), then walk UP
+% through block SCOPEs via HAS_SCOPE until a FUNCTION is reached. The recursive
+% leg is led by the bound call (planner-filter-before-generator).
+encl(C, P)  :- rs_call(C, File, N), edge(P, C, "CONTAINS").
+encl(C, P2) :- encl(C, S), node(S, "SCOPE"), edge(P2, S, "HAS_SCOPE").
 
-% R2: last-'::'-segment fallback, only when R1 missed (the ordered-lookup
-% preference as negation). The "::"-prefixed concat suffix enforces the
-% segment boundary. The string_contains(N, "::") gate is IMPLIED by
-% ends_with(N, "::" ++ FN) — only a path call can ever carry the suffix — and
-% exists purely so the planner prunes non-path calls BEFORE pairing them with
-% every same-file FUNCTION (W9 fix: the unfiltered calls×fns pairing was 15.4s
-% of rust_calls' 21.7s on the 491k-node graph). Result set: UNCHANGED.
+% The nearest enclosing FUNCTION binder (the CONTAINS-parent is already a
+% FUNCTION, OR a block SCOPE walked up to its owning FUNCTION). NEAREST-binder
+% uniqueness is structural (0 calls reach two distinct FUNCTIONs).
+encl_fn(C, Fn) :- encl(C, Fn), node(Fn, "FUNCTION").
+
+% The item-scope owner (MODULE or IMPL_BLOCK) of the enclosing FUNCTION, and the
+% file's MODULE (free-function visibility, also covers MODULE-level calls).
+fn_owner(C, O)     :- encl_fn(C, Fn), edge(O, Fn, "CONTAINS").
+file_module(C, M)  :- rs_call(C, File, N), node(M, "MODULE"), attr(M, "file", File).
+
+% R1: scope-walk exact. The same-name FUNCTION must be lexically visible —
+% sharing the enclosing fn's owner (sibling method / sibling module fn), a
+% file-level free function (owned by the file MODULE), OR a nested local fn
+% declared directly inside the call's own enclosing FUNCTION (`fn helper` defined
+% in the same fn body — a Rust item-in-fn-body binder, in scope for the rest of
+% that body). The nested-local arm is NEAREST-binder sound: it binds the same
+% enclosing FUNCTION the other arms walk, and excludes the trivial self-edge
+% (neq(Fn, T)). Live-verified: recovers 28 (C,T) pairs the owner/file-MODULE arms
+% miss (nested `fn id_of` / `assert_invertible` test helpers), all ⊆ the flat set.
+exact_scoped(C, T) :- rs_call(C, File, N), rs_fn(File, N, T), fn_owner(C, O), edge(O, T, "CONTAINS").
+exact_scoped(C, T) :- rs_call(C, File, N), rs_fn(File, N, T), file_module(C, M), edge(M, T, "CONTAINS").
+exact_scoped(C, T) :- rs_call(C, File, N), rs_fn(File, N, T), encl_fn(C, Fn), edge(Fn, T, "CONTAINS"), neq(Fn, T).
+has_scoped(C)      :- exact_scoped(C, T).
+
+% R2: last-'::'-segment fallback, ONLY when R1 resolved nothing (the
+% ordered-lookup preference as negation). FLAT by design (a qualified path names
+% its type — not scope-restricted). The "::"-prefixed concat suffix enforces the
+% segment boundary; the string_contains(N, "::") gate is IMPLIED by
+% ends_with(N, "::" ++ FN) and exists so the planner prunes non-path calls
+% BEFORE pairing them with every same-file FUNCTION.
 suffix_call(C, T) :-
     rs_call(C, File, N),
     string_contains(N, "::"),
-    \+ has_exact(C),
+    \+ has_scoped(C),
     rs_fn(File, FN, T),
     concat("::", FN, Suf),
     ends_with(N, Suf).
 
 @materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
-rust_call(C, T, "rust-calls") :- exact_call(C, T).
+rust_call(C, T, "rust-calls") :- exact_scoped(C, T).
 
 @materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
 rust_suffix_call(C, T, "rust-calls") :- suffix_call(C, T).
