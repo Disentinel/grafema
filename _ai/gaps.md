@@ -332,6 +332,23 @@ id is identical across generations are not tombstoned by changed-file deletion).
    maybe_auto_flush which publishes WITHOUT the run's pending tombstones — a mid-delta flush
    shows adds before retractions (self-heals at the explicit flush). Suppress auto-flush during
    materialize write-back or weaken the one-flush docstring.
+   - **✅ RESOLVED 2026-06-14 (suppress, not document)**: the design fork resolved by evidence —
+     `materialize_writeback_delta` documents "ONE flush commits node+edge adds + tombstones"
+     (engine_v2.rs) and the MVCC design elsewhere asserts "nothing observes a torn state"
+     (`clear_durable` docs), so weakening the docstring would concede a torn read in a
+     transactional write-back. Fix: a `suppress_auto_flush` engine flag set only for the
+     write-back's apply phase via `with_auto_flush_suppressed` (restores the PRIOR value →
+     re-entrancy safe); `maybe_auto_flush`/`maybe_auto_flush_edges` early-return when set.
+     The closing explicit `flush()` runs outside the suppressed scope → durability + the single
+     atomic publish preserved; every other write path keeps its OOM-safeguard auto-flush.
+     Class check: the only piecewise delete+add+`flush()` write-back is this one —
+     `commit_batch_ext`/`commit_batch_concurrent` use the store-level atomic commit
+     (`store.commit_batch_ext`, single manifest flip), so no sibling tear. Locked by
+     `materialize_writeback_is_atomic_under_buffer_pressure` (engine_v2.rs): forces the
+     node-count auto-flush (`write_buffer_node_limit=1`) during a writeback that adds one ISSUE
+     + retracts one owned-stale ISSUE, asserts the version advances EXACTLY ONCE. Red before the
+     fix: advanced twice (the intra-add flip is the torn intermediate). Full rfdb lib suite
+     1401/0, clippy clean. Items #4/#6 of this W4 list remain open (#7 is STALE per PR #426).
 3. **attr(X,"type",T) bypasses the node-feedback stratifier dependency** (edge axis has no such
    bypass — edge_attr can't read the edge type). Track attr-type-const in node_type_arg or fix docs.
 4. **O(owned²)**: removed_node_ids is a Vec scanned per node of the type; HashSet one-liner.
