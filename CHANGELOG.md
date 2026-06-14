@@ -4,13 +4,36 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-06-14
+
+### Highlights
+
+- **Critical npm-install fix** — `@grafema/cli@0.4.0` shipped a stale binary pin that made it non-functional when installed from npm. 0.4.1 is the corrected publish (see Bug Fixes → `fix(release)`).
+- **Crash-recovery data-loss fix (RFD-74)** — two manifest-recovery regressions that shipped in 0.4.0 are fixed; upgrading is recommended for anyone running 0.4.0.
+- **Multi-language resolvers as derive packs** — Java, Kotlin, Go and BEAM resolution now ship as default-on `@stdlib` derive packs, joining JS/Rust; Kotlin inheritance lands in the graph for the first time.
+
 ### Features
 
+- feat(derive): Java resolver as 4 derive packs — imports, types, calls, annotations.
+- feat(kotlin): inheritance in the graph — analyzer supertype stamps + `@stdlib/kotlin_inheritance` derive pack.
+- feat(derive): Go resolver as 6 derive packs + `first_segment` builtin + `go.mod` `WORKSPACE_PACKAGE` fact.
+- feat(beam): emit message shape-tree as graph nodes + edges.
+- feat(derive): HTTP routes as derive packs — effects-db callable facts + `js_http_routes` pack pair (REG-1115).
 - feat(derive): `cli:command` / `mcp:tool` / `vscode:command` FEATURE detection moved to default-on derive packs (`@stdlib/js_entrypoint_features_nodes` + `@stdlib/js_entrypoint_features_edges`), continuing the Wave-14 HTTP-route precedent. These mint the commander / `@modelcontextprotocol/sdk` / vscode entry-point FEATURE nodes (+ `EXPOSES`/`HANDLES` edges) the `libraryCallbackEnricher` used to produce, resolving receivers via both the `RECEIVER_CALL` chain and the `DERIVES_FROM[callee]`/`READS_FROM[receiver]` PROPERTY_ACCESS walk for `<obj>.`-rooted namespace receivers (e.g. `vscode.commands.registerCommand`). The three slices were RETIRED from `libraryCallbackEnricher`'s `LIBRARY_NODE_TYPE` map — the pack is the single producer (no duplicate byte-different-id nodes). The MCP `setRequestHandler` ~4-call subset is unchanged; the ~30 per-tool `mcp:tool` nodes remain the separate `mcpToolDefinitionEnricher`'s job.
+- feat(derive): `split/3` (multi-row generator) + `relative_import_resolve/3` builtins (hbp prerequisite) (#410).
 
 ### Bug Fixes
 
-- fix(release): platform-binary `optionalDependencies` are now injected at release time into **every** pin-bearing package (`packages/grafema` **and** `packages/cli`) from the single source `$NEW_VERSION` — single source of truth. Fixes the 0.4.0 skew where `@grafema/cli@0.4.0` shipped a stale hardcoded `0.3.29` pin (only `packages/grafema` was injected): `npm i grafema@0.4.0` then installed a `0.3.29` binary nested under `@grafema/cli` that shadowed the hoisted `0.4.0`, so the CLI ran a pre-derive binary against derive-required 0.4.0 — making 0.4.0 effectively non-functional from npm. Requires a 0.4.1 publish to take effect.
+- fix(storage): RFD-74 — two crash-recovery data-loss regressions in `manifest.rs` that shipped in 0.4.0: `rebuild_index` did not replay the `.edit.json` and `commit_edit` was not atomic. Both are fixed with mutation-proven crash-injection tests (#409).
+- fix(release): platform-binary `optionalDependencies` are now injected at release time into **every** pin-bearing package (`packages/grafema` **and** `packages/cli`) from the single source `$NEW_VERSION` — single source of truth. Fixes the 0.4.0 skew where `@grafema/cli@0.4.0` shipped a stale hardcoded `0.3.29` pin (only `packages/grafema` was injected): `npm i grafema@0.4.0` then installed a `0.3.29` binary nested under `@grafema/cli` that shadowed the hoisted `0.4.0`, so the CLI ran a pre-derive binary against derive-required 0.4.0 — making 0.4.0 effectively non-functional from npm. Requires a 0.4.1 publish to take effect (#414).
+- fix(orchestrator): `go.mod` `WORKSPACE_PACKAGE` fact self-heals via the tombstone path.
+- fix(type-inference): streaming + flush — the plugin no longer exits 1 (INSTANCE_OF 97 → 2,289); plugin failures now abort `analyze`. Builtin `HAS_METHOD` edges no longer orphaned by a read-after-add (+215 healed).
+- fix(js-analyzer): index every binding of a destructuring export (#399); export every declarator of a multi-declarator export (#396); position-disambiguate EXPORT sids so multiple export statements don't merge (#398).
+- fix(util): canonicalize namespaced endpoint types in VersionManager stable-ID + comparison keys (#389/#390); PathValidator reports DB-specific reason for namespaced `db:query` endpoints (#388); anchor `grafema://` virtual marker to authority boundary (#387).
+
+### Infrastructure
+
+- perf(storage): size-tiered compaction — bound write amplification on ingest / re-analysis.
 
 ## [0.3.31] - 2026-06-11
 
