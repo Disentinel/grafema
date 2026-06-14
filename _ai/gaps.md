@@ -328,6 +328,15 @@ id is identical across generations are not tombstoned by changed-file deletion).
 1. **All-numeric semantic-id drift**: plan_node_writeback blake3-hashes unconditionally;
    the wire writer string_to_id() parses decimal FIRST — a bare-decimal sid mints a divergent
    u128. Unreachable by shipped packs (prefixed sids); extend E-MAT-010 to reject all-decimal sids.
+   **✅ RESOLVED 2026-06-14 (branch `claude/vigilant-lamport-y65ysu`)**: `plan_node_writeback`
+   (`packages/rfdb-server/src/derive/materialize.rs`) now aborts with `E-MAT-010` when the
+   semantic-id column is an all-decimal string — guarded by `s.parse::<u128>().is_ok()`, the
+   EXACT same predicate the wire path (`string_to_id`/`resolve_node_id`, `bin/rfdb_server.rs:1009,1022`)
+   uses, so the rejected set is provably the exact divergence set (and overflowing/negative/prefixed
+   sids that BOTH paths hash stay accepted). Locked by
+   `derive::materialize::tests::plan_node_writeback_rejects_all_decimal_semantic_id` (asserts
+   `blake3("12345") != 12345`, rejects "12345"/"0"/"007", and that prefixed "issue::…::42" still
+   mints one node). Full rfdb lib 1401/0; clippy clean.
 2. **Auto-flush can tear run isolation under buffer pressure**: add_nodes/add_edges end with
    maybe_auto_flush which publishes WITHOUT the run's pending tombstones — a mid-delta flush
    shows adds before retractions (self-heals at the explicit flush). Suppress auto-flush during

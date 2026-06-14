@@ -287,8 +287,10 @@ pub fn collect_materialize_node_specs(
 ///
 /// Coded aborts BEFORE any commit (I5): a head whose arity is not `3 + len(meta)`
 /// (`E-MAT-009`, the node mirror of `E-MAT-002`), and a semantic-id column that is not a
-/// non-empty string (`E-MAT-010` — column 0 must be the rule-constructed semantic id;
-/// a bare node id there is almost certainly a misordered head).
+/// non-empty string OR is an all-decimal string (`E-MAT-010` — column 0 must be the
+/// rule-constructed semantic id; a bare node id there is almost certainly a misordered
+/// head, and an all-decimal sid would mint a node whose BLAKE3-derived id diverges from
+/// the parse-decimal-first id used by the wire resolver, making it unreachable by sid).
 ///
 /// Facts agreeing on the derived id are ONE node: the batch is deduped by id,
 /// first-encountered fact wins (which name/file/meta surface lands for a duplicated
@@ -319,6 +321,25 @@ pub fn plan_node_writeback(
                 });
             }
             let semantic_id = match &fact[0] {
+                // An all-decimal sid (one that `str::parse::<u128>` accepts) is a silent
+                // id-derivation footgun: this writer mints the u128 via BLAKE3(sid)
+                // (`string_id_to_u128`), but the wire writer/resolver (`string_to_id` /
+                // `resolve_node_id` in the server) parse a decimal string as the u128
+                // FIRST — so `blake3("12345") != 12345` and the minted node would be
+                // unreachable by any sid round-trip. Reject it (the parse-decimal set is
+                // the exact divergence set); shipped packs use prefixed, non-decimal sids.
+                Value::Str(s) if s.parse::<u128>().is_ok() => {
+                    return Err(MaterializeError {
+                        code: "E-MAT-010",
+                        detail: format!(
+                            "@materialize_node predicate '{}' semantic-id column (head column 0) \
+                             must not be an all-decimal string ({:?}); the node writer derives \
+                             the id as BLAKE3(sid) while the wire resolver parses a decimal sid \
+                             as the id directly, so such a node would be unreachable by sid",
+                            spec.predicate, s
+                        ),
+                    })
+                }
                 Value::Str(s) if !s.is_empty() => s.clone(),
                 other => {
                     return Err(MaterializeError {
@@ -833,6 +854,66 @@ mod tests {
                 .expect_err("bad semantic-id column");
             assert_eq!(err.code, "E-MAT-010");
         }
+    }
+
+    #[test]
+    fn plan_node_writeback_rejects_all_decimal_semantic_id() {
+        // An all-decimal semantic-id is a silent id-derivation footgun. The node
+        // writer mints the u128 via BLAKE3(sid) (`string_id_to_u128`), but the wire
+        // writer/resolver (`rfdb_server::string_to_id` / `resolve_node_id`) parse a
+        // decimal string as the u128 FIRST — so `blake3("12345") != 12345` and the
+        // minted node is unreachable by any sid round-trip. The two derivations
+        // provably diverge for the decimal-parseable set:
+        assert_ne!(
+            crate::graph::string_id_to_u128("12345"),
+            "12345".parse::<u128>().unwrap(),
+            "BLAKE3(sid) must differ from the parse-decimal-first wire path"
+        );
+        // So reject it BEFORE any commit (E-MAT-010), the same abort-no-commit
+        // discipline as the other malformed-head cases. `parse::<u128>().is_ok()`
+        // is the exact inverse of the wire path's parse-first branch (covers leading
+        // zeros and "0", which the wire path still parses numerically).
+        let spec = NodeMaterializeSpec {
+            predicate: "issue".to_string(),
+            node_type: "ISSUE".to_string(),
+            rule_ast_hash: "h".to_string(),
+            additive: true,
+            meta: Vec::new(),
+        };
+        for decimal in ["12345", "0", "007"] {
+            let mut eval = Evaluation::default();
+            eval.relations.insert(
+                "issue".to_string(),
+                vec![vec![
+                    Value::Str(decimal.to_string()),
+                    Value::Str("n".into()),
+                    Value::Str("f".into()),
+                ]
+                .into_boxed_slice()],
+            );
+            let err = plan_node_writeback(std::slice::from_ref(&spec), &eval, 1)
+                .expect_err("all-decimal semantic id is rejected, not minted");
+            assert_eq!(
+                err.code, "E-MAT-010",
+                "all-decimal semantic id {decimal:?} must abort with E-MAT-010"
+            );
+        }
+        // Guard the boundary: a prefixed sid that merely CONTAINS digits (the shipped
+        // convention, e.g. "issue::shape-violation::42") is NOT decimal-parseable and
+        // stays accepted — the guard must not regress real packs.
+        let mut eval = Evaluation::default();
+        eval.relations.insert(
+            "issue".to_string(),
+            vec![vec![
+                Value::Str("issue::shape-violation::42".to_string()),
+                Value::Str("n".into()),
+                Value::Str("f".into()),
+            ]
+            .into_boxed_slice()],
+        );
+        let nodes = plan_node_writeback(std::slice::from_ref(&spec), &eval, 1)
+            .expect("a prefixed (non-decimal) sid is still accepted");
+        assert_eq!(nodes.len(), 1);
     }
 
     #[test]
