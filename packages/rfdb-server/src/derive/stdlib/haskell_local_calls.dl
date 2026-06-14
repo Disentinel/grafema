@@ -1,0 +1,84 @@
+% haskell_local_calls.dl — in-engine replacement for the legacy
+% `haskell-local-calls` resolve step (HaskellLocalCalls.hs). Emits CALLS from a
+% CALL node to its same-file callable binder, stamped meta
+% resolvedVia="haskell-local-calls". Consumes only base-graph CONTAINS / node /
+% attr — no inter-pack seam.
+%
+% ── THE BUG THIS FIXES (same cross-scope collapse as the refs pack) ──────────
+% The legacy resolver built a FLAT (file, bareName) -> id Map with LAST-WRITE-
+% WINS over the callable types (HaskellLocalCalls.hs:40-47). A call to a name
+% with multiple same-file binders resolved to whichever the Map kept last.
+%
+% ── QUALIFIED-NAME STRIP (HaskellLocalCalls.hs:63-67) ────────────────────────
+% A CALL node carries the qualifier EMBEDDED in gnName (no separate receiver
+% field — Expressions.hs:488-495 leftmost-HsVar occName). The resolver strips it
+% via T.breakOnEnd "." — "Map.lookup" -> "lookup", a dotless name unchanged.
+% last_segment(Name, ".", Bare) reproduces this EXACTLY: rfind of "." then the
+% suffix, identity when there is no "." (builtin.rs eval_last_segment:958-961).
+%
+% ── THE CONTAINS-ONLY SCOPE SHAPE (design ground truth; see
+%    haskell_local_refs.dl header for the full asymmetry analysis) ───────────
+% A CALL is CONTAINS'd from its enclosing FUNCTION scope (or MODULE at top
+% level), Expressions.hs:157-162. PARAMETER / VARIABLE binders are CONTAINS'd
+% from the SAME scope id — so the precise local hit is a same-scope param/var of
+% the (bare) name. Local helper FUNCTIONs are MODULE-flattened (Declarations.hs:
+% 48-49 etc.), so they are only recoverable by the flat (file, bareName)
+% fallback — no-worse than the legacy Map.
+%
+% ── THE SOUND DESIGN (mirrors haskell_local_refs.dl; callableTypes per Hs:34-38)
+%   LOCAL HIT  — a PARAMETER or VARIABLE binder CONTAINS'd by the call's OWN
+%                scope S with the matching BARE name; else
+%   FALLBACK   — flat (file, bareName) over the callable types FUNCTION /
+%                VARIABLE / CONSTANT / CONSTRUCTOR / RECORD_FIELD /
+%                TYPE_SIGNATURE.
+% Mutually exclusive (local hit suppresses fallback) — no double-resolution.
+% NO prelude arm: HaskellLocalCalls has none (stdlib calls are handled by
+% haskell-globals / HaskellCrossModuleCalls).
+%
+% CALLS is SHARED vocabulary ⇒ mode = "additive" is mandatory. resolvedVia =
+% "haskell-local-calls" projected as a meta column (byte-identical to the legacy
+% edge meta, Hs:77).
+%
+% MAINTAIN ENVELOPE: negation ⇒ scratch floor (accepted).
+
+% ── The Haskell CALL gate (isHaskellCall, Hs:82-83 = CALL in a .hs file). B is
+%    the BARE name (qualifier stripped); N kept for completeness. ────────────
+hs_call(C, F, B) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".hs"),
+                    attr(C, "name", N), neq(N, ""), last_segment(N, ".", B).
+
+% Import skip-set (Hs:49-56,68-69): a BARE name with an IMPORT_BINDING in the
+% same file is never resolved locally — handled by HaskellCrossModuleCalls.
+hs_imported(F, N) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), attr(B, "name", N), neq(N, "").
+
+% A call eligible for local resolution (keyed by bare name). Leads with hs_call
+% (the small, bound set).
+local_call(C, F, B) :- hs_call(C, F, B), \+ hs_imported(F, B).
+
+% ── The call's OWN enclosing scope (the node that CONTAINS it). No climb (local
+%    FUNCTIONs are MODULE-flattened; a multi-hop walk would be unsound). ─────
+call_scope(C, S) :- local_call(C, F, B), edge(S, C, "CONTAINS").
+
+% ── LOCAL HIT — a PARAMETER / VARIABLE binder CONTAINS'd by the call's OWN scope
+%    S with the matching BARE name. attr(D,"name",B) is a CHECK (B pre-bound). ─
+local_hit(C, D) :- local_call(C, F, B), call_scope(C, S),
+                   edge(S, D, "CONTAINS"), node(D, "PARAMETER"), attr(D, "name", B).
+local_hit(C, D) :- local_call(C, F, B), call_scope(C, S),
+                   edge(S, D, "CONTAINS"), node(D, "VARIABLE"),  attr(D, "name", B).
+
+has_local_hit(C) :- local_hit(C, _).
+
+% ── FALLBACK — flat (file, bareName) over the callable types (Hs:34-38), only
+%    when no same-scope param/var binder was found. ──────────────────────────
+callable(F, B, D) :- node(D, "FUNCTION"),       attr(D, "file", F), attr(D, "name", B), neq(B, "").
+callable(F, B, D) :- node(D, "VARIABLE"),       attr(D, "file", F), attr(D, "name", B), neq(B, "").
+callable(F, B, D) :- node(D, "CONSTANT"),       attr(D, "file", F), attr(D, "name", B), neq(B, "").
+callable(F, B, D) :- node(D, "CONSTRUCTOR"),    attr(D, "file", F), attr(D, "name", B), neq(B, "").
+callable(F, B, D) :- node(D, "RECORD_FIELD"),   attr(D, "file", F), attr(D, "name", B), neq(B, "").
+callable(F, B, D) :- node(D, "TYPE_SIGNATURE"), attr(D, "file", F), attr(D, "name", B), neq(B, "").
+
+flat_hit(C, D) :- local_call(C, F, B), callable(F, B, D), \+ has_local_hit(C).
+
+% ── EMIT — local-hit + flat-fallback share the single additive CALLS head. ───
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+hs_calls(C, D, "haskell-local-calls") :- local_hit(C, D).
+hs_calls(C, D, "haskell-local-calls") :- flat_hit(C, D).

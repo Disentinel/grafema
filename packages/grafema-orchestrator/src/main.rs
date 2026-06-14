@@ -1607,14 +1607,20 @@ async fn main() -> Result<()> {
                         let results = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::Haskell],
-                            &[("haskell-imports", &[]), ("haskell-local-refs", &[]), ("haskell-local-calls", &[]), ("haskell-cross-module-calls", &[]), ("haskell-globals", &[])],
+                            // haskell-local-refs / haskell-local-calls RETIRED:
+                            // same-file READS_FROM/CALLS resolution now runs
+                            // in-engine via the @stdlib/haskell_local_refs* +
+                            // haskell_local_calls .dl packs (rfdb-server
+                            // derive/stdlib). Dropping them here avoids
+                            // double-emit. The three KEPT arms are cross-file /
+                            // stdlib and the packs do NOT replace them.
+                            &[("haskell-imports", &[]), ("haskell-cross-module-calls", &[]), ("haskell-globals", &[])],
                             &hs_pool,
                         ).await?;
                         for (cmd, mut output) in results {
                             let cmd_start = std::time::Instant::now();
                             let commit_name = match cmd.as_str() {
                                 "haskell-imports" => "haskell-import-resolution",
-                                "haskell-local-calls" => "haskell-local-calls",
                                 "haskell-cross-module-calls" => "haskell-cross-module-calls",
                                 "haskell-globals" => "haskell-runtime-globals",
                                 _ => &cmd,
@@ -2577,13 +2583,19 @@ async fn main() -> Result<()> {
                         let results = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::Haskell],
-                            &[("haskell-imports", &[]), ("haskell-local-refs", &[]), ("haskell-local-calls", &[]), ("haskell-cross-module-calls", &[]), ("haskell-globals", &[])],
+                            // haskell-local-refs / haskell-local-calls RETIRED:
+                            // same-file READS_FROM/CALLS resolution now runs
+                            // in-engine via the @stdlib/haskell_local_refs* +
+                            // haskell_local_calls .dl packs (rfdb-server
+                            // derive/stdlib). Dropping them here avoids
+                            // double-emit. The three KEPT arms are cross-file /
+                            // stdlib and the packs do NOT replace them.
+                            &[("haskell-imports", &[]), ("haskell-cross-module-calls", &[]), ("haskell-globals", &[])],
                             &pool,
                         ).await?;
                         for (cmd, mut output) in results {
                             let commit_name = match cmd.as_str() {
                                 "haskell-imports" => "haskell-import-resolution",
-                                "haskell-local-calls" => "haskell-local-calls",
                                 "haskell-cross-module-calls" => "haskell-cross-module-calls",
                                 "haskell-globals" => "haskell-runtime-globals",
                                 _ => &cmd,

@@ -1,0 +1,129 @@
+% haskell_local_refs.dl — EDGE half of the in-engine replacement for the legacy
+% `haskell-local-refs` resolve step (HaskellLocalRefs.hs). Emits READS_FROM from
+% a REFERENCE to its same-file binder, stamped meta resolvedVia="haskell-local-
+% refs". MUST run AFTER haskell_local_refs_nodes.dl, which mints the
+% "HASKELL_GLOBAL::"<name> EXTERNAL_FUNCTION endpoints this pack's prelude arm
+% joins as committed EDB (the js_runtime_globals two-pack split).
+%
+% ── THE BUG THIS FIXES (the 91% param/let/where-VAR cross-scope collapse) ─────
+% The legacy resolver built a FLAT (file, name) -> id Map with LAST-WRITE-WINS
+% (HaskellLocalRefs.hs:48-55). For a name with multiple same-file binders (the
+% common case: a parameter `x` in fn A and a parameter `x` in fn B), every
+% reference to that name resolved to whichever binder the Map happened to keep
+% last — a cross-scope false edge for the majority of references.
+%
+% ── THE CONTAINS-ONLY SCOPE SHAPE (design ground truth — NOT a faithful lexical
+%    chain; build the walk around THIS) ─────────────────────────────────────
+% The Haskell analyzer does NOT thread scopeParent (Walker.hs:99, Expressions.hs:
+% 605 set scopeParent=Nothing); enclosure is carried ONLY by CONTAINS edges,
+% emitted ASYMMETRICALLY:
+%   (a) a REFERENCE is CONTAINS'd from askScopeId = the nearest enclosing
+%       FUNCTION id, or the MODULE id at top level (Expressions.hs:128-132,
+%       Context.hs:53-54).
+%   (b) a PARAMETER / VARIABLE binder is ALSO CONTAINS'd from askScopeId
+%       (Patterns.hs:51/69,80/98,118/136) — so it sits at the SAME scope id as
+%       the references in that scope. THIS is what makes the precise local hit
+%       possible and is exactly the binder class the flat Map collapsed.
+%   (c) EVERY FUNCTION binder — top-level AND local where/let — is CONTAINS'd
+%       from askModuleId, NOT the enclosing scope (Declarations.hs:48-49,66,
+%       81-82,101). So local helper FUNCTIONs are FLATTENED under MODULE,
+%       indistinguishable from true top-level FUNCTIONs. A multi-level lexical
+%       scope (where inside where) is therefore NOT recoverable from CONTAINS —
+%       that residual ambiguity is a PRE-EXISTING analyzer limitation, no-worse
+%       than the legacy flat Map (which had zero scope at all).
+%
+% ── THE SOUND DESIGN (exactly this, no multi-hop ancestor climb) ─────────────
+% A REFERENCE with enclosing scope S (the node that CONTAINS it) resolves to:
+%   LOCAL HIT  — a PARAMETER or VARIABLE binder CONTAINS'd by that SAME scope S
+%                with the matching name (fixes (b), the dominant bug); else
+%   FALLBACK   — the flat (file, name) match over the decl/callable types
+%                (FUNCTION/VARIABLE/CONSTANT/DATA_TYPE/TYPE_SYNONYM/CONSTRUCTOR/
+%                RECORD_FIELD/PARAMETER). This preserves top-level resolution
+%                (mutual recursion, forward refs) AND handles local helper
+%                FUNCTIONs (MODULE-flattened, so flat is the only option and is
+%                no-worse than legacy); else
+%   PRELUDE    — the virtual "HASKELL_GLOBAL::"<name> node for a known prelude
+%                name (HaskellLocalRefs.hs:135-167), joined as committed EDB.
+% The three arms are MUTUALLY EXCLUSIVE (local hit suppresses fallback; fallback
+% suppresses prelude) to avoid double-resolution — the negation ladder below.
+%
+% READS_FROM is SHARED vocabulary ⇒ mode = "additive" is mandatory.
+% resolvedVia = "haskell-local-refs" projected as a meta column (byte-identical
+% to the legacy edge meta, Hs:132,145) so downstream is unchanged.
+%
+% MAINTAIN ENVELOPE: negation ⇒ scratch floor (accepted).
+
+% ── The Haskell REFERENCE gate ───────────────────────────────────────────────
+hs_ref(R, F, N) :- node(R, "REFERENCE"), attr(R, "file", F), ends_with(F, ".hs"), attr(R, "name", N), neq(N, "").
+
+% Import skip-set (Hs:58-64,123-124): a name with an IMPORT_BINDING in the same
+% file is never resolved locally — handled by HaskellImportResolution.
+hs_imported(F, N) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), attr(B, "name", N).
+
+% A reference eligible for local resolution: Haskell, not import-shadowed.
+% Leads with hs_ref (the small, bound set) so the scope join does not enumerate
+% every CONTAINS edge (planner-filter-before-generator).
+local_ref(R, F, N) :- hs_ref(R, F, N), \+ hs_imported(F, N).
+
+% ── The reference's OWN enclosing scope (the single node that CONTAINS it: an
+%    enclosing FUNCTION, or the MODULE at top level). No climb — the analyzer
+%    flattens local FUNCTIONs to MODULE, so a multi-hop ancestor walk would be
+%    UNSOUND (it cannot tell a sibling where-helper from a parent). ──────────
+ref_scope(R, S) :- local_ref(R, F, N), edge(S, R, "CONTAINS").
+
+% ── LOCAL HIT — a PARAMETER / VARIABLE binder CONTAINS'd by the ref's OWN scope
+%    S with the matching name. attr(D,"name",N) is a CHECK (N pre-bound from
+%    local_ref); ref_scope binds S first. These are the binder types that carry
+%    the correct scope id (design (b)) — the ones the flat Map collapsed. ────
+local_hit(R, D) :- local_ref(R, F, N), ref_scope(R, S),
+                   edge(S, D, "CONTAINS"), node(D, "PARAMETER"), attr(D, "name", N).
+local_hit(R, D) :- local_ref(R, F, N), ref_scope(R, S),
+                   edge(S, D, "CONTAINS"), node(D, "VARIABLE"),  attr(D, "name", N).
+
+% A reference that found ANY local same-scope binder — suppresses the fallback.
+has_local_hit(R) :- local_hit(R, _).
+
+% ── FALLBACK — flat (file, name) over the legacy decl types (Hs:40-45), only
+%    when NO same-scope param/var binder was found. This is the top-level /
+%    local-helper-FUNCTION arm (those are MODULE-flattened, so flat is the only
+%    recoverable resolution — no-worse than the legacy Map). ────────────────
+flat_decl(F, N, D) :- node(D, "FUNCTION"),     attr(D, "file", F), attr(D, "name", N), neq(N, "").
+flat_decl(F, N, D) :- node(D, "VARIABLE"),     attr(D, "file", F), attr(D, "name", N), neq(N, "").
+flat_decl(F, N, D) :- node(D, "CONSTANT"),     attr(D, "file", F), attr(D, "name", N), neq(N, "").
+flat_decl(F, N, D) :- node(D, "DATA_TYPE"),    attr(D, "file", F), attr(D, "name", N), neq(N, "").
+flat_decl(F, N, D) :- node(D, "TYPE_SYNONYM"), attr(D, "file", F), attr(D, "name", N), neq(N, "").
+flat_decl(F, N, D) :- node(D, "CONSTRUCTOR"),  attr(D, "file", F), attr(D, "name", N), neq(N, "").
+flat_decl(F, N, D) :- node(D, "RECORD_FIELD"), attr(D, "file", F), attr(D, "name", N), neq(N, "").
+flat_decl(F, N, D) :- node(D, "PARAMETER"),    attr(D, "file", F), attr(D, "name", N), neq(N, "").
+
+flat_hit(R, D) :- local_ref(R, F, N), flat_decl(F, N, D), \+ has_local_hit(R).
+
+% A reference that resolved to ANY local-or-flat binder — suppresses the prelude
+% fall-through (the legacy Map.lookup-hit precedes the prelude check, Hs:126).
+has_decl(R) :- local_hit(R, _).
+has_decl(R) :- flat_hit(R, _).
+
+% ── PRELUDE fall-through — the virtual HASKELL_GLOBAL node minted by the nodes
+%    pack, joined as committed EDB, only when NO same-file binder exists. The
+%    edge carries the EXACT legacy meta: resolvedVia + globalCategory (Hs:144-
+%    147). ──────────────────────────────────────────────────────────────────
+% The target is pinned by (name=N, file="") — the minted HASKELL_GLOBAL node's
+% gnName is the bare prelude name and gnFile="" (Hs:154-157). A single virtual
+% node is shared by every prelude reference of that name across files (set
+% semantics, the legacy seen-Set), so name+file is the correct join key (the
+% js_runtime_globals_edges idiom). The local-hit/flat-fallback negation guard
+% (\+ has_decl) keeps this arm to references with NO same-file binder.
+prelude_hit(R, G) :-
+    local_ref(R, F, N), \+ has_decl(R),
+    node(G, "EXTERNAL_FUNCTION"), attr(G, "name", N), attr(G, "file", "").
+
+% ── EMIT — local-hit + flat-fallback share the single resolvedVia-only head;
+%    the prelude arm additionally stamps globalCategory. @materialize binds by
+%    HEAD PREDICATE, so the resolvedVia head rides arms 1-2 (one annotation) and
+%    the prelude head is a separate materialized predicate. ──────────────────
+@materialize(edge_type = "READS_FROM", mode = "additive", meta(resolvedVia))
+hs_reads_from(R, D, "haskell-local-refs") :- local_hit(R, D).
+hs_reads_from(R, D, "haskell-local-refs") :- flat_hit(R, D).
+
+@materialize(edge_type = "READS_FROM", mode = "additive", meta(resolvedVia, globalCategory))
+hs_reads_global(R, G, "haskell-local-refs", "haskell-prelude") :- prelude_hit(R, G).

@@ -9,10 +9,11 @@ executable haskell-resolve
   hs-source-dirs: src
   ghc-options: -Wall -Wno-name-shadowing
 
+  -- HaskellLocalRefs / HaskellLocalCalls RETIRED — same-file READS_FROM/CALLS
+  -- resolution now runs in-engine via the @stdlib/haskell_local_refs* +
+  -- haskell_local_calls .dl packs (rfdb-server derive/stdlib).
   other-modules:
     HaskellImportResolution
-    HaskellLocalRefs
-    HaskellLocalCalls
     HaskellCrossModuleCalls
 
   build-depends:
@@ -34,7 +35,6 @@ test-suite spec
 
   other-modules:
     HaskellImportResolution
-    HaskellLocalCalls
     HaskellCrossModuleCalls
 
   build-depends:
