@@ -15,6 +15,7 @@ executable grafema-python-analyzer
     PythonAST
     Analysis.Types
     Analysis.Context
+    Analysis.Scope
     Analysis.Walker
     Rules.Declarations
     Rules.Imports
@@ -48,6 +49,7 @@ test-suite spec
     PythonAST
     Analysis.Types
     Analysis.Context
+    Analysis.Scope
     Analysis.Walker
     Rules.Declarations
     Rules.Imports
