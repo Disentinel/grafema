@@ -34,15 +34,21 @@ import Data.Maybe (fromMaybe)
 -- ── Variable Declaration ────────────────────────────────────────────────
 
 -- | Walk a VariableDeclaration, returning @(bindingName, nodeId)@ for every
--- top-level simple-identifier declarator, in source order. Each binding is
--- declared in scope for the declarators that follow it (so later initializers
--- resolve earlier bindings). Destructuring declarators are still emitted as
--- nodes but reported with an empty @bindingName@ — they have no single binding id.
+-- binding it introduces, in source order. A simple-identifier declarator
+-- contributes one entry carrying its name; a destructuring declarator
+-- (@const { a, b } = obj@ / @const [c, d] = arr@) contributes one entry per
+-- bound name, each with an empty @bindingName@ (the destructured bindings have
+-- no single importable identifier at this level) but a real node id — so
+-- callers can still reach every binding (e.g. to emit an EXPORTS edge per
+-- binding). Simple bindings are declared in scope for the declarators that
+-- follow them (so later initializers resolve earlier bindings); destructured
+-- bindings self-declare inside 'handleDestructuringDecl'.
 --
 -- This is the single source of truth for "which bindings does this var-decl
 -- introduce". Both 'ruleVariableDeclaration' (plain-walk path) and
 -- 'ruleExportNamedDeclaration' (export path) consume it, so a multi-declarator
--- declaration (@const a = 1, b = 2@) yields every binding exactly once.
+-- declaration (@const a = 1, b = 2@) — or a destructuring export — yields every
+-- binding exactly once.
 ruleVariableDeclarationBindings :: ASTNode -> Analyzer [(Text, Text)]
 ruleVariableDeclarationBindings node = do
   let decls = getChildren "declarations" node
@@ -57,17 +63,22 @@ ruleVariableDeclarationBindings node = do
     goDeclarators :: DeclKind -> [ASTNode] -> Analyzer [(Text, Text)]
     goDeclarators _ [] = return []
     goDeclarators dk (d:ds) = do
-      mNodeId <- withAncestor node (ruleVariableDeclarator d node)
-      case mNodeId of
-        Just nodeId -> do
-          let name = case getChildrenMaybe "id" d of
-                       Just idNode -> getTextFieldOr "name" "" idNode
-                       Nothing     -> ""
-          rest <- if T.null name
-                    then goDeclarators dk ds
-                    else declareInScope (Declaration nodeId dk name) (goDeclarators dk ds)
-          return ((name, nodeId) : rest)
-        Nothing -> goDeclarators dk ds
+      -- A declarator yields one binding (simple identifier) or many (a
+      -- destructuring pattern, each entry with an empty name). Destructured
+      -- bindings were already declared in scope inside 'handleDestructuringDecl';
+      -- simple bindings (non-empty name) are declared here so a later
+      -- declarator's initializer (@const a = 1, b = a@) can resolve them.
+      pairs <- withAncestor node (ruleVariableDeclarator d node)
+      let toDeclare = [ (nm, i) | (nm, i) <- pairs, not (T.null nm) ]
+      rest <- declareAll dk toDeclare (goDeclarators dk ds)
+      return (pairs ++ rest)
+
+    -- Nest 'declareInScope' so each binding is visible to everything evaluated
+    -- in the continuation (the remaining declarators and their initializers).
+    declareAll :: DeclKind -> [(Text, Text)] -> Analyzer a -> Analyzer a
+    declareAll _ [] cont = cont
+    declareAll dk' ((nm, i):xs) cont =
+      declareInScope (Declaration i dk' nm) (declareAll dk' xs cont)
 
 -- | VariableDeclaration: walk every declarator (emitting nodes + scope edges)
 -- and return the first declarator's node id, preserving 'walkNode's
@@ -79,8 +90,14 @@ ruleVariableDeclaration node = do
     ((_, firstId) : _) -> Just firstId
     []                 -> Nothing
 
--- | VariableDeclarator: emit VARIABLE or CONSTANT node + DECLARES edge + ASSIGNED_FROM
-ruleVariableDeclarator :: ASTNode -> ASTNode -> Analyzer (Maybe Text)
+-- | VariableDeclarator: emit VARIABLE or CONSTANT node(s) + DECLARES edge +
+-- ASSIGNED_FROM, returning @(bindingName, nodeId)@ for every binding the
+-- declarator introduces. A simple identifier yields a single named entry; a
+-- destructuring pattern yields one entry per bound name, each with an empty
+-- name (the binding's index entry, if exported, is owned by
+-- 'handleDestructuringDecl') but a real node id so the export path can emit an
+-- EXPORTS edge to each. An unrecognised id yields no bindings.
+ruleVariableDeclarator :: ASTNode -> ASTNode -> Analyzer [(Text, Text)]
 ruleVariableDeclarator node parentDecl = do
   file <- askFile
   curScopeId <- askScopeId
@@ -95,9 +112,16 @@ ruleVariableDeclarator node parentDecl = do
   -- Extract binding name from id field
   case getChildrenMaybe "id" node of
     Just idNode -> case idNode of
-      -- Destructuring patterns: create individual nodes for each binding
-      ObjectPatternNode _ _ -> handleDestructuringDecl idNode node parentDecl nodeType kind dk
-      ArrayPatternNode _ _  -> handleDestructuringDecl idNode node parentDecl nodeType kind dk
+      -- Destructuring patterns: create individual nodes for each binding. The
+      -- bindings are reported with empty names (their export-index entry, when
+      -- exported, is emitted inside 'handleDestructuringDecl') and a real node
+      -- id, so the export path can still emit an EXPORTS edge to every binding.
+      ObjectPatternNode _ _ -> do
+        pairs <- handleDestructuringDecl idNode node parentDecl nodeType kind dk
+        return [ ("", i) | (_, i) <- pairs ]
+      ArrayPatternNode _ _  -> do
+        pairs <- handleDestructuringDecl idNode node parentDecl nodeType kind dk
+        return [ ("", i) | (_, i) <- pairs ]
       -- Normal identifier binding: existing logic
       _ -> do
         let name = getTextFieldOr "name" "<anonymous>" idNode
@@ -149,8 +173,8 @@ ruleVariableDeclarator node parentDecl = do
                 , geMetadata = Map.empty
                 }
           Nothing -> return ()
-        return (Just nodeId)
-    Nothing -> return Nothing
+        return [(name, nodeId)]
+    Nothing -> return []
 
 -- ── Destructuring Helpers ──────────────────────────────────────────────
 
@@ -200,8 +224,11 @@ extractBindingInfo node = case node of
       _ -> []
 
 -- | Handle destructuring declarations (ObjectPattern / ArrayPattern).
--- Creates individual VARIABLE/CONSTANT nodes for each binding with ASSIGNED_FROM edges.
-handleDestructuringDecl :: ASTNode -> ASTNode -> ASTNode -> Text -> Text -> DeclKind -> Analyzer (Maybe Text)
+-- Creates individual VARIABLE/CONSTANT nodes for each binding with ASSIGNED_FROM
+-- edges and returns @(bindingName, nodeId)@ for every binding in source order,
+-- so the caller can reach each binding's node (e.g. to emit an EXPORTS edge per
+-- binding). When exported, each binding's export-index entry is emitted here.
+handleDestructuringDecl :: ASTNode -> ASTNode -> ASTNode -> Text -> Text -> DeclKind -> Analyzer [(Text, Text)]
 handleDestructuringDecl patternNode declaratorNode _parentDecl nodeType kind dk = do
   file <- askFile
   curScopeId <- askScopeId
@@ -217,12 +244,12 @@ handleDestructuringDecl patternNode declaratorNode _parentDecl nodeType kind dk 
   let bindings = extractBindingInfo patternNode
 
   -- Emit nodes and edges for each binding, accumulating scope declarations
-  emitBindings file curScopeId parent isExported nodeType kind dk mInitId declaratorNode bindings Nothing
+  emitBindings file curScopeId parent isExported nodeType kind dk mInitId declaratorNode bindings
   where
     emitBindings :: Text -> Text -> Maybe Text -> Bool -> Text -> Text
-                 -> DeclKind -> Maybe Text -> ASTNode -> [(Text, ASTNode, Maybe ASTNode)] -> Maybe Text -> Analyzer (Maybe Text)
-    emitBindings _ _ _ _ _ _ _ _ _ [] firstId = return firstId
-    emitBindings file' scopeId' parent' exported' nType knd dKind mInitId declNode ((name, spanNode, mDefaultExpr):rest) firstId = do
+                 -> DeclKind -> Maybe Text -> ASTNode -> [(Text, ASTNode, Maybe ASTNode)] -> Analyzer [(Text, Text)]
+    emitBindings _ _ _ _ _ _ _ _ _ [] = return []
+    emitBindings file' scopeId' parent' exported' nType knd dKind mInitId declNode ((name, spanNode, mDefaultExpr):rest) = do
       let sp = astNodeSpan spanNode
           nodeId = semanticId file' nType name parent' Nothing
       emitNode GraphNode
@@ -278,12 +305,11 @@ handleDestructuringDecl patternNode declaratorNode _parentDecl nodeType kind dk 
                { eiName = name, eiNodeId = nodeId
                , eiKind = NamedExport, eiSource = Nothing }
         else return ()
-      let firstId' = case firstId of
-            Nothing -> Just nodeId
-            _       -> firstId
-      -- Declare this binding in scope for subsequent bindings
-      declareInScope (Declaration nodeId dKind name) $
-        emitBindings file' scopeId' parent' exported' nType knd dKind mInitId declNode rest firstId'
+      -- Declare this binding in scope for subsequent bindings, and collect the
+      -- (name, nodeId) pair so the caller sees every destructured binding.
+      rest' <- declareInScope (Declaration nodeId dKind name) $
+        emitBindings file' scopeId' parent' exported' nType knd dKind mInitId declNode rest
+      return ((name, nodeId) : rest')
 
 -- ── Function Declaration ────────────────────────────────────────────────
 
