@@ -49,7 +49,8 @@ use std::path::PathBuf;
 /// js_property_access_ns → js_property_access_full → js_builtins_nodes →
 /// js_builtins_edges → js_runtime_globals_nodes → js_runtime_globals_edges →
 /// java_imports → java_types → java_calls → java_annotations →
-/// kotlin_inheritance → go_imports → go_imports_nomod → go_calls →
+/// kotlin_inheritance → haskell_local_calls → go_imports → go_imports_nomod →
+/// go_calls →
 /// go_interfaces → go_types → go_context → depends → method_calls →
 /// shape_verifier → axum_routes → js_http_routes_nodes → js_http_routes_edges.
 /// The Java packs (java-resolve migration): `java_imports` PRODUCES java
@@ -122,6 +123,13 @@ const STDLIB_RULE_PACKS: &[&str] = &[
     // CLASS metadata stamps — consumes analyzer EDB only, precedes the
     // negators below.
     "@stdlib/kotlin_inheritance",
+    // Haskell wave: haskell_local_calls PRODUCES CALLS (same-file flat
+    // (file,name) value-binding resolution, single-target via the FUNCTION >
+    // VARIABLE > CONSTANT > CONSTRUCTOR > RECORD_FIELD namespace-priority ladder)
+    // — strictly before the CALLS negators method_calls / shape_verifier
+    // (shape_verifier negates edge(C,_,"CALLS") with NO file gate). Consumes
+    // analyzer EDB only, so no inter-pack EDB seam.
+    "@stdlib/haskell_local_calls",
     // Go wave: go_imports / go_imports_nomod PRODUCE IMPORTS_FROM — strictly
     // before depends (verdict C4). The nomod entry is the orchestrator-selected
     // VARIANT (P3): a pack cannot test "the go.mod fact is absent" (§3
@@ -1607,14 +1615,13 @@ async fn main() -> Result<()> {
                         let results = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::Haskell],
-                            &[("haskell-imports", &[]), ("haskell-local-refs", &[]), ("haskell-local-calls", &[]), ("haskell-cross-module-calls", &[]), ("haskell-globals", &[])],
+                            &[("haskell-imports", &[]), ("haskell-local-refs", &[]), ("haskell-cross-module-calls", &[]), ("haskell-globals", &[])],
                             &hs_pool,
                         ).await?;
                         for (cmd, mut output) in results {
                             let cmd_start = std::time::Instant::now();
                             let commit_name = match cmd.as_str() {
                                 "haskell-imports" => "haskell-import-resolution",
-                                "haskell-local-calls" => "haskell-local-calls",
                                 "haskell-cross-module-calls" => "haskell-cross-module-calls",
                                 "haskell-globals" => "haskell-runtime-globals",
                                 _ => &cmd,
@@ -2577,13 +2584,12 @@ async fn main() -> Result<()> {
                         let results = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::Haskell],
-                            &[("haskell-imports", &[]), ("haskell-local-refs", &[]), ("haskell-local-calls", &[]), ("haskell-cross-module-calls", &[]), ("haskell-globals", &[])],
+                            &[("haskell-imports", &[]), ("haskell-local-refs", &[]), ("haskell-cross-module-calls", &[]), ("haskell-globals", &[])],
                             &pool,
                         ).await?;
                         for (cmd, mut output) in results {
                             let commit_name = match cmd.as_str() {
                                 "haskell-imports" => "haskell-import-resolution",
-                                "haskell-local-calls" => "haskell-local-calls",
                                 "haskell-cross-module-calls" => "haskell-cross-module-calls",
                                 "haskell-globals" => "haskell-runtime-globals",
                                 _ => &cmd,
