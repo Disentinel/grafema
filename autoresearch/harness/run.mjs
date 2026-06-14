@@ -53,6 +53,7 @@ function parseArgs(argv) {
     runId: null,
     repeats: 1,
     projectRoot: PROJECT_ROOT,
+    mcpConfig: null,
   };
   let i = 2; // skip node + script
   while (i < argv.length) {
@@ -77,6 +78,9 @@ function parseArgs(argv) {
         break;
       case '--project-root':
         args.projectRoot = resolve(argv[++i]);
+        break;
+      case '--mcp-config':
+        args.mcpConfig = resolve(argv[++i]);
         break;
       case '--help':
       case '-h':
@@ -346,7 +350,7 @@ function extractAnswer(text) {
 // Run claude for a single question
 // ---------------------------------------------------------------------------
 
-async function runQuestion(question, mode, modelId, promptTemplate, projectRoot) {
+async function runQuestion(question, mode, modelId, promptTemplate, projectRoot, mcpConfigPath = MCP_CONFIG) {
   const prompt = promptTemplate
     .replace('{{question}}', question.question)
     .replace(/\{\{project_root\}\}/g, projectRoot);
@@ -370,8 +374,8 @@ async function runQuestion(question, mode, modelId, promptTemplate, projectRoot)
     ];
 
     // Attach MCP for grafema and ablation modes (any non-baseline mode)
-    if (mode !== 'baseline' && existsSync(MCP_CONFIG)) {
-      directArgs.push('--mcp-config', MCP_CONFIG);
+    if (mode !== 'baseline' && existsSync(mcpConfigPath)) {
+      directArgs.push('--mcp-config', mcpConfigPath);
     }
 
     // Run from temp dir to avoid loading CLAUDE.md from project root.
@@ -498,14 +502,16 @@ async function main() {
   console.error(`Results:   ${runDir}`);
   console.error('');
 
+  const effectiveMcpConfig = args.mcpConfig || MCP_CONFIG;
+
   // Preflight: verify Grafema MCP is working for non-baseline modes
-  if (args.mode !== 'baseline' && existsSync(MCP_CONFIG)) {
+  if (args.mode !== 'baseline' && existsSync(effectiveMcpConfig)) {
     console.error('Preflight: checking Grafema MCP...');
     const preflightResult = await runQuestion(
       { id: 'PREFLIGHT', question: 'Call get_stats and report the nodeCount. Reply with ONLY the number.' },
       args.mode, modelId,
       'You have access to a code graph via MCP tools. {{question}}\nPut your answer inside <answer></answer> tags.',
-      args.projectRoot
+      args.projectRoot, effectiveMcpConfig
     );
     const answer = (preflightResult.answer_text || '').trim();
     const nodeCount = parseInt(answer.replace(/[^0-9]/g, ''), 10);
@@ -526,7 +532,7 @@ async function main() {
     const q = questions[i];
     console.error(`[${i + 1}/${questions.length}] ${q.id}: ${q.question.slice(0, 80)}...`);
 
-    const result = await runQuestion(q, args.mode, modelId, promptTemplate, args.projectRoot);
+    const result = await runQuestion(q, args.mode, modelId, promptTemplate, args.projectRoot, effectiveMcpConfig);
 
     if (result.error) {
       console.error(`  ${q.id}: ERROR — ${result.error}`);
