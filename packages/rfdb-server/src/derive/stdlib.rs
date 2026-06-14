@@ -3027,17 +3027,31 @@ mod tests {
     fn js_class_inheritance_same_file_and_cross_file_arms() {
         let mut v = FixtureStorageView::new(1);
 
+        // A1 now scope-walks CONTAINS to the enclosing MODULE binder (gold idiom),
+        // not a flat (file,name) match — every file-resident CLASS is contained by
+        // its file's MODULE on a real graph, so the fixture wires MODULE -CONTAINS->
+        // CLASS for the A1 classes (a.ts, b.ts, g.ts). has_local still uses the flat
+        // class_in, so the A2-A4 gates are unchanged.
+        named_node(&mut v, "m_a", "a", "MODULE", "a.ts");
+        named_node(&mut v, "m_b", "b", "MODULE", "b.ts");
+        named_node(&mut v, "m_g", "g", "MODULE", "g.ts");
+
         // A1 same-file: Dog extends Animal in a.ts; Plain has no superClass.
         named_node(&mut v, "cls_animal", "Animal", "CLASS", "a.ts");
         named_node(&mut v, "cls_dog", "Dog", "CLASS", "a.ts");
         v.put_node_metadata(id_of("cls_dog"), r#"{"superClass":"Animal"}"#);
         named_node(&mut v, "cls_plain", "Plain", "CLASS", "a.ts");
+        edge(&mut v, "m_a", "cls_animal", "CONTAINS");
+        edge(&mut v, "m_a", "cls_dog", "CONTAINS");
+        edge(&mut v, "m_a", "cls_plain", "CONTAINS");
 
         // Fall-through gate: Cat extends Base — Base exists BOTH same-file and
         // as an import binding; only the same-file edge may derive.
         named_node(&mut v, "cls_base_local", "Base", "CLASS", "b.ts");
         named_node(&mut v, "cls_cat", "Cat", "CLASS", "b.ts");
         v.put_node_metadata(id_of("cls_cat"), r#"{"superClass":"Base"}"#);
+        edge(&mut v, "m_b", "cls_base_local", "CONTAINS");
+        edge(&mut v, "m_b", "cls_cat", "CONTAINS");
         named_node(&mut v, "b_base", "Base", "IMPORT_BINDING", "b.ts");
         named_node(&mut v, "cls_base_remote", "Base", "CLASS", "base.ts");
         edge(&mut v, "b_base", "cls_base_remote", "IMPORTS_FROM");
@@ -3078,6 +3092,27 @@ mod tests {
         v.put_node_metadata(id_of("cls_twin"), r#"{"superClass":"Dup"}"#);
         named_node(&mut v, "cls_dup1", "Dup", "CLASS", "g.ts");
         named_node(&mut v, "cls_dup2", "Dup", "CLASS", "g.ts");
+        edge(&mut v, "m_g", "cls_twin", "CONTAINS");
+        edge(&mut v, "m_g", "cls_dup1", "CONTAINS");
+        edge(&mut v, "m_g", "cls_dup2", "CONTAINS");
+
+        // PRECISION (the rework's only semantic gain): a nested class shadowing a
+        // top-level same-name superclass. In h.ts, Panel extends Widget: there is a
+        // top-level `Widget` (MODULE-contained) AND a nested `Widget` declared
+        // inside a function (CONTAINS parent = a SCOPE, NOT the MODULE). The flat
+        // (file,name) lookup over-resolved to BOTH Widgets; the MODULE scope-walk
+        // binds ONLY the top-level Widget — the nested class is not in the MODULE's
+        // CONTAINS set, so it cannot bind a sibling-module reference.
+        named_node(&mut v, "m_h", "h", "MODULE", "h.ts");
+        named_node(&mut v, "cls_widget_top", "Widget", "CLASS", "h.ts");
+        named_node(&mut v, "cls_panel", "Panel", "CLASS", "h.ts");
+        v.put_node_metadata(id_of("cls_panel"), r#"{"superClass":"Widget"}"#);
+        edge(&mut v, "m_h", "cls_widget_top", "CONTAINS");
+        edge(&mut v, "m_h", "cls_panel", "CONTAINS");
+        // The shadowing nested Widget — contained by a function SCOPE, not the MODULE.
+        named_node(&mut v, "h_fn_scope", "scope", "SCOPE", "h.ts");
+        named_node(&mut v, "cls_widget_nested", "Widget", "CLASS", "h.ts");
+        edge(&mut v, "h_fn_scope", "cls_widget_nested", "CONTAINS");
 
         // File gate: the same shape in a .rs file derives nothing.
         named_node(&mut v, "cls_rs_animal", "RsAnimal", "CLASS", "main.rs");
@@ -3106,9 +3141,13 @@ mod tests {
                 ("cls_cat", "cls_base_local"),
                 ("cls_twin", "cls_dup1"),
                 ("cls_twin", "cls_dup2"),
+                // PRECISION: Panel binds ONLY the MODULE-contained top-level Widget,
+                // NOT the function-nested Widget (the scope-walk's semantic gain).
+                ("cls_panel", "cls_widget_top"),
             ]),
-            "A1: same-file superclass (+ DELTA 1 both duplicates); the self-name \
-             class (neq), the no-superClass class and the .rs file derive nothing"
+            "A1: same-file superclass resolved by MODULE scope-walk (+ DELTA 1 both \
+             duplicates); the self-name class (neq), the no-superClass class and the \
+             .rs file derive nothing; a function-nested same-name class does NOT bind"
         );
         assert_eq!(
             triples(&eval, "ext_cross_file"),
@@ -5166,9 +5205,13 @@ mod tests {
         );
 
         // A1-suppression: a same-file class named Error wins over the builtin.
+        // A1 scope-walks CONTAINS to the enclosing MODULE, so wire d.ts's MODULE.
+        named_node(&mut v, "m_d", "d", "MODULE", "d.ts");
         named_node(&mut v, "cls_localerr", "Error", "CLASS", "d.ts");
         named_node(&mut v, "cls_shadow", "Shadow", "CLASS", "d.ts");
         v.put_node_metadata(id_of("cls_shadow"), r#"{"superClass":"Error"}"#);
+        edge(&mut v, "m_d", "cls_localerr", "CONTAINS");
+        edge(&mut v, "m_d", "cls_shadow", "CONTAINS");
 
         // A2c chain: import { Base } from './barrel' where barrel.ts star
         // re-exports base.ts; the binding has NO legacy IMPORTS_FROM edge.

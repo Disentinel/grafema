@@ -122,17 +122,48 @@ jsts_class(C, F) :- node(C, "CLASS"), attr(C, "file", F), ends_with(F, ".cjs").
 % stores superClass only when non-empty; the neq guards other producers).
 super_of(C, F, SC) :- jsts_class(C, F), node_attr(C, "superClass", SC), neq(SC, "").
 
-% Same-file class index (file, name) → node (Hs:53-60).
+% Same-file class index (file, name) → node (Hs:53-60). RETAINED for the
+% has_local fall-through gate ONLY (see below) — keeping it FLAT keeps the A2/
+% A2c/A3/A4 cross-file/builtin arms BYTE-IDENTICAL in behaviour: those arms gate
+% on `\+ has_local(C)`, so their firing condition must not move. On every real
+% JS/TS graph one file is exactly one MODULE and there are no same-(file,name)
+% class collisions, so flat class_in and the MODULE-scoped lookup below coincide
+% (LIVE-VERIFIED on the dogfood graph: flat A1 = 8 edges ≡ MODULE-scoped A1 = 8
+% edges, byte-for-byte same C→T pairs; same-(file,name) collisions = 0; nested
+% classes = 0).
 class_in(F, N, T) :- node(T, "CLASS"), attr(T, "file", F), attr(T, "name", N), neq(N, "").
 
 % Same-file candidate EXISTS — the resolver's fall-through gate (Hs:97/106).
-% Counts C itself (DELTA 2: gate parity over edge parity).
+% Counts C itself (DELTA 2: gate parity over edge parity). KEPT on the FLAT
+% class_in so A2-A4 stay byte-identical (see class_in note above).
 has_local(C) :- super_of(C, F, SC), class_in(F, SC, T).
 
-% A1: same-file superclass.
+% ── A1 binder = LEXICAL SCOPE-WALK over CONTAINS (gold idiom: js_same_file_calls
+%    B1 / js_property_access_full encl_* walk CONTAINS+HAS_SCOPE to the nearest
+%    binder) ─────────────────────────────────────────────────────────────────
+% A CLASS is MODULE-contained (LIVE-VERIFIED: every file-resident CLASS has
+% exactly one CONTAINS parent and it is a MODULE; <builtin> classes have none).
+% The binder for a same-file superclass NAME is therefore the CLASS reachable in
+% the referencing class's enclosing MODULE — `[M:MODULE] -CONTAINS-> {C, T}` —
+% NOT a raw (file, name) match. This disambiguates a nested class (CONTAINS
+% parent ≠ MODULE) shadowing a top-level same-name superclass: such a class is
+% NOT contained by the MODULE, so it cannot bind a sibling-module reference.
+% (0 nested-class instances on the current corpus ⇒ measurable delta is 0; the
+% rework is a soundness/precision hardening that pays off on a future graph.)
+class_module(C, M) :- node(C, "CLASS"), edge(M, C, "CONTAINS"), node(M, "MODULE").
+
+% The referencing class's enclosing-MODULE class index (binder = a CLASS sharing
+% the same MODULE container, keyed by name). Replaces the FLAT (file,name)
+% lookup for the A1 head only.
+class_in_mod(M, N, T) :-
+    edge(M, T, "CONTAINS"), node(T, "CLASS"), node(M, "MODULE"),
+    attr(T, "name", N), neq(N, "").
+
+% A1: same-file superclass, resolved by lexical scope-walk to the enclosing
+% MODULE's class binder (not flat file,name). super_of stays the SC seed.
 @materialize(edge_type = "EXTENDS", mode = "additive", meta(resolvedVia))
 ext_same_file(C, T, "class-inheritance") :-
-    super_of(C, F, SC), class_in(F, SC, T), neq(C, T).
+    super_of(C, F, SC), class_module(C, M), class_in_mod(M, SC, T), neq(C, T).
 
 % A2: cross-file superclass through the import-binding's legacy IMPORTS_FROM
 % edge (hybrid EDB seam), only when the same-file index missed. MODULE targets
