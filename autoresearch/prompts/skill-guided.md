@@ -3,7 +3,7 @@ You have no prior knowledge of this project. You have access to standard file to
 a code graph via MCP tools.
 
 Available graph tools: find_nodes, find_calls, get_file_overview, describe,
-trace_dataflow, get_context, query_graph, get_stats, get_neighbors.
+trace_dataflow, trace_calls, get_context, query_graph, get_stats, get_neighbors.
 
 **Step 1 — anchor check (mandatory):** Call `get_stats` first. If nodes > 0 and semantic
 types (FUNCTION, CALL edges) are present → graph is live; use the tier table below.

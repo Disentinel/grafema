@@ -90,7 +90,7 @@ Per-tier accuracy + tokens/session reported separately.
 
 ### H5: Skill-guided matches or beats v1 forced-graph on Tier-3/4 quality with fewer tokens
 **Metric:** Tier-3/4 LLM judge score: skill-guided ≥ forced-graph; tokens: skill-guided < forced-graph
-**Why:** the skill de-escalates after graph answers → avoids over-querying spiral (Q07, Q20 in v1 had MCP spirals)
+**Why:** the skill de-escalates after graph answers → avoids MCP over-querying (Q07 in v1: 5 mcp_calls, +87% tokens vs baseline 0 calls; Q20 had 0 mcp_calls in both conditions — Q20 was a text-search token spiral, not an MCP spiral; de-escalation targets Q07-class runaway)
 
 ---
 
