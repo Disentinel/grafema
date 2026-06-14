@@ -1,0 +1,602 @@
+# VS Code Autoresearch Questions — Combined v1+v2 (n=60)
+#
+# Pre-registration: 2026-06-14 (REG-1173 Benchmark v2)
+# v1 questions (L1/L4/Q01-Q20): sourced from real GitHub issues, March 2026
+# v2 questions (T1-T4): explicit tier stratification, added June 2026
+#
+# Do NOT modify after pre-registration commit (results must remain replicable)
+
+questions:
+- id: L1-01
+  question: Where is the command palette quick pick implemented? What file contains
+    the main class?
+  type: finding_focus
+  sillito_level: 1
+  source: Sillito Q1 'Where in the code is the functionality X implemented?'
+  golden_answer_hint: src/vs/workbench/browser/parts/quickinput/quickInput.ts, QuickInputController
+- id: L1-02
+  question: What class handles file drag and drop in the explorer tree?
+  type: finding_focus
+  sillito_level: 1
+  source: Sillito Q2 'Where is the interface for X?'
+  golden_answer_hint: src/vs/workbench/contrib/files/browser/views/explorerViewer.ts,
+    FileDragAndDrop
+- id: L1-03
+  question: Where is the diff editor implemented? What is the entry point class?
+  type: finding_focus
+  sillito_level: 1
+  source: Sillito Q1 variant
+  golden_answer_hint: src/vs/editor/browser/widget/diffEditor/diffEditorWidget.ts,
+    DiffEditorWidget
+- id: L1-04
+  question: What file defines the INotificationService interface and where is it implemented?
+  type: finding_focus
+  sillito_level: 1
+  source: Sillito Q3 'Where is X created/instantiated?'
+  golden_answer_hint: src/vs/platform/notification/common/notification.ts (interface),
+    src/vs/workbench/services/notification/common/notificationService.ts (impl)
+- id: L1-05
+  question: Where is the minimap rendering code? What class draws it?
+  type: finding_focus
+  sillito_level: 1
+  source: Sillito Q1 variant
+  golden_answer_hint: src/vs/editor/browser/viewParts/minimap/minimap.ts, Minimap
+    class
+- id: L4-01
+  question: What is the layering architecture of VS Code? Which directories correspond
+    to which layers and what are the dependency rules between them?
+  type: architecture
+  sillito_level: 4
+  source: 'Sillito Q39 ''What is the overall architecture?'', issue #87492'
+  golden_answer_hint: base (no deps) → platform (base) → editor (platform) → workbench
+    (editor+platform). src/vs/base, src/vs/platform, src/vs/editor, src/vs/workbench.
+    Layering enforced by ESLint rules.
+- id: L4-02
+  question: What are all the different process types in VS Code and what runs in each?
+    How do they communicate?
+  type: architecture
+  sillito_level: 4
+  source: 'Sillito Q40 ''What are the boundaries/interfaces between subsystems?'',
+    issues #113410 #23976'
+  golden_answer_hint: Main/renderer (Electron), extension host (Node.js fork), shared
+    process (utility), pty host (terminal), file watcher. IPC via RPCProtocol (msgpack
+    over MessagePort/socket).
+- id: L4-03
+  question: How is the workbench shell composed? What are the main Parts and how does
+    layout work?
+  type: architecture
+  sillito_level: 4
+  source: 'Sillito Q41 ''What is the overall structure of system X?'', PR #304447'
+  golden_answer_hint: 'Layout: WorkbenchLayout orchestrates Parts (ActivitybarPart,
+    SidebarPart, EditorPart, PanelPart, StatusbarPart). Each Part extends Component.
+    Grid-based layout in workbench.ts.'
+- id: L4-04
+  question: What is the extension activation model? How does VS Code decide when to
+    activate an extension and what lifecycle hooks exist?
+  type: architecture
+  sillito_level: 4
+  source: 'Sillito Q42 ''What design patterns are used?'', issue #58226 (doc feedback)'
+  golden_answer_hint: activationEvents in package.json, ExtensionActivationManager,
+    activate/deactivate exports, lazy activation via onCommand/onLanguage/onFileSystem/workspaceContains/*
+- id: L4-05
+  question: How does the editor contribution system work? How do features like bracket
+    matching, folding, and hover get registered on the editor?
+  type: architecture
+  sillito_level: 4
+  source: Sillito Q44 'What are the extension/plugin points?'
+  golden_answer_hint: registerEditorContribution in editorExtensions.ts, IEditorContribution
+    interface, lifecycle tied to CodeEditorWidget creation/disposal
+- id: Q01
+  question: Which of IHoverService, IHoverDelegate, or setupCustomHover should I use
+    to add a custom hover to a new component? Why is setupCustomHover associated with
+    IconLabel?
+  source: https://github.com/microsoft/vscode/issues/204965
+  type: api_confusion
+  sillito_level: 2
+  why: Real VS Code contributor confused by 3 overlapping hover APIs. 8 comments,
+    no clear resolution. Requires tracing all callers of each API to understand the
+    intended pattern.
+  golden_answer_hint: IHoverDelegate for base widgets, IHoverService directly for
+    simple cases, setupCustomHover is legacy from pre-IHoverService era
+- id: Q02
+  question: In ExplorerView#getActiveFile, why does it only use file-URIs? Why aren't
+    remote files revealed in the explorer?
+  source: https://github.com/microsoft/vscode/issues/34768
+  type: root_cause
+  sillito_level: 3
+  why: Contributor traced code to the exact line (explorerView.ts#L363) and couldn't
+    understand the design decision. Requires understanding URI scheme handling across
+    the explorer.
+  golden_answer_hint: explorerView.ts line 363, file scheme check, related to IExplorerService
+    model
+- id: Q03
+  question: When the first workspace folder changes, should the extension host be
+    restarted? What happens to workspace.rootPath during runtime?
+  source: https://github.com/microsoft/vscode/issues/69335
+  type: architectural_investigation
+  sillito_level: 4
+  why: 64 comments. Core team investigation into extension host lifecycle. Understanding
+    requires tracing workspace.rootPath, onDidChangeWorkspaceFolders, and extension
+    host restart logic.
+  golden_answer_hint: ExtensionHostManager restart decision, workspace.rootPath immutability
+    contract, IExtHostWorkspace
+- id: Q04
+  question: Why does the Extension Host terminate unexpectedly in large repos? What
+    triggers the crash and what is the recovery path?
+  source: https://github.com/microsoft/vscode/issues/23976
+  type: debugging
+  sillito_level: 3
+  why: 69 comments, recurring issue. Requires understanding extension host process
+    lifecycle, memory limits, and the restart mechanism.
+  golden_answer_hint: ExtensionHostProcessWorker, OOM in extension host process, IExtensionHostStarter
+    recovery
+- id: Q05
+  question: How does VS Code's terminal pty host connection work? What causes 'Connection
+    to terminal pty host process is becoming unresponsive'?
+  source: https://github.com/microsoft/vscode/issues/130320
+  type: root_cause
+  sillito_level: 3
+  why: 87 comments, started after 1.59 update. Root cause requires tracing TerminalInstance
+    → PtyHostService → pty process communication and understanding the heartbeat/reconnection
+    logic.
+  golden_answer_hint: PtyHostService, TerminalProcessManager, heartbeat mechanism,
+    reconnection logic
+- id: Q06
+  question: When settings editor runs concurrent AI search and local search, why do
+    the timing telemetry values get corrupted?
+  source: https://github.com/microsoft/vscode/pull/304361
+  type: root_cause
+  sillito_level: 3
+  why: 'Real bug. Shared class-level StopWatch instance. PR explains root cause: createCancelablePromise
+    launches concurrent searches, shared stopWatch.reset() corrupts timing. Requires
+    tracing SettingsEditor search flow.'
+  golden_answer_hint: 'SettingsEditor2, shared StopWatch, createCancelablePromise,
+    fix: local StopWatch per search'
+- id: Q07
+  question: Why does the Watch view context menu fail to appear during debugging when
+    the Variables pane is hidden?
+  source: https://github.com/microsoft/vscode/pull/274414
+  type: root_cause
+  sillito_level: 3
+  why: Real bug. Context menu visibility tied to Variables pane state. Requires understanding
+    debug view contribution points and context key dependencies.
+  golden_answer_hint: WatchExpressionsView, context menu precondition, Variables pane
+    visibility context key
+- id: Q08
+  question: In notebooks, when using Cmd+D (Add Selection to Next Find Match), what
+    prevents infinite looping when all matches are already selected?
+  source: https://github.com/microsoft/vscode/pull/251157
+  type: root_cause
+  sillito_level: 3
+  why: Real bug — infinite loop. Requires understanding NotebookFindController state
+    machine, selection tracking, and loop termination condition.
+  golden_answer_hint: NotebookFindController, addFindMatchToSelection, set-based dedup
+    of already-selected matches
+- id: Q09
+  question: I want to contribute to VS Code but I don't understand how the codebase
+    is structured. What are the main layers and how do services connect?
+  source: https://github.com/microsoft/vscode/issues/87492
+  type: onboarding
+  sillito_level: 4
+  why: '6 comments from someone genuinely trying to contribute. The answer requires
+    mapping VS Code''s layered architecture: base → platform → editor → workbench
+    → extensions.'
+  golden_answer_hint: src/vs/base (utilities), src/vs/platform (services), src/vs/editor
+    (monaco), src/vs/workbench (shell), dependency injection via InstantiationService
+- id: Q10
+  question: What docs page for extension development is hardest to understand? What
+    topics lack useful information?
+  source: https://github.com/microsoft/vscode/issues/58226
+  type: documentation_gaps
+  sillito_level: 1
+  why: 35 comments collecting real pain points. Each comment is a question someone
+    couldn't answer from existing docs. Gold mine for what Grafema should help with.
+  golden_answer_hint: 'Top complaints: webview lifecycle, tree view data providers,
+    custom editors, debugging extension host'
+- id: Q11
+  question: How does VS Code's DI system work? When I see @IConfigurationService in
+    a constructor, how does the value get injected?
+  source: 'deduced from codebase patterns + issue #204965 mentioning service confusion'
+  type: architectural
+  sillito_level: 2
+  why: Every VS Code file uses DI. Understanding createDecorator → ServiceIdentifier
+    → InstantiationService.createInstance is prerequisite for any contribution.
+  golden_answer_hint: createDecorator in instantiation.ts, ServiceIdentifier, InstantiationService._createInstance,
+    registerSingleton in workbench contributions
+- id: Q12
+  question: How does the extension host protocol serialize API calls? When an extension
+    calls vscode.workspace.getConfiguration, what happens across the process boundary?
+  source: 'deduced from issues #113410 #114714 #23976 (extension host crashes)'
+  type: dataflow
+  sillito_level: 3
+  why: 'Extension host crashes are the #1 stability issue. Understanding RPCProtocol,
+    ProxyIdentifier, and the main↔exthost serialization is essential for debugging.'
+  golden_answer_hint: RPCProtocol in vs/workbench/services/extensions, ProxyIdentifier,
+    MainThreadExtensionService, ExtHostExtensionService
+- id: Q13
+  question: The git extension prompts to configure identity when user.name/email is
+    missing. How does the git extension detect this failure and what recovery flow
+    does it offer?
+  source: https://github.com/microsoft/vscode/pull/304522
+  type: feature_trace
+  sillito_level: 2
+  why: Recent PR. Tracing from git commit failure → error detection → inline prompt
+    → retry. Tests understanding of extensions/git/src/commands.ts flow.
+  golden_answer_hint: extensions/git/src/commands.ts, commit command, git error parsing,
+    QuickInput for name/email
+- id: Q14
+  question: Sessions feature uses ITaskService to run tasks instead of terminal commands.
+    How does ITaskService.run() differ from direct terminal execution?
+  source: https://github.com/microsoft/vscode/pull/304397
+  type: architecture
+  sillito_level: 2
+  why: PR replaced terminal-based task execution with proper service. Understanding
+    requires comparing terminal.sendText vs ITaskService.run lifecycle.
+  golden_answer_hint: ITaskService in vs/workbench/contrib/tasks, TaskExecution, terminal
+    creation vs task runner
+- id: Q15
+  question: How does files.exclude actually work? What component reads the setting
+    and how does it filter the explorer tree?
+  source: https://github.com/microsoft/vscode/issues/120082
+  type: configuration_trace
+  sillito_level: 2
+  why: 8 comments, users confused by behavior. Requires tracing from IConfigurationService
+    → file watcher → explorer model filtering.
+  golden_answer_hint: IFileService, ExplorerModel, glob matching in vs/base/common/glob.ts,
+    IConfigurationService change events
+- id: Q16
+  question: What is the complete lifecycle of a terminal instance — from 'New Terminal'
+    click to shell process running to output appearing in the panel?
+  source: 'synthesized from issues #130320, #105446, #69665, #43169 (all terminal
+    lifecycle bugs)'
+  type: lifecycle
+  sillito_level: 4
+  why: 'Terminal bugs account for 5 of top 30 VS Code issues by comment count. Full
+    lifecycle trace: command → TerminalService → TerminalInstance → PtyHostService
+    → pty process → output rendering.'
+  golden_answer_hint: TerminalService.createTerminal → TerminalInstance → TerminalProcessManager
+    → PtyHostService → node-pty → xterm.js
+- id: Q17
+  question: What causes VS Code to become unresponsive after resuming from sleep?
+    What rendering/GPU recovery path exists?
+  source: 'https://github.com/microsoft/vscode/issues/69665 (145 comments), #284162
+    (56 comments)'
+  type: root_cause
+  sillito_level: 3
+  why: Two of the most-commented bugs. Requires understanding Electron's GPU process
+    recovery, compositor state, and VS Code's redraw logic.
+  golden_answer_hint: Electron gpu-process crash recovery, IPartService.onPartVisibilityChange,
+    terminal GPU texture invalidation
+- id: Q18
+  question: Extension host crashed with SIGILL on macOS ARM64. What is the extension
+    host startup sequence and what could cause an illegal instruction?
+  source: https://github.com/microsoft/vscode/issues/113410
+  type: debugging
+  sillito_level: 3
+  why: 89 comments, Apple Silicon transition. Requires understanding extension host
+    process spawning, native module loading, and architecture-specific binary selection.
+  golden_answer_hint: ExtensionHostStarter, fork/exec path, native node modules, Rosetta
+    2 vs native ARM64
+- id: Q19
+  question: How does SSH agent forwarding work with VS Code Remote SSH? Why does SSH_AUTH_SOCK
+    become stale?
+  source: https://github.com/microsoft/vscode/issues/168202
+  type: root_cause
+  sillito_level: 3
+  why: 107 comments, ongoing issue. Requires understanding how Remote SSH extension
+    manages environment variables, terminal persistence, and SSH socket lifecycle.
+  golden_answer_hint: Remote SSH extension, SSH_AUTH_SOCK in terminal environment,
+    terminal persistence across reconnections
+- id: Q20
+  question: Why does CPU go 100% when using Go To Definition on local node_modules?
+    What is the JS/TS language server doing?
+  source: https://github.com/microsoft/vscode/issues/71866
+  type: performance
+  sillito_level: 3
+  why: 9 comments. Requires understanding TypeScript language service integration,
+    project inference from node_modules, and the tsserver process lifecycle.
+  golden_answer_hint: TypeScriptServiceClient, tsserver process, automatic project
+    inference, maxNodeModuleJsDepth setting
+- id: T1-01
+  question: What exact error message does VS Code display when a workspace trust check
+    blocks an extension from running? Provide the literal string (or key).
+  type: text_lookup
+  grafema_tier: 1
+  source: nls.localize calls in src/vs/workbench/services/extensions/ trust-related
+    strings
+  golden_answer_hint: Strings referencing 'trusted workspace' or 'extension requires
+    a trusted workspace' — look for nls.localize near trust-check code in extensionService.ts
+    or workspaceTrust.ts
+  difficulty: easy
+- id: T1-02
+  question: What command identifier opens the VS Code Output panel? Give the string
+    constant (e.g. 'workbench.action.XXX').
+  type: text_lookup
+  grafema_tier: 1
+  source: src/vs/workbench/contrib/output/browser/output.contribution.ts
+  golden_answer_hint: workbench.action.output.toggleOutput (or workbench.panel.output.focus)
+    — grep for 'toggleOutput' in contrib/output
+  difficulty: easy
+- id: T1-03
+  question: Where is the 'File changed on disk' (revert-or-overwrite) notification
+    string defined? Which file contains the nls.localize call for the revert prompt?
+  type: text_lookup
+  grafema_tier: 1
+  source: src/vs/workbench/services/textfile/common/textFileEditorModel.ts conflict
+    messages
+  golden_answer_hint: src/vs/workbench/services/textfile/common/textFileEditorModel.ts
+    — nls.localize with 'revert' and 'disk' near conflict handling code
+  difficulty: easy
+- id: T1-04
+  question: What string key is used to persist the most-recently-used (MRU) workspace
+    list in VS Code's global storage?
+  type: text_lookup
+  grafema_tier: 1
+  source: src/vs/platform/workspaces/node/workspacesMainService.ts or historyService.ts
+  golden_answer_hint: Look for 'workspaces.mru', 'historyService.mruWorkspaces', or
+    similar key in workspaces or history service — grep for 'mru' or 'recentlyOpened'
+  difficulty: easy
+- id: T1-05
+  question: What FileSystemProviderErrorCode enum value does VS Code use when a file
+    is not found? Where is it defined?
+  type: text_lookup
+  grafema_tier: 1
+  source: src/vs/platform/files/common/files.ts
+  golden_answer_hint: FileSystemProviderErrorCode.FileNotFound in src/vs/platform/files/common/files.ts
+    — also FileOperationResult.FILE_NOT_FOUND for higher-level APIs
+  difficulty: easy
+- id: T2-01
+  question: Where is IQuickInputService defined? Which concrete classes implement
+    it and in which files?
+  type: graph_lookup
+  grafema_tier: 2
+  source: src/vs/platform/quickinput/common/quickInput.ts interface + implementations
+  golden_answer_hint: IQuickInputService in src/vs/platform/quickinput/common/quickInput.ts;
+    QuickInputService in src/vs/workbench/browser/parts/quickinput/quickInput.ts;
+    StandaloneQuickInputService for Monaco standalone
+  difficulty: medium
+- id: T2-02
+  question: Where is IWorkspaceContextService defined? List all its non-test implementations
+    and their file paths.
+  type: graph_lookup
+  grafema_tier: 2
+  source: src/vs/platform/workspace/common/workspace.ts
+  golden_answer_hint: IWorkspaceContextService in src/vs/platform/workspace/common/workspace.ts;
+    WorkspaceService in src/vs/workbench/services/configuration/browser/configurationService.ts
+  difficulty: medium
+- id: T2-03
+  question: Which file is the entry point for the VS Code web workbench (browser variant)?
+    What is the main bootstrapping function?
+  type: graph_lookup
+  grafema_tier: 2
+  source: src/vs/workbench/workbench.web.main.ts + src/vs/code/browser/workbench/workbench.ts
+  golden_answer_hint: src/vs/code/browser/workbench/workbench.ts with main() or create()
+    function; workbench.web.main.ts as the bundle entry
+  difficulty: medium
+- id: T2-04
+  question: Where is ILogService defined? List the implementations used in the main
+    process, extension host, and browser renderer.
+  type: graph_lookup
+  grafema_tier: 2
+  source: src/vs/platform/log/common/log.ts + concrete implementations
+  golden_answer_hint: ILogService in src/vs/platform/log/common/log.ts; MainProcessLogger
+    (node main), ExtHostLogService (ext host), LogService/BufferLogger (early startup/browser)
+  difficulty: medium
+- id: T2-05
+  question: Where is IEditorGroupsService defined? Which concrete class implements
+    it in the workbench, and in which file?
+  type: graph_lookup
+  grafema_tier: 2
+  source: src/vs/workbench/services/editor/common/editorGroupsService.ts
+  golden_answer_hint: IEditorGroupsService in src/vs/workbench/services/editor/common/editorGroupsService.ts;
+    EditorPart implements it in src/vs/workbench/browser/parts/editor/editorPart.ts
+  difficulty: medium
+- id: T2-06
+  question: Where is IContextKeyService defined and in what two places is it registered
+    as a singleton in the main workbench?
+  type: graph_lookup
+  grafema_tier: 2
+  source: src/vs/platform/contextkey/common/contextkey.ts + workbench registration
+    points
+  golden_answer_hint: IContextKeyService in src/vs/platform/contextkey/common/contextkey.ts;
+    registered via registerSingleton in workbench.desktop.main.ts and workbench.web.main.ts
+  difficulty: medium
+- id: T2-07
+  question: What file and class implement the Problems (Markers/Diagnostics) view,
+    and where is the view registered?
+  type: graph_lookup
+  grafema_tier: 2
+  source: src/vs/workbench/contrib/markers/browser/
+  golden_answer_hint: MarkersView in src/vs/workbench/contrib/markers/browser/markersView.ts;
+    registered in src/vs/workbench/contrib/markers/browser/markers.contribution.ts
+    via ViewsRegistry
+  difficulty: medium
+- id: T2-08
+  question: Where is IInstantiationService defined? What TypeScript mechanism makes
+    createInstance() type-safe (stripping DI-injected parameters)?
+  type: graph_lookup
+  grafema_tier: 2
+  source: src/vs/platform/instantiation/common/instantiation.ts
+  golden_answer_hint: IInstantiationService in src/vs/platform/instantiation/common/instantiation.ts;
+    uses overloaded signatures with conditional types (ServicesAccessor → strips ServiceIdentifier<T>
+    parameters from ctor)
+  difficulty: hard
+- id: T3-01
+  question: What are the main callers of IFileService.readFile() in the workbench
+    (excluding tests)? Which subsystems use it most frequently?
+  type: graph_relations
+  grafema_tier: 3
+  source: cross-subsystem IFileService.readFile callers
+  golden_answer_hint: TextFileEditorModel, ConfigurationService, UserDataSyncService,
+    ExtensionGalleryService, SearchService — file reading is spread across many services
+  difficulty: medium
+  why: 100+ grep hits; graph caller enumeration groups by subsystem and filters test
+    code.
+- id: T3-02
+  question: Which services or commands call IWorkbenchEnvironmentService.extensionDevelopmentLocationURI?
+    What features depend on this property being set?
+  type: graph_relations
+  grafema_tier: 3
+  source: extension development mode gating
+  golden_answer_hint: Debug launch service, ExtensionHostManager, WatcherService —
+    this URI gates extension dev mode; callers include extension host startup and
+    dev tools activation
+  difficulty: hard
+  why: Extension dev mode is dynamically gated; callers cannot be found by text-searching
+    the property name alone.
+- id: T3-03
+  question: What are the direct callers of IModelService.createModel()? What do they
+    each use the returned ITextModel for?
+  type: graph_relations
+  grafema_tier: 3
+  source: src/vs/editor/common/services/modelService.ts callers
+  golden_answer_hint: TextFileEditorModel (file editing), UntitledTextEditorModel
+    (scratch), SearchEditorModel (search results), InlineCompletionProvider (preview
+    model) — each creates a transient or persistent text model
+  difficulty: medium
+- id: T3-04
+  question: What services call ITerminalService.createTerminal()? Which callers provide
+    a custom IPseudoterminal implementation vs using default shell args?
+  type: graph_relations
+  grafema_tier: 3
+  source: src/vs/workbench/contrib/terminal/browser/terminalService.ts callers
+  golden_answer_hint: TaskService (custom shellArgs for task runner), DebugService
+    (REPL with custom pty), ExternalTerminalService (OS terminal delegation), terminal
+    contribution commands (user 'New Terminal')
+  difficulty: medium
+- id: T3-05
+  question: Which subsystems register entries with IStatusbarService.addEntry()? List
+    the top 5 contributors to the status bar.
+  type: graph_relations
+  grafema_tier: 3
+  source: IStatusbarService.addEntry callers across contrib/
+  golden_answer_hint: LanguageStatusService (language mode), DebugStatusBarItem (debug
+    mode), SCM status bar (source control branch), RemoteStatusBarEntry (remote indicator),
+    NotebookKernelStatusBar (kernel selector)
+  difficulty: medium
+- id: T3-06
+  question: When a user changes a setting through the Settings editor UI, what chain
+    of service calls fires? Which services are invoked in order?
+  type: graph_relations
+  grafema_tier: 3
+  source: SettingsEditor2 → IConfigurationService chain
+  golden_answer_hint: SettingsEditor2.updateSetting → IConfigurationService.updateValue
+    → ConfigurationModel change → onDidChangeConfiguration event → all registered
+    listeners (editors, extensions, services)
+  difficulty: hard
+  why: The write path traverses 3 abstraction layers; grep finds the listeners but
+    not the order.
+- id: T3-07
+  question: What are the callers of ContextKeyExprType.Equals evaluation logic? How
+    many distinct subsystems evaluate 'when' clause conditions?
+  type: graph_relations
+  grafema_tier: 3
+  source: src/vs/platform/contextkey/common/contextkey.ts evaluate callers
+  golden_answer_hint: KeybindingResolver (keybindings), MenuRegistry evaluators (context
+    menus), ViewsRegistry (view visibility), CommandsRegistry when-clause — 4+ subsystems
+    all evaluate context key expressions
+  difficulty: medium
+- id: T3-08
+  question: Which concrete classes implement ITextEditorModel and where are they registered?
+    Which one handles untitled files vs workspace files?
+  type: graph_relations
+  grafema_tier: 3
+  source: src/vs/workbench/common/editor/textEditorModel.ts implementors
+  golden_answer_hint: TextFileEditorModel (workspace, via TextFileEditorModelManager),
+    UntitledTextEditorModel (untitled, via UntitledTextEditorService), NotebookCellTextModel
+    (notebook cells)
+  difficulty: medium
+- id: T3-09
+  question: What is the call path from a keypress event to ICommandService.executeCommand()?
+    Which handler classes are involved?
+  type: graph_relations
+  grafema_tier: 3
+  source: src/vs/platform/keybinding/browser/keybindingService.ts dispatch chain
+  golden_answer_hint: DOM keydown → WorkbenchKeybindingService._dispatch → AbstractKeybindingService.dispatch
+    → ICommandService.executeCommand → CommandsRegistry handler
+  difficulty: hard
+- id: T3-10
+  question: Which parts of VS Code call IExtensionHostProxy methods to cross the main→extension-host
+    process boundary? What IPC transport do they use?
+  type: graph_relations
+  grafema_tier: 3
+  source: src/vs/workbench/services/extensions/common/ proxy callers
+  golden_answer_hint: ExtensionHostManager, MainThreadExtensionService — use RPCProtocol
+    over MessagePort (browser) or Unix socket / IPC (desktop); MainContext/ExtContext
+    bidirectional proxy
+  difficulty: hard
+- id: T4-01
+  question: When a user clicks a file in the Explorer tree, what is the complete call
+    chain from the click event to the file's text appearing in the editor? Name every
+    service boundary crossed.
+  type: flow
+  grafema_tier: 4
+  source: ExplorerView → IEditorService → TextFileEditorModel → ICodeEditor
+  golden_answer_hint: ExplorerView click → ExplorerViewModel.openResource → IEditorService.openEditor
+    → EditorGroupsService → TextFileEditorModelManager → TextFileEditorModel.resolve
+    (IFileService.readFile) → Monaco editor rendering
+  difficulty: hard
+  why: File-open bugs span 6 layers; the full chain requires tracing across service
+    boundaries.
+- id: T4-02
+  question: How does a ripgrep search result travel from the subprocess output to
+    appearing as a highlighted match in the Search panel? Trace across process boundaries.
+  type: flow
+  grafema_tier: 4
+  source: src/vs/workbench/contrib/search/ IPC chain
+  golden_answer_hint: RipgrepProcess stdout → IPC to ext host → SearchService → ISearchComplete
+    event → SearchResult model update → SearchViewPane tree → ResultsRenderer highlight
+  difficulty: hard
+- id: T4-03
+  question: When a user grants workspace trust (clicks 'Yes, I trust the authors'),
+    what state changes propagate through the system? Which services are notified and
+    in what order?
+  type: flow
+  grafema_tier: 4
+  source: src/vs/workbench/services/workspaces/common/workspaceTrust.ts propagation
+  golden_answer_hint: WorkspaceTrustManagementService.setWorkspaceTrust → IStorageService
+    persist → onDidChangeTrust event → ExtensionService (reload restricted extensions)
+    → ContextKeyService update → trust-gated features re-evaluate
+  difficulty: hard
+- id: T4-04
+  question: With 'Format on Save' enabled, what is the sequence of operations when
+    a file is saved? Which services coordinate the format–save transaction and in
+    what order?
+  type: flow
+  grafema_tier: 4
+  source: TextFileEditorModel.save → format → ITextFileService.write chain
+  golden_answer_hint: TextFileEditorModel.save → IEditorWorkerService.formatDocument
+    → TextEdits applied → ITextFileService.write → IFileService.writeFile → flush
+    to disk
+  difficulty: hard
+- id: T4-05
+  question: When a color theme is changed, what is the full update cascade? Which
+    components re-render and in what order?
+  type: flow
+  grafema_tier: 4
+  source: IWorkbenchThemeService.setColorTheme cascade
+  golden_answer_hint: IWorkbenchThemeService.setColorTheme → IColorTheme update →
+    onDidColorThemeChange event → DOM CSS variable update → ICodeEditor.updateOptions(theme)
+    → ViewLayer re-render → viewlets/panels re-apply theme
+  difficulty: medium
+- id: T4-06
+  question: How does a VS Code extension contribute a TextMate grammar for syntax
+    highlighting? Trace the data flow from the extension's package.json to token colors
+    appearing in the editor.
+  type: flow
+  grafema_tier: 4
+  source: ExtensionManagement → ITextMateService → ITokenizationSupport → editor render
+  golden_answer_hint: package.json 'grammars' → ExtensionManifestParser → ITextMateService.registerGrammar
+    → TextMate tokenizer → ILineTokens → ViewLayer color decorations
+  difficulty: hard
+- id: T4-07
+  question: When a notebook cell finishes executing and produces a rich output (e.g.
+    PNG image), how does the output data travel from the kernel to the rendered cell
+    output area in VS Code?
+  type: flow
+  grafema_tier: 4
+  source: src/vs/workbench/contrib/notebook/ kernel→output chain
+  golden_answer_hint: Jupyter kernel → NotebookKernelService → INotebookDocument.appendCellOutput
+    → NotebookCellTextModel.outputs → NotebookEditorWidget renderer → OutputRenderer
+    MimeType handler → DOM or webview injection
+  difficulty: hard

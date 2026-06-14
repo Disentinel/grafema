@@ -1,0 +1,285 @@
+# VS Code Autoresearch Questions — Extension Set (v1 n=30 → v2 n=60)
+#
+# Pre-registered: 2026-06-14 (REG-1173 Benchmark v2)
+# Source: questions-vscode.yaml (original v1 n=30) + this file (+30 new)
+# Stratification: explicit Grafema skill tier table
+#   Tier 1 — text lookup (grep wins, graph adds overhead)
+#   Tier 2 — graph lookup (find_nodes / get_file_overview)
+#   Tier 3 — graph relations (find_calls / get_context)
+#   Tier 4 — flow & architecture (trace_dataflow / Datalog)
+#
+# v1 tier distribution (retrospective): T1≈5, T2≈2, T3≈8, T4≈15
+# v2 target (combined 60):              T1=10, T2=10, T3=18, T4=22
+# New questions here (+30):             T1=+5, T2=+8, T3=+10, T4=+7  (=30)
+#
+# "golden_answer_hint" is for judge scoring — NOT shown to the agent.
+# All questions sourced from or verifiable against microsoft/vscode at
+# commit 1955c9d7 (the canon clone at /home/ops/vscode-clone).
+
+questions:
+
+  # ==========================================================================
+  # TIER 1 — Text Search Optimal
+  # Hypothesis: baseline ≈ skill-guided > forced-graph (overhead without gain)
+  # ==========================================================================
+
+  - id: T1-01
+    question: "What exact error message does VS Code display when a workspace trust check blocks an extension from running? Provide the literal string (or key)."
+    type: text_lookup
+    grafema_tier: 1
+    source: "nls.localize calls in src/vs/workbench/services/extensions/ trust-related strings"
+    golden_answer_hint: "Strings referencing 'trusted workspace' or 'extension requires a trusted workspace' — look for nls.localize near trust-check code in extensionService.ts or workspaceTrust.ts"
+    difficulty: easy
+
+  - id: T1-02
+    question: "What command identifier opens the VS Code Output panel? Give the string constant (e.g. 'workbench.action.XXX')."
+    type: text_lookup
+    grafema_tier: 1
+    source: "src/vs/workbench/contrib/output/browser/output.contribution.ts"
+    golden_answer_hint: "workbench.action.output.toggleOutput (or workbench.panel.output.focus) — grep for 'toggleOutput' in contrib/output"
+    difficulty: easy
+
+  - id: T1-03
+    question: "Where is the 'File changed on disk' (revert-or-overwrite) notification string defined? Which file contains the nls.localize call for the revert prompt?"
+    type: text_lookup
+    grafema_tier: 1
+    source: "src/vs/workbench/services/textfile/common/textFileEditorModel.ts conflict messages"
+    golden_answer_hint: "src/vs/workbench/services/textfile/common/textFileEditorModel.ts — nls.localize with 'revert' and 'disk' near conflict handling code"
+    difficulty: easy
+
+  - id: T1-04
+    question: "What string key is used to persist the most-recently-used (MRU) workspace list in VS Code's global storage?"
+    type: text_lookup
+    grafema_tier: 1
+    source: "src/vs/platform/workspaces/node/workspacesMainService.ts or historyService.ts"
+    golden_answer_hint: "Look for 'workspaces.mru', 'historyService.mruWorkspaces', or similar key in workspaces or history service — grep for 'mru' or 'recentlyOpened'"
+    difficulty: easy
+
+  - id: T1-05
+    question: "What FileSystemProviderErrorCode enum value does VS Code use when a file is not found? Where is it defined?"
+    type: text_lookup
+    grafema_tier: 1
+    source: "src/vs/platform/files/common/files.ts"
+    golden_answer_hint: "FileSystemProviderErrorCode.FileNotFound in src/vs/platform/files/common/files.ts — also FileOperationResult.FILE_NOT_FOUND for higher-level APIs"
+    difficulty: easy
+
+  # ==========================================================================
+  # TIER 2 — Graph Lookup Optimal
+  # Hypothesis: skill-guided > baseline on aliased/re-exported symbols; T>T1 on cost
+  # find_nodes, get_file_overview, describe are faster than reading module trees
+  # ==========================================================================
+
+  - id: T2-01
+    question: "Where is IQuickInputService defined? Which concrete classes implement it and in which files?"
+    type: graph_lookup
+    grafema_tier: 2
+    source: "src/vs/platform/quickinput/common/quickInput.ts interface + implementations"
+    golden_answer_hint: "IQuickInputService in src/vs/platform/quickinput/common/quickInput.ts; QuickInputService in src/vs/workbench/browser/parts/quickinput/quickInput.ts; StandaloneQuickInputService for Monaco standalone"
+    difficulty: medium
+
+  - id: T2-02
+    question: "Where is IWorkspaceContextService defined? List all its non-test implementations and their file paths."
+    type: graph_lookup
+    grafema_tier: 2
+    source: "src/vs/platform/workspace/common/workspace.ts"
+    golden_answer_hint: "IWorkspaceContextService in src/vs/platform/workspace/common/workspace.ts; WorkspaceService in src/vs/workbench/services/configuration/browser/configurationService.ts"
+    difficulty: medium
+
+  - id: T2-03
+    question: "Which file is the entry point for the VS Code web workbench (browser variant)? What is the main bootstrapping function?"
+    type: graph_lookup
+    grafema_tier: 2
+    source: "src/vs/workbench/workbench.web.main.ts + src/vs/code/browser/workbench/workbench.ts"
+    golden_answer_hint: "src/vs/code/browser/workbench/workbench.ts with main() or create() function; workbench.web.main.ts as the bundle entry"
+    difficulty: medium
+
+  - id: T2-04
+    question: "Where is ILogService defined? List the implementations used in the main process, extension host, and browser renderer."
+    type: graph_lookup
+    grafema_tier: 2
+    source: "src/vs/platform/log/common/log.ts + concrete implementations"
+    golden_answer_hint: "ILogService in src/vs/platform/log/common/log.ts; MainProcessLogger (node main), ExtHostLogService (ext host), LogService/BufferLogger (early startup/browser)"
+    difficulty: medium
+
+  - id: T2-05
+    question: "Where is IEditorGroupsService defined? Which concrete class implements it in the workbench, and in which file?"
+    type: graph_lookup
+    grafema_tier: 2
+    source: "src/vs/workbench/services/editor/common/editorGroupsService.ts"
+    golden_answer_hint: "IEditorGroupsService in src/vs/workbench/services/editor/common/editorGroupsService.ts; EditorPart implements it in src/vs/workbench/browser/parts/editor/editorPart.ts"
+    difficulty: medium
+
+  - id: T2-06
+    question: "Where is IContextKeyService defined and in what two places is it registered as a singleton in the main workbench?"
+    type: graph_lookup
+    grafema_tier: 2
+    source: "src/vs/platform/contextkey/common/contextkey.ts + workbench registration points"
+    golden_answer_hint: "IContextKeyService in src/vs/platform/contextkey/common/contextkey.ts; registered via registerSingleton in workbench.desktop.main.ts and workbench.web.main.ts"
+    difficulty: medium
+
+  - id: T2-07
+    question: "What file and class implement the Problems (Markers/Diagnostics) view, and where is the view registered?"
+    type: graph_lookup
+    grafema_tier: 2
+    source: "src/vs/workbench/contrib/markers/browser/"
+    golden_answer_hint: "MarkersView in src/vs/workbench/contrib/markers/browser/markersView.ts; registered in src/vs/workbench/contrib/markers/browser/markers.contribution.ts via ViewsRegistry"
+    difficulty: medium
+
+  - id: T2-08
+    question: "Where is IInstantiationService defined? What TypeScript mechanism makes createInstance() type-safe (stripping DI-injected parameters)?"
+    type: graph_lookup
+    grafema_tier: 2
+    source: "src/vs/platform/instantiation/common/instantiation.ts"
+    golden_answer_hint: "IInstantiationService in src/vs/platform/instantiation/common/instantiation.ts; uses overloaded signatures with conditional types (ServicesAccessor → strips ServiceIdentifier<T> parameters from ctor)"
+    difficulty: hard
+
+  # ==========================================================================
+  # TIER 3 — Graph Relations Optimal
+  # find_calls, get_context, get_neighbors reveal callers grep cannot find
+  # (dynamic dispatch, DI-resolved, re-exported symbols)
+  # ==========================================================================
+
+  - id: T3-01
+    question: "What are the main callers of IFileService.readFile() in the workbench (excluding tests)? Which subsystems use it most frequently?"
+    type: graph_relations
+    grafema_tier: 3
+    source: "cross-subsystem IFileService.readFile callers"
+    golden_answer_hint: "TextFileEditorModel, ConfigurationService, UserDataSyncService, ExtensionGalleryService, SearchService — file reading is spread across many services"
+    difficulty: medium
+    why: "100+ grep hits; graph caller enumeration groups by subsystem and filters test code."
+
+  - id: T3-02
+    question: "Which services or commands call IWorkbenchEnvironmentService.extensionDevelopmentLocationURI? What features depend on this property being set?"
+    type: graph_relations
+    grafema_tier: 3
+    source: "extension development mode gating"
+    golden_answer_hint: "Debug launch service, ExtensionHostManager, WatcherService — this URI gates extension dev mode; callers include extension host startup and dev tools activation"
+    difficulty: hard
+    why: "Extension dev mode is dynamically gated; callers cannot be found by text-searching the property name alone."
+
+  - id: T3-03
+    question: "What are the direct callers of IModelService.createModel()? What do they each use the returned ITextModel for?"
+    type: graph_relations
+    grafema_tier: 3
+    source: "src/vs/editor/common/services/modelService.ts callers"
+    golden_answer_hint: "TextFileEditorModel (file editing), UntitledTextEditorModel (scratch), SearchEditorModel (search results), InlineCompletionProvider (preview model) — each creates a transient or persistent text model"
+    difficulty: medium
+
+  - id: T3-04
+    question: "What services call ITerminalService.createTerminal()? Which callers provide a custom IPseudoterminal implementation vs using default shell args?"
+    type: graph_relations
+    grafema_tier: 3
+    source: "src/vs/workbench/contrib/terminal/browser/terminalService.ts callers"
+    golden_answer_hint: "TaskService (custom shellArgs for task runner), DebugService (REPL with custom pty), ExternalTerminalService (OS terminal delegation), terminal contribution commands (user 'New Terminal')"
+    difficulty: medium
+
+  - id: T3-05
+    question: "Which subsystems register entries with IStatusbarService.addEntry()? List the top 5 contributors to the status bar."
+    type: graph_relations
+    grafema_tier: 3
+    source: "IStatusbarService.addEntry callers across contrib/"
+    golden_answer_hint: "LanguageStatusService (language mode), DebugStatusBarItem (debug mode), SCM status bar (source control branch), RemoteStatusBarEntry (remote indicator), NotebookKernelStatusBar (kernel selector)"
+    difficulty: medium
+
+  - id: T3-06
+    question: "When a user changes a setting through the Settings editor UI, what chain of service calls fires? Which services are invoked in order?"
+    type: graph_relations
+    grafema_tier: 3
+    source: "SettingsEditor2 → IConfigurationService chain"
+    golden_answer_hint: "SettingsEditor2.updateSetting → IConfigurationService.updateValue → ConfigurationModel change → onDidChangeConfiguration event → all registered listeners (editors, extensions, services)"
+    difficulty: hard
+    why: "The write path traverses 3 abstraction layers; grep finds the listeners but not the order."
+
+  - id: T3-07
+    question: "What are the callers of ContextKeyExprType.Equals evaluation logic? How many distinct subsystems evaluate 'when' clause conditions?"
+    type: graph_relations
+    grafema_tier: 3
+    source: "src/vs/platform/contextkey/common/contextkey.ts evaluate callers"
+    golden_answer_hint: "KeybindingResolver (keybindings), MenuRegistry evaluators (context menus), ViewsRegistry (view visibility), CommandsRegistry when-clause — 4+ subsystems all evaluate context key expressions"
+    difficulty: medium
+
+  - id: T3-08
+    question: "Which concrete classes implement ITextEditorModel and where are they registered? Which one handles untitled files vs workspace files?"
+    type: graph_relations
+    grafema_tier: 3
+    source: "src/vs/workbench/common/editor/textEditorModel.ts implementors"
+    golden_answer_hint: "TextFileEditorModel (workspace, via TextFileEditorModelManager), UntitledTextEditorModel (untitled, via UntitledTextEditorService), NotebookCellTextModel (notebook cells)"
+    difficulty: medium
+
+  - id: T3-09
+    question: "What is the call path from a keypress event to ICommandService.executeCommand()? Which handler classes are involved?"
+    type: graph_relations
+    grafema_tier: 3
+    source: "src/vs/platform/keybinding/browser/keybindingService.ts dispatch chain"
+    golden_answer_hint: "DOM keydown → WorkbenchKeybindingService._dispatch → AbstractKeybindingService.dispatch → ICommandService.executeCommand → CommandsRegistry handler"
+    difficulty: hard
+
+  - id: T3-10
+    question: "Which parts of VS Code call IExtensionHostProxy methods to cross the main→extension-host process boundary? What IPC transport do they use?"
+    type: graph_relations
+    grafema_tier: 3
+    source: "src/vs/workbench/services/extensions/common/ proxy callers"
+    golden_answer_hint: "ExtensionHostManager, MainThreadExtensionService — use RPCProtocol over MessagePort (browser) or Unix socket / IPC (desktop); MainContext/ExtContext bidirectional proxy"
+    difficulty: hard
+
+  # ==========================================================================
+  # TIER 4 — Flow & Architecture Optimal
+  # trace_dataflow, Datalog queries reveal multi-hop paths; manual hopping misses steps
+  # ==========================================================================
+
+  - id: T4-01
+    question: "When a user clicks a file in the Explorer tree, what is the complete call chain from the click event to the file's text appearing in the editor? Name every service boundary crossed."
+    type: flow
+    grafema_tier: 4
+    source: "ExplorerView → IEditorService → TextFileEditorModel → ICodeEditor"
+    golden_answer_hint: "ExplorerView click → ExplorerViewModel.openResource → IEditorService.openEditor → EditorGroupsService → TextFileEditorModelManager → TextFileEditorModel.resolve (IFileService.readFile) → Monaco editor rendering"
+    difficulty: hard
+    why: "File-open bugs span 6 layers; the full chain requires tracing across service boundaries."
+
+  - id: T4-02
+    question: "How does a ripgrep search result travel from the subprocess output to appearing as a highlighted match in the Search panel? Trace across process boundaries."
+    type: flow
+    grafema_tier: 4
+    source: "src/vs/workbench/contrib/search/ IPC chain"
+    golden_answer_hint: "RipgrepProcess stdout → IPC to ext host → SearchService → ISearchComplete event → SearchResult model update → SearchViewPane tree → ResultsRenderer highlight"
+    difficulty: hard
+
+  - id: T4-03
+    question: "When a user grants workspace trust (clicks 'Yes, I trust the authors'), what state changes propagate through the system? Which services are notified and in what order?"
+    type: flow
+    grafema_tier: 4
+    source: "src/vs/workbench/services/workspaces/common/workspaceTrust.ts propagation"
+    golden_answer_hint: "WorkspaceTrustManagementService.setWorkspaceTrust → IStorageService persist → onDidChangeTrust event → ExtensionService (reload restricted extensions) → ContextKeyService update → trust-gated features re-evaluate"
+    difficulty: hard
+
+  - id: T4-04
+    question: "With 'Format on Save' enabled, what is the sequence of operations when a file is saved? Which services coordinate the format–save transaction and in what order?"
+    type: flow
+    grafema_tier: 4
+    source: "TextFileEditorModel.save → format → ITextFileService.write chain"
+    golden_answer_hint: "TextFileEditorModel.save → IEditorWorkerService.formatDocument → TextEdits applied → ITextFileService.write → IFileService.writeFile → flush to disk"
+    difficulty: hard
+
+  - id: T4-05
+    question: "When a color theme is changed, what is the full update cascade? Which components re-render and in what order?"
+    type: flow
+    grafema_tier: 4
+    source: "IWorkbenchThemeService.setColorTheme cascade"
+    golden_answer_hint: "IWorkbenchThemeService.setColorTheme → IColorTheme update → onDidColorThemeChange event → DOM CSS variable update → ICodeEditor.updateOptions(theme) → ViewLayer re-render → viewlets/panels re-apply theme"
+    difficulty: medium
+
+  - id: T4-06
+    question: "How does a VS Code extension contribute a TextMate grammar for syntax highlighting? Trace the data flow from the extension's package.json to token colors appearing in the editor."
+    type: flow
+    grafema_tier: 4
+    source: "ExtensionManagement → ITextMateService → ITokenizationSupport → editor render"
+    golden_answer_hint: "package.json 'grammars' → ExtensionManifestParser → ITextMateService.registerGrammar → TextMate tokenizer → ILineTokens → ViewLayer color decorations"
+    difficulty: hard
+
+  - id: T4-07
+    question: "When a notebook cell finishes executing and produces a rich output (e.g. PNG image), how does the output data travel from the kernel to the rendered cell output area in VS Code?"
+    type: flow
+    grafema_tier: 4
+    source: "src/vs/workbench/contrib/notebook/ kernel→output chain"
+    golden_answer_hint: "Jupyter kernel → NotebookKernelService → INotebookDocument.appendCellOutput → NotebookCellTextModel.outputs → NotebookEditorWidget renderer → OutputRenderer MimeType handler → DOM or webview injection"
+    difficulty: hard
