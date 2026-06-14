@@ -1,0 +1,200 @@
+% haskell_local_refs_nodes.dl — NODE half of the in-engine replacement for the
+% legacy `haskell-local-refs` resolve step (HaskellLocalRefs.hs). It mints the
+% virtual EXTERNAL_FUNCTION prelude-global endpoints ("HASKELL_GLOBAL::"<name>,
+% category="haskell-prelude") that haskell_local_refs.dl joins as committed EDB
+% when emitting the prelude fall-through READS_FROM edge (the js_runtime_globals
+% two-pack split: a @materialize edge endpoint must be a committed node-ID
+% column, so this pack runs strictly BEFORE the edges pack).
+%
+% LEGACY semantics reproduced (HaskellLocalRefs.hs:135-167): a REFERENCE whose
+% (file, name) is NEITHER an IMPORT_BINDING in the same file NOR resolvable to a
+% same-file declaration, but whose bare name is one of the compiled-in
+% haskellPreludeNames (Hs:68-99), gets a virtual node
+%   gnId="HASKELL_GLOBAL::"<name>, gnType="EXTERNAL_FUNCTION", gnName=<name>,
+%   gnMetadata={category="haskell-prelude", source="haskell-local-refs"}
+% minted ONCE (the seen-Set dedup, Hs:149-167 — set semantics here), plus a
+% READS_FROM edge (emitted by the edges pack).
+%
+% mode = "exclusive" is PROVENANCE-SCOPED: only nodes stamped with THIS rule's
+% _source are owned/retracted; the legacy resolver's identically-sid'd nodes
+% (same "HASKELL_GLOBAL::"<name> convention) are foreign and never touched —
+% byte-identical sids are REQUIRED for dedup against the still-emitting legacy
+% step and against hybrid graphs.
+%
+% ENCODING NOTE (planner §3): the prelude name set is a ground fact relation
+% hs_prelude/1; the head binds Sid via concat off the matched name, so the
+% minting rule is filter-before-generator (hs_prelude_ref leads, bound name).
+%
+% The prelude-name set is the EXACT haskellPreludeNames list (Hs:68-99).
+
+% ── The 8-suffix Haskell file gate is unnecessary here: REFERENCE/file/name come
+%    from the analyzer and only Haskell analyzers emit "HASKELL_GLOBAL" preludes;
+%    we still gate on ".hs" to stay language-scoped (cheap, leads the join). ────
+hs_ref(R, F, N) :- node(R, "REFERENCE"), attr(R, "file", F), ends_with(F, ".hs"), attr(R, "name", N), neq(N, "").
+
+% Same-file declaration index over the decl types (HaskellLocalRefs.hs:40-45):
+% FUNCTION, VARIABLE, CONSTANT, DATA_TYPE, TYPE_SYNONYM, CONSTRUCTOR,
+% RECORD_FIELD, PARAMETER. A reference resolves LOCALLY (and so is NOT a prelude
+% global) when some same-file decl of one of these types shares its name. NOTE:
+% this is the flat (file, name) presence test — it is INTENTIONALLY file-flat
+% (not scope-walked) because the prelude fall-through fires only when NO binder
+% of the name exists ANYWHERE in the file; the scope-precision of which binder
+% wins lives in the edges pack and never affects the "does any binder exist"
+% question. Mirrors the legacy Map.lookup-miss precondition (Hs:126,135).
+hs_decl(F, N) :- node(D, "FUNCTION"),     attr(D, "file", F), attr(D, "name", N), neq(N, "").
+hs_decl(F, N) :- node(D, "VARIABLE"),     attr(D, "file", F), attr(D, "name", N), neq(N, "").
+hs_decl(F, N) :- node(D, "CONSTANT"),     attr(D, "file", F), attr(D, "name", N), neq(N, "").
+hs_decl(F, N) :- node(D, "DATA_TYPE"),    attr(D, "file", F), attr(D, "name", N), neq(N, "").
+hs_decl(F, N) :- node(D, "TYPE_SYNONYM"), attr(D, "file", F), attr(D, "name", N), neq(N, "").
+hs_decl(F, N) :- node(D, "CONSTRUCTOR"),  attr(D, "file", F), attr(D, "name", N), neq(N, "").
+hs_decl(F, N) :- node(D, "RECORD_FIELD"), attr(D, "file", F), attr(D, "name", N), neq(N, "").
+hs_decl(F, N) :- node(D, "PARAMETER"),    attr(D, "file", F), attr(D, "name", N), neq(N, "").
+
+% Import skip-set (HaskellLocalRefs.hs:58-64,123-124): a name with an
+% IMPORT_BINDING in the same file is NEVER resolved locally (and so is never a
+% prelude global — it is handled by HaskellImportResolution / CrossModule).
+hs_imported(F, N) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), attr(B, "name", N).
+
+% A reference whose name is a known prelude global AND has no same-file binder
+% AND is not imported — the legacy fall-through precondition (Hs:135-137).
+hs_prelude_ref(N) :-
+    hs_ref(R, F, N), hs_prelude(N), \+ hs_decl(F, N), \+ hs_imported(F, N).
+
+% ── Mint one EXTERNAL_FUNCTION per matched prelude name (set semantics = the
+%    legacy seen-Set dedup). Sid = "HASKELL_GLOBAL::"<name>; gnFile="" (Hs:157);
+%    metadata category="haskell-prelude", source="haskell-local-refs". ────────
+@materialize_node(node_type = "EXTERNAL_FUNCTION", mode = "exclusive", meta(category, source))
+hs_global_node(Sid, N, "", "haskell-prelude", "haskell-local-refs") :-
+    hs_prelude_ref(N), concat("HASKELL_GLOBAL::", N, Sid).
+
+% ── haskellPreludeNames — the EXACT compiled-in set (HaskellLocalRefs.hs:68-99) ─
+% Data constructors
+hs_prelude("True").
+hs_prelude("False").
+hs_prelude("Just").
+hs_prelude("Nothing").
+hs_prelude("Left").
+hs_prelude("Right").
+hs_prelude("LT").
+hs_prelude("EQ").
+hs_prelude("GT").
+hs_prelude("IO").
+% Common functions
+hs_prelude("pure").
+hs_prelude("return").
+hs_prelude("show").
+hs_prelude("read").
+hs_prelude("print").
+hs_prelude("putStrLn").
+hs_prelude("putStr").
+hs_prelude("getLine").
+hs_prelude("getContents").
+hs_prelude("interact").
+hs_prelude("map").
+hs_prelude("filter").
+hs_prelude("foldl").
+hs_prelude("foldr").
+hs_prelude("foldl'").
+hs_prelude("concatMap").
+hs_prelude("zip").
+hs_prelude("head").
+hs_prelude("tail").
+hs_prelude("init").
+hs_prelude("last").
+hs_prelude("length").
+hs_prelude("null").
+hs_prelude("reverse").
+hs_prelude("take").
+hs_prelude("drop").
+hs_prelude("takeWhile").
+hs_prelude("dropWhile").
+hs_prelude("span").
+hs_prelude("break").
+hs_prelude("elem").
+hs_prelude("notElem").
+hs_prelude("lookup").
+hs_prelude("concat").
+hs_prelude("replicate").
+hs_prelude("any").
+hs_prelude("all").
+hs_prelude("and").
+hs_prelude("or").
+hs_prelude("sum").
+hs_prelude("product").
+hs_prelude("maximum").
+hs_prelude("minimum").
+hs_prelude("id").
+hs_prelude("const").
+hs_prelude("flip").
+hs_prelude("not").
+hs_prelude("otherwise").
+hs_prelude("undefined").
+hs_prelude("error").
+hs_prelude("fst").
+hs_prelude("snd").
+hs_prelude("curry").
+hs_prelude("uncurry").
+hs_prelude("maybe").
+hs_prelude("either").
+hs_prelude("fromMaybe").
+hs_prelude("isJust").
+hs_prelude("isNothing").
+hs_prelude("mapM").
+hs_prelude("mapM_").
+hs_prelude("forM").
+hs_prelude("forM_").
+hs_prelude("sequence").
+hs_prelude("sequence_").
+hs_prelude("when").
+hs_prelude("unless").
+hs_prelude("guard").
+hs_prelude("void").
+% Type classes
+hs_prelude("Eq").
+hs_prelude("Ord").
+hs_prelude("Show").
+hs_prelude("Read").
+hs_prelude("Enum").
+hs_prelude("Bounded").
+hs_prelude("Num").
+hs_prelude("Integral").
+hs_prelude("Fractional").
+hs_prelude("Floating").
+hs_prelude("Real").
+hs_prelude("RealFrac").
+hs_prelude("RealFloat").
+hs_prelude("Functor").
+hs_prelude("Applicative").
+hs_prelude("Monad").
+hs_prelude("MonadIO").
+hs_prelude("Monoid").
+hs_prelude("Semigroup").
+hs_prelude("Foldable").
+hs_prelude("Traversable").
+% Types
+hs_prelude("Int").
+hs_prelude("Integer").
+hs_prelude("Float").
+hs_prelude("Double").
+hs_prelude("Bool").
+hs_prelude("Char").
+hs_prelude("String").
+hs_prelude("Maybe").
+hs_prelude("Either").
+hs_prelude("Ordering").
+% Operators as functions
+hs_prelude("succ").
+hs_prelude("pred").
+hs_prelude("toEnum").
+hs_prelude("fromEnum").
+hs_prelude("compare").
+hs_prelude("max").
+hs_prelude("min").
+hs_prelude("negate").
+hs_prelude("abs").
+hs_prelude("signum").
+hs_prelude("fromInteger").
+hs_prelude("div").
+hs_prelude("mod").
+hs_prelude("quot").
+hs_prelude("rem").

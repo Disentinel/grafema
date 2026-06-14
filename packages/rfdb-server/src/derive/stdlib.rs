@@ -380,6 +380,33 @@ pub const KOTLIN_INHERITANCE_DL: &str = include_str!("stdlib/kotlin_inheritance.
 /// numbered in the `.dl` header.
 pub const HASKELL_LOCAL_CALLS_DL: &str = include_str!("stdlib/haskell_local_calls.dl");
 
+/// Haskell same-file refs (haskell-resolve migration). NODE half: mints the
+/// virtual `HASKELL_GLOBAL::<name>` EXTERNAL_FUNCTION prelude endpoints
+/// (category="haskell-prelude") that `haskell_local_refs` joins as committed
+/// EDB for its prelude fall-through (the js_runtime_globals two-pack split —
+/// a @materialize edge endpoint must be a committed node-ID column). Byte-
+/// identical sids to HaskellLocalRefs.hs:139,152-157 (dedup against the legacy
+/// step + hybrid graphs). `mode = "exclusive"` is PROVENANCE-SCOPED. Negation +
+/// node minting ⇒ scratch floor under maintain.
+pub const HASKELL_LOCAL_REFS_NODES_DL: &str = include_str!("stdlib/haskell_local_refs_nodes.dl");
+
+/// Haskell same-file refs (haskell-resolve migration). EDGE half: REFERENCE →
+/// READS_FROM, `resolvedVia = "haskell-local-refs"` meta — replaces
+/// HaskellLocalRefs.resolveAll. Fixes the legacy flat last-write-wins
+/// (file,name) Map (Hs:48-55) cross-scope collapse: a same-scope PARAMETER/
+/// VARIABLE local hit (the analyzer CONTAINS-parents these at the ref's own
+/// scope id — the dominant bug) suppresses the single-target flat (file,name)
+/// fallback over the value decl types (FUNCTION > VARIABLE > CONSTANT >
+/// CONSTRUCTOR > RECORD_FIELD) then the TYPE namespace last (DATA_TYPE >
+/// TYPE_SYNONYM); PARAMETER is INTENTIONALLY ABSENT from the flat arm (a flat
+/// PARAMETER target is a foreign scope's param — the misroute bug as fan-out).
+/// The flat arm in turn suppresses the prelude global fall-through. Local
+/// FUNCTIONs are MODULE-flattened by the analyzer (Declarations.hs:48-49 etc.)
+/// so the flat arm is the only recoverable resolution for them — no-worse than
+/// legacy. CONSUMER of the nodes pack's minted endpoints (must run strictly
+/// after). `READS_FROM` additive. Negation ⇒ scratch floor.
+pub const HASKELL_LOCAL_REFS_DL: &str = include_str!("stdlib/haskell_local_refs.dl");
+
 /// The JS module-path kernel pack (Wave 3b, path/string-kit-unblocked): the
 /// in-engine replacement for the module-level arms of `ImportResolution.hs` —
 /// IMPORT → MODULE `IMPORTS_FROM` (`resolveModuleImports`) and star re-export
@@ -653,7 +680,14 @@ pub const STDLIB_PACKS: &[(&str, &str)] = &[
     // EXTENDS-closed member lookup — strictly before the negators; consumes
     // analyzer EDB only (CLASS metadata stamps), so no run-after seam.
     ("kotlin_inheritance", KOTLIN_INHERITANCE_DL),
-    // Haskell wave: haskell_local_calls PRODUCES CALLS (same-file flat (file,name)
+    // Haskell same-file refs wave (haskell-resolve migration): haskell_local_refs_nodes
+    // MINTS the HASKELL_GLOBAL::<name> EXTERNAL_FUNCTION prelude endpoints that
+    // haskell_local_refs joins as committed EDB (strict nodes→edges order — the
+    // js_runtime_globals two-pack split). haskell_local_refs PRODUCES READS_FROM
+    // (REFERENCE→binder, nearest-binder scope-walk + single-target flat fallback).
+    ("haskell_local_refs_nodes", HASKELL_LOCAL_REFS_NODES_DL),
+    ("haskell_local_refs", HASKELL_LOCAL_REFS_DL),
+    // haskell_local_calls PRODUCES CALLS (same-file flat (file,name)
     // value-binding resolution, single-target via namespace priority) — strictly
     // before the CALLS negators method_calls / shape_verifier (shape_verifier
     // negates edge(C,_,"CALLS") with NO file gate). Consumes analyzer EDB only
@@ -1106,6 +1140,312 @@ mod tests {
             calls_specs.iter().all(|s| s.additive),
             "CALLS is shared with the analyzers — every head must be mode = \"additive\""
         );
+    }
+
+    // ── Haskell same-file wave (haskell-resolve migration) ─────────────────
+
+    /// haskell_local_refs.dl — the scope-walk READS_FROM resolver, on the
+    /// CONTAINS-only Haskell shape (REFERENCE / PARAMETER / VARIABLE all
+    /// CONTAINS'd by the same enclosing-FUNCTION scope id; FUNCTION binders
+    /// CONTAINS'd by MODULE). Pins all four required behaviours:
+    ///  (a) NEAREST-binder shadowing: a ref in fnA whose name is a PARAMETER of
+    ///      fnA resolves to THAT param, not to a same-named module-level decl;
+    ///  (b) THE CROSS-SCOPE-COLLAPSE BUG, FIXED: two functions each with a local
+    ///      VARIABLE `tmp` — the ref in each resolves to its OWN local, NOT the
+    ///      last-emitted one (the legacy flat last-write-wins Map collapsed
+    ///      these);
+    ///  (c) top-level / forward / mutually-recursive ref resolves via the flat
+    ///      fallback over the decl types (FUNCTION), no regression;
+    ///  (d) an imported name (IMPORT_BINDING in the same file) is NOT
+    ///      mis-resolved to a same-named local — local emission suppressed.
+    /// Plus: the local-hit suppresses the flat fallback (mutual exclusion); a
+    /// FUNCTION-only name with no local binder still resolves flat; the .hs gate.
+    #[test]
+    fn haskell_local_refs_scope_walk_fixes_cross_scope_collapse() {
+        let mut v = FixtureStorageView::new(1);
+
+        // ── Two enclosing FUNCTION scopes in app.hs, both MODULE-contained ──
+        named_node(&mut v, "m_app", "App", "MODULE", "app.hs");
+        named_node(&mut v, "fnA", "fnA", "FUNCTION", "app.hs");
+        named_node(&mut v, "fnB", "fnB", "FUNCTION", "app.hs");
+        edge(&mut v, "m_app", "fnA", "CONTAINS"); // FUNCTION binders are MODULE-contained
+        edge(&mut v, "m_app", "fnB", "CONTAINS");
+
+        // (b) THE BUG: each fn has its OWN local VARIABLE `tmp`; a ref to `tmp`
+        //     in each fn must resolve to its own — NOT a single flat winner.
+        named_node(&mut v, "tmpA", "tmp", "VARIABLE", "app.hs");
+        edge(&mut v, "fnA", "tmpA", "CONTAINS"); // binder at fnA's scope id
+        named_node(&mut v, "r_tmpA", "tmp", "REFERENCE", "app.hs");
+        edge(&mut v, "fnA", "r_tmpA", "CONTAINS"); // ref at the SAME scope id
+        named_node(&mut v, "tmpB", "tmp", "VARIABLE", "app.hs");
+        edge(&mut v, "fnB", "tmpB", "CONTAINS");
+        named_node(&mut v, "r_tmpB", "tmp", "REFERENCE", "app.hs");
+        edge(&mut v, "fnB", "r_tmpB", "CONTAINS");
+
+        // (a) NEAREST: `cap` is a PARAMETER of fnA AND a module-level CONSTANT;
+        //     a ref in fnA resolves to the PARAMETER (the same-scope local hit
+        //     suppresses the flat module-level fallback).
+        named_node(&mut v, "p_cap", "cap", "PARAMETER", "app.hs");
+        edge(&mut v, "fnA", "p_cap", "CONTAINS");
+        named_node(&mut v, "c_cap_mod", "cap", "CONSTANT", "app.hs"); // module-level decl
+        named_node(&mut v, "r_cap", "cap", "REFERENCE", "app.hs");
+        edge(&mut v, "fnA", "r_cap", "CONTAINS");
+
+        // (c) FLAT FALLBACK: mutual recursion / forward ref — `helper` is a
+        //     top-level FUNCTION (MODULE-flattened), no same-scope binder, so a
+        //     ref inside fnB resolves to it via the flat decl fallback.
+        named_node(&mut v, "helper", "helper", "FUNCTION", "app.hs");
+        edge(&mut v, "m_app", "helper", "CONTAINS");
+        named_node(&mut v, "r_helper", "helper", "REFERENCE", "app.hs");
+        edge(&mut v, "fnB", "r_helper", "CONTAINS");
+
+        // (d) IMPORT SKIP: `fromList` has an IMPORT_BINDING in this file AND a
+        //     same-named local VARIABLE; the ref must NOT resolve locally.
+        named_node(&mut v, "b_fromList", "fromList", "IMPORT_BINDING", "app.hs");
+        named_node(&mut v, "v_fromList", "fromList", "VARIABLE", "app.hs");
+        edge(&mut v, "fnA", "v_fromList", "CONTAINS");
+        named_node(&mut v, "r_fromList", "fromList", "REFERENCE", "app.hs");
+        edge(&mut v, "fnA", "r_fromList", "CONTAINS");
+
+        // Negative: a non-.hs ref (gate) with a same-scope binder.
+        named_node(&mut v, "m_rs", "Rs", "MODULE", "main.rs");
+        named_node(&mut v, "v_rs", "rv", "VARIABLE", "main.rs");
+        edge(&mut v, "m_rs", "v_rs", "CONTAINS");
+        named_node(&mut v, "r_rs", "rv", "REFERENCE", "main.rs");
+        edge(&mut v, "m_rs", "r_rs", "CONTAINS");
+
+        let (eval, specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            HASKELL_LOCAL_REFS_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("haskell_local_refs.dl evaluates");
+
+        let edge = |r: &str, d: &str| (id_of(r), id_of(d), "haskell-local-refs".to_string());
+        let mut expected: BTreeSet<(u128, u128, String)> = BTreeSet::new();
+        // (b) each `tmp` ref → its OWN local (the cross-scope-collapse fix).
+        expected.insert(edge("r_tmpA", "tmpA"));
+        expected.insert(edge("r_tmpB", "tmpB"));
+        // (a) `cap` ref in fnA → the PARAMETER (nearest), NOT the module CONSTANT.
+        expected.insert(edge("r_cap", "p_cap"));
+        // (c) `helper` ref → the top-level FUNCTION via flat fallback.
+        expected.insert(edge("r_helper", "helper"));
+
+        assert_eq!(
+            triples(&eval, "hs_reads_from"),
+            expected,
+            "scope-walk: each local `tmp` to its own binder (collapse FIXED); \
+             same-scope PARAMETER `cap` shadows the module CONSTANT; top-level \
+             `helper` via flat fallback; imported `fromList` + .rs derive nothing"
+        );
+
+        // (a) explicit: the module-level CONSTANT `cap` is NOT derived.
+        assert!(
+            !triples(&eval, "hs_reads_from").contains(&edge("r_cap", "c_cap_mod")),
+            "same-scope PARAMETER must shadow the module-level CONSTANT"
+        );
+        // (b) explicit: NO cross-scope edge (the bug).
+        assert!(
+            !triples(&eval, "hs_reads_from").contains(&edge("r_tmpA", "tmpB"))
+                && !triples(&eval, "hs_reads_from").contains(&edge("r_tmpB", "tmpA")),
+            "cross-scope collapse must be gone: fnA's tmp ref never reaches fnB's tmp"
+        );
+        // (d) explicit: the imported name resolves to NEITHER local.
+        assert!(
+            !triples(&eval, "hs_reads_from").contains(&edge("r_fromList", "v_fromList")),
+            "an IMPORT_BINDING name must not resolve to a same-named local"
+        );
+
+        // READS_FROM shared vocabulary — additive, resolvedVia projected.
+        let rf: Vec<_> = specs.iter().filter(|s| s.edge_type == "READS_FROM").collect();
+        assert!(!rf.is_empty(), "at least one READS_FROM head");
+        assert!(rf.iter().all(|s| s.additive), "READS_FROM is shared — additive");
+    }
+
+    /// haskell_local_refs SINGLE-TARGET DISCIPLINE — the v1 ×4.8 fan-out guard.
+    /// The retired flat native resolver was a Map.fromList LAST-WRITE-WINS: ONE
+    /// target per source. The flat fallback must match that cardinality
+    /// (RETARGET, not ADD). This pins the two precision corrections:
+    ///  (1) NO PARAMETER in the flat fallback — a same-name PARAMETER in a
+    ///      FOREIGN scope must NOT be a flat target (that is the misroute bug as
+    ///      fan-out); the only sound PARAMETER hit is the same-scope local_hit;
+    ///  (2) a name with binders in MANY namespaces (FUNCTION + CONSTANT +
+    ///      CONSTRUCTOR + DATA_TYPE) emits exactly ONE edge, to the highest
+    ///      priority (FUNCTION) — the namespace-priority ladder;
+    ///  (3) TYPE namespace kept at LOWEST priority (lost_real≈0): a value ref to
+    ///      a name whose ONLY binder is a DATA_TYPE still resolves to it.
+    #[test]
+    fn haskell_local_refs_flat_fallback_is_single_target() {
+        let mut v = FixtureStorageView::new(1);
+        named_node(&mut v, "m_app", "App", "MODULE", "app.hs");
+        named_node(&mut v, "fnA", "fnA", "FUNCTION", "app.hs");
+        edge(&mut v, "m_app", "fnA", "CONTAINS");
+
+        // `node` has FOUR same-file binders across namespaces + a FOREIGN-scope
+        // PARAMETER. A top-level ref (MODULE scope, no same-scope binder) must
+        // emit EXACTLY ONE flat edge — to the FUNCTION (highest priority) — and
+        // NEVER to the CONSTANT / CONSTRUCTOR / DATA_TYPE / foreign PARAMETER.
+        named_node(&mut v, "f_node", "node", "FUNCTION", "app.hs");
+        edge(&mut v, "m_app", "f_node", "CONTAINS");
+        named_node(&mut v, "c_node", "node", "CONSTANT", "app.hs");
+        named_node(&mut v, "ctr_node", "node", "CONSTRUCTOR", "app.hs");
+        named_node(&mut v, "dt_node", "node", "DATA_TYPE", "app.hs");
+        // A foreign-scope PARAMETER `node` (bound inside fnA) — the misroute trap.
+        named_node(&mut v, "p_node", "node", "PARAMETER", "app.hs");
+        edge(&mut v, "fnA", "p_node", "CONTAINS");
+        // The ref is at MODULE scope (top-level), NOT fnA — so NO same-scope hit.
+        named_node(&mut v, "r_node", "node", "REFERENCE", "app.hs");
+        edge(&mut v, "m_app", "r_node", "CONTAINS");
+
+        // `onlyType` has a single binder, a DATA_TYPE — the TYPE-namespace
+        // lowest-priority arm must still resolve it (lost_real≈0).
+        named_node(&mut v, "dt_only", "onlyType", "DATA_TYPE", "app.hs");
+        named_node(&mut v, "r_only", "onlyType", "REFERENCE", "app.hs");
+        edge(&mut v, "m_app", "r_only", "CONTAINS");
+
+        let (eval, _specs, _ns) = evaluate_with_materialize(
+            &v,
+            HASKELL_LOCAL_REFS_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("haskell_local_refs.dl evaluates (single-target)");
+
+        let got = triples(&eval, "hs_reads_from");
+        let edge = |r: &str, d: &str| (id_of(r), id_of(d), "haskell-local-refs".to_string());
+
+        // Exactly one edge for `node`, to the FUNCTION — and the ONLY `node`
+        // edge in the whole result (no fan-out to the other 4 same-name binders).
+        let node_edges: Vec<_> = got.iter().filter(|(s, _, _)| *s == id_of("r_node")).collect();
+        assert_eq!(
+            node_edges.len(),
+            1,
+            "single-target: a ref to a 5-binder name emits ONE flat edge, not a fan-out"
+        );
+        assert!(got.contains(&edge("r_node", "f_node")), "the one edge targets the FUNCTION");
+        assert!(!got.contains(&edge("r_node", "c_node")), "no edge to the CONSTANT");
+        assert!(!got.contains(&edge("r_node", "ctr_node")), "no edge to the CONSTRUCTOR");
+        assert!(!got.contains(&edge("r_node", "dt_node")), "no edge to the DATA_TYPE");
+        assert!(
+            !got.contains(&edge("r_node", "p_node")),
+            "NO flat edge to a foreign-scope PARAMETER (the misroute bug)"
+        );
+        // The pure-type ref still resolves (TYPE namespace, lowest priority).
+        assert!(
+            got.contains(&edge("r_only", "dt_only")),
+            "a value ref whose only binder is a DATA_TYPE still resolves (lost_real≈0)"
+        );
+    }
+
+    /// haskell_local_refs prelude fall-through: a REFERENCE with NO same-file
+    /// binder and NO import binding, whose name is a Prelude name, resolves to
+    /// the virtual HASKELL_GLOBAL endpoint (minted by haskell_local_refs_nodes,
+    /// committed as EDB here) with meta globalCategory="haskell-prelude". A
+    /// Prelude-named ref that HAS a local binder takes the local edge instead
+    /// (mutual exclusion). Also pins the nodes-pack minting + sids.
+    #[test]
+    fn haskell_local_refs_prelude_fall_through() {
+        // ── EDGES PACK: the prelude endpoint committed as EDB (file="") ──
+        let mut v = FixtureStorageView::new(1);
+        named_node(&mut v, "m_app", "App", "MODULE", "app.hs");
+        // `mapM_` is a Prelude name with no same-file binder → prelude global.
+        named_node(&mut v, "HASKELL_GLOBAL::mapM_", "mapM_", "EXTERNAL_FUNCTION", "");
+        named_node(&mut v, "r_mapM", "mapM_", "REFERENCE", "app.hs");
+        edge(&mut v, "m_app", "r_mapM", "CONTAINS");
+        // `show` is a Prelude name BUT has a local FUNCTION binder → local wins.
+        named_node(&mut v, "HASKELL_GLOBAL::show", "show", "EXTERNAL_FUNCTION", "");
+        named_node(&mut v, "f_show", "show", "FUNCTION", "app.hs");
+        edge(&mut v, "m_app", "f_show", "CONTAINS");
+        named_node(&mut v, "r_show", "show", "REFERENCE", "app.hs");
+        edge(&mut v, "m_app", "r_show", "CONTAINS");
+
+        let (eval, specs, _ns) = evaluate_with_materialize(
+            &v,
+            HASKELL_LOCAL_REFS_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("haskell_local_refs.dl evaluates (prelude)");
+
+        let glob: BTreeSet<(u128, u128, String, String)> = eval
+            .facts("hs_reads_global")
+            .into_iter()
+            .map(|r| (r[0].as_id().unwrap(), r[1].as_id().unwrap(), r[2].as_str(), r[3].as_str()))
+            .collect();
+        assert_eq!(
+            glob,
+            BTreeSet::from([(
+                id_of("r_mapM"),
+                id_of("HASKELL_GLOBAL::mapM_"),
+                "haskell-local-refs".to_string(),
+                "haskell-prelude".to_string(),
+            )]),
+            "only the binder-less Prelude ref `mapM_` falls through; `show` \
+             has a local FUNCTION binder so it resolves locally, not as global"
+        );
+        // `show` resolved locally (flat fallback), NOT as a prelude global.
+        assert!(
+            triples(&eval, "hs_reads_from")
+                .contains(&(id_of("r_show"), id_of("f_show"), "haskell-local-refs".to_string())),
+            "a Prelude-named ref with a local FUNCTION binder resolves locally"
+        );
+        // The prelude head carries resolvedVia + globalCategory.
+        let g: Vec<_> = specs
+            .iter()
+            .filter(|s| s.edge_type == "READS_FROM" && s.meta.len() == 2)
+            .collect();
+        assert_eq!(g.len(), 1, "one prelude READS_FROM head with two meta cols");
+        assert_eq!(
+            g[0].meta,
+            vec!["resolvedVia".to_string(), "globalCategory".to_string()]
+        );
+
+        // ── NODES PACK: mint the HASKELL_GLOBAL endpoint for the binder-less
+        //    Prelude ref, byte-identical sid; the local-bound + imported names
+        //    mint nothing. ──
+        let mut vn = FixtureStorageView::new(1);
+        named_node(&mut vn, "m_app", "App", "MODULE", "app.hs");
+        named_node(&mut vn, "r_mapM", "mapM_", "REFERENCE", "app.hs");
+        edge(&mut vn, "m_app", "r_mapM", "CONTAINS");
+        // local-bound Prelude name → no mint.
+        named_node(&mut vn, "f_show", "show", "FUNCTION", "app.hs");
+        named_node(&mut vn, "r_show", "show", "REFERENCE", "app.hs");
+        edge(&mut vn, "m_app", "r_show", "CONTAINS");
+        // imported Prelude name → no mint.
+        named_node(&mut vn, "b_when", "when", "IMPORT_BINDING", "app.hs");
+        named_node(&mut vn, "r_when", "when", "REFERENCE", "app.hs");
+        edge(&mut vn, "m_app", "r_when", "CONTAINS");
+        // non-Prelude unresolved name → no mint.
+        named_node(&mut vn, "r_widget", "renderWidget", "REFERENCE", "app.hs");
+        edge(&mut vn, "m_app", "r_widget", "CONTAINS");
+
+        let (evn, _s, node_specs) = evaluate_with_materialize(
+            &vn,
+            HASKELL_LOCAL_REFS_NODES_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("haskell_local_refs_nodes.dl evaluates");
+
+        let minted: BTreeSet<(String, String)> = evn
+            .facts("hs_global_node")
+            .into_iter()
+            .map(|r| (r[0].as_str(), r[1].as_str()))
+            .collect();
+        assert_eq!(
+            minted,
+            BTreeSet::from([("HASKELL_GLOBAL::mapM_".to_string(), "mapM_".to_string())]),
+            "only the binder-less, non-imported Prelude name is minted; \
+             byte-identical sid HASKELL_GLOBAL::<name>"
+        );
+        assert_eq!(node_specs.len(), 1, "one @materialize_node head");
+        assert_eq!(node_specs[0].node_type, "EXTERNAL_FUNCTION");
+        assert!(!node_specs[0].additive, "prelude mint is exclusive (provenance-scoped)");
     }
 
     /// An edge plus a metadata blob attached to it (for `edge_attr` probes —
@@ -1651,6 +1991,8 @@ mod tests {
                 "java_calls",
                 "java_annotations",
                 "kotlin_inheritance",
+                "haskell_local_refs_nodes",
+                "haskell_local_refs",
                 "haskell_local_calls",
                 "go_imports",
                 "go_imports_nomod",
