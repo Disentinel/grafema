@@ -2033,46 +2033,128 @@ mod tests {
         );
     }
 
-    /// The bundled js_this_method_calls pack reproduces JsThisMethodCalls.hs exactly:
-    /// - unique same-file METHOD resolves (the arm firing);
-    /// - two same-named METHODs in the file → ambiguity skip (the neq/ambig idiom);
-    /// - "this.a.b" derives NOTHING even with a METHOD named "b" present — the
-    ///   concat-equality construction reproduces the resolver's stripThis miss and
-    ///   CORRECTS the migration spec's anticipated method_suffix superset delta;
-    /// - non-this calls, cross-file methods, .rs files derive nothing;
-    /// - DELTA 2 PINNED: .mts is rejected (the resolver's OWN 6-extension gate,
+    /// The bundled js_this_method_calls pack resolves this.-method calls SOUNDLY
+    /// via the live SCOPE chain (resolve-pack #23 rework — the flat (file,name)
+    /// arm was both imprecise and ambiguity-blind):
+    /// - a this.-call inside a METHOD body resolves to its enclosing class's member
+    ///   (the HAS_METHOD-owner path, shared with js_same_file_calls.dl B1);
+    /// - DELTA 2b PINNED: a this.-call inside an ARROW-FUNCTION CLASS PROPERTY (no
+    ///   METHOD/FUNCTION HAS_METHOD owner — the `<arrow>` FUNCTION owner is NOT a
+    ///   class member) resolves via the CLASS -HAS_SCOPE-> enclosing-scope path —
+    ///   the exact SceneManager.ts `_animate`/`_tickFly` case B1 alone MISSES;
+    /// - DELTA 2 PRECISION: two same-named members in distinct classes in one file
+    ///   each bind their OWN enclosing class (the old flat `ambig` guard refused
+    ///   BOTH — a false negative; the scope chain resolves each correctly);
+    /// - "this.a.b" derives NOTHING even with a member named "b" — concat-equality
+    ///   first-dot parity (the migration spec's method_suffix superset delta is
+    ///   eliminated by construction);
+    /// - a this.-call not lexically inside any class derives nothing;
+    /// - cross-file / .rs negatives;
+    /// - DELTA 4 PINNED: .mts is rejected (the resolver's OWN 6-extension gate,
     ///   narrower than the orchestrator's 8-extension stream filter).
     #[test]
-    fn js_this_method_calls_unique_method_with_ambiguity_skip() {
+    fn js_this_method_calls_scope_walk_with_arrow_property_and_precision() {
         let mut v = FixtureStorageView::new(1);
 
-        // Arm fires: unique "save" METHOD in app.ts.
-        named_node(&mut v, "m_save", "save", "METHOD", "app.ts");
-        named_node(&mut v, "c1", "this.save", "CALL", "app.ts");
+        // ── Method-body path: class App { init() { { this.render() } } } ──────────
+        // m_init -HAS_SCOPE-> s_fn (function scope) -HAS_SCOPE-> s_blk (lexical
+        // child block) -CONTAINS-> the call.
+        named_node(&mut v, "cls_app", "App", "CLASS", "app.ts");
+        named_node(&mut v, "m_init", "init", "METHOD", "app.ts");
+        named_node(&mut v, "m_render", "render", "METHOD", "app.ts");
+        edge(&mut v, "cls_app", "m_init", "HAS_METHOD");
+        edge(&mut v, "cls_app", "m_render", "HAS_METHOD");
+        named_node(&mut v, "s_app_cls", "class", "SCOPE", "app.ts");
+        named_node(&mut v, "s_fn", "function", "SCOPE", "app.ts");
+        named_node(&mut v, "s_blk", "block", "SCOPE", "app.ts");
+        edge(&mut v, "cls_app", "s_app_cls", "HAS_SCOPE");
+        edge(&mut v, "m_init", "s_fn", "HAS_SCOPE");
+        edge(&mut v, "s_app_cls", "s_fn", "HAS_SCOPE"); // lexical: class body owns the method scope
+        edge(&mut v, "s_fn", "s_blk", "HAS_SCOPE");
+        named_node(&mut v, "c_method", "this.render", "CALL", "app.ts");
+        edge(&mut v, "s_blk", "c_method", "CONTAINS");
 
-        // Ambiguity skip: two "load" METHODs in app.ts.
-        named_node(&mut v, "m_load1", "load", "METHOD", "app.ts");
-        named_node(&mut v, "m_load2", "load", "METHOD", "app.ts");
-        named_node(&mut v, "c2", "this.load", "CALL", "app.ts");
+        // Multi-dot pin inside the same class — METHOD-less, must derive nothing.
+        named_node(&mut v, "c_md", "this.a.b", "CALL", "app.ts");
+        edge(&mut v, "s_blk", "c_md", "CONTAINS");
 
-        // Multi-dot exactness pin: METHOD "b" exists, "this.a.b" must NOT resolve.
-        named_node(&mut v, "m_b", "b", "METHOD", "app.ts");
-        named_node(&mut v, "c3", "this.a.b", "CALL", "app.ts");
+        // ── DELTA 2b: arrow-function CLASS PROPERTY. Owner of the arrow scope is a
+        // FUNCTION (NOT a HAS_METHOD member); the class reaches the arrow scope only
+        // through CLASS -HAS_SCOPE-> arrow-fn-scope. Mirrors SceneManager._tickFly.
+        named_node(&mut v, "cls_scene", "Scene", "CLASS", "scene.ts");
+        named_node(&mut v, "m_tick", "_tickFly", "METHOD", "scene.ts");
+        edge(&mut v, "cls_scene", "m_tick", "HAS_METHOD");
+        named_node(&mut v, "s_scene_cls", "class", "SCOPE", "scene.ts");
+        named_node(&mut v, "f_arrow", "<arrow>", "FUNCTION", "scene.ts");
+        named_node(&mut v, "s_arrow_fn", "function", "SCOPE", "scene.ts");
+        named_node(&mut v, "s_arrow_blk", "block", "SCOPE", "scene.ts");
+        edge(&mut v, "cls_scene", "s_scene_cls", "HAS_SCOPE");
+        edge(&mut v, "f_arrow", "s_arrow_fn", "HAS_SCOPE"); // owner FUNCTION, NOT a class member
+        edge(&mut v, "s_scene_cls", "s_arrow_fn", "HAS_SCOPE"); // class body owns the arrow scope
+        edge(&mut v, "s_arrow_fn", "s_arrow_blk", "HAS_SCOPE");
+        named_node(&mut v, "c_arrow", "this._tickFly", "CALL", "scene.ts");
+        edge(&mut v, "s_arrow_blk", "c_arrow", "CONTAINS");
 
-        // File gate: .rs is not JS.
+        // ── DELTA 2 precision: two classes in one file, each a private "shouldLog".
+        // The old flat `ambig` guard refused BOTH; the scope chain resolves each
+        // call to its OWN class's member. (Mirrors util/.../Logger.ts.)
+        named_node(&mut v, "cls_cons", "ConsoleLogger", "CLASS", "log.ts");
+        named_node(&mut v, "m_cons_sl", "shouldLog", "METHOD", "log.ts");
+        named_node(&mut v, "m_cons_w", "write", "METHOD", "log.ts");
+        edge(&mut v, "cls_cons", "m_cons_sl", "HAS_METHOD");
+        edge(&mut v, "cls_cons", "m_cons_w", "HAS_METHOD");
+        named_node(&mut v, "s_cons_cls", "class", "SCOPE", "log.ts");
+        named_node(&mut v, "s_cons_fn", "function", "SCOPE", "log.ts");
+        edge(&mut v, "cls_cons", "s_cons_cls", "HAS_SCOPE");
+        edge(&mut v, "m_cons_w", "s_cons_fn", "HAS_SCOPE");
+        edge(&mut v, "s_cons_cls", "s_cons_fn", "HAS_SCOPE");
+        named_node(&mut v, "c_cons_sl", "this.shouldLog", "CALL", "log.ts");
+        edge(&mut v, "s_cons_fn", "c_cons_sl", "CONTAINS");
+
+        named_node(&mut v, "cls_file", "FileLogger", "CLASS", "log.ts");
+        named_node(&mut v, "m_file_sl", "shouldLog", "METHOD", "log.ts");
+        named_node(&mut v, "m_file_w", "writeLine", "METHOD", "log.ts");
+        edge(&mut v, "cls_file", "m_file_sl", "HAS_METHOD");
+        edge(&mut v, "cls_file", "m_file_w", "HAS_METHOD");
+        named_node(&mut v, "s_file_cls", "class", "SCOPE", "log.ts");
+        named_node(&mut v, "s_file_fn", "function", "SCOPE", "log.ts");
+        edge(&mut v, "cls_file", "s_file_cls", "HAS_SCOPE");
+        edge(&mut v, "m_file_w", "s_file_fn", "HAS_SCOPE");
+        edge(&mut v, "s_file_cls", "s_file_fn", "HAS_SCOPE");
+        named_node(&mut v, "c_file_sl", "this.shouldLog", "CALL", "log.ts");
+        edge(&mut v, "s_file_fn", "c_file_sl", "CONTAINS");
+
+        // ── Negative: this.-call inside a plain top-level function (no class).
+        named_node(&mut v, "f_free", "standalone", "FUNCTION", "free.ts");
+        named_node(&mut v, "m_orphan", "render", "METHOD", "free.ts"); // same-file METHOD, no class
+        named_node(&mut v, "s_free", "function", "SCOPE", "free.ts");
+        edge(&mut v, "f_free", "s_free", "HAS_SCOPE");
+        named_node(&mut v, "c_free", "this.render", "CALL", "free.ts");
+        edge(&mut v, "s_free", "c_free", "CONTAINS");
+
+        // ── File gate: .rs is not JS (a fully-wired class+scope, still rejected).
+        named_node(&mut v, "cls_rs", "Rs", "CLASS", "main.rs");
         named_node(&mut v, "m_go", "go", "METHOD", "main.rs");
-        named_node(&mut v, "c4", "this.go", "CALL", "main.rs");
+        edge(&mut v, "cls_rs", "m_go", "HAS_METHOD");
+        named_node(&mut v, "s_rs_cls", "class", "SCOPE", "main.rs");
+        named_node(&mut v, "s_rs_fn", "function", "SCOPE", "main.rs");
+        edge(&mut v, "cls_rs", "s_rs_cls", "HAS_SCOPE");
+        edge(&mut v, "m_go", "s_rs_fn", "HAS_SCOPE");
+        edge(&mut v, "s_rs_cls", "s_rs_fn", "HAS_SCOPE");
+        named_node(&mut v, "c_rs", "this.go", "CALL", "main.rs");
+        edge(&mut v, "s_rs_fn", "c_rs", "CONTAINS");
 
-        // Prefix negative: not a this-call.
-        named_node(&mut v, "c5", "notthis.save", "CALL", "app.ts");
-
-        // Cross-file negative: METHOD only in b.ts.
-        named_node(&mut v, "m_far", "far", "METHOD", "b.ts");
-        named_node(&mut v, "c6", "this.far", "CALL", "app.ts");
-
-        // DELTA 2 pin: .mts rejected by the resolver's own 6-extension gate.
+        // ── DELTA 4: .mts rejected by the resolver's own 6-extension gate.
+        named_node(&mut v, "cls_mts", "Mts", "CLASS", "app.mts");
         named_node(&mut v, "m_mts", "save", "METHOD", "app.mts");
-        named_node(&mut v, "c7", "this.save", "CALL", "app.mts");
+        edge(&mut v, "cls_mts", "m_mts", "HAS_METHOD");
+        named_node(&mut v, "s_mts_cls", "class", "SCOPE", "app.mts");
+        named_node(&mut v, "s_mts_fn", "function", "SCOPE", "app.mts");
+        edge(&mut v, "cls_mts", "s_mts_cls", "HAS_SCOPE");
+        edge(&mut v, "m_mts", "s_mts_fn", "HAS_SCOPE");
+        edge(&mut v, "s_mts_cls", "s_mts_fn", "HAS_SCOPE");
+        named_node(&mut v, "c_mts", "this.save", "CALL", "app.mts");
+        edge(&mut v, "s_mts_fn", "c_mts", "CONTAINS");
 
         let (eval, specs, _node_specs) = evaluate_with_materialize(
             &v,
@@ -2083,15 +2165,25 @@ mod tests {
         )
         .expect("js_this_method_calls.dl evaluates");
 
+        let via = |pairs: &[(&str, &str)]| -> BTreeSet<(u128, u128, String)> {
+            pairs
+                .iter()
+                .map(|(c, t)| (id_of(c), id_of(t), "js-this-method-calls".to_string()))
+                .collect()
+        };
         assert_eq!(
             triples(&eval, "js_this_method_call"),
-            BTreeSet::from([(
-                id_of("c1"),
-                id_of("m_save"),
-                "js-this-method-calls".to_string()
-            )]),
-            "exactly c1→m_save: ambiguous 'load', multi-dot 'this.a.b', .rs, non-this, \
-             cross-file and .mts (DELTA 2) all derive nothing"
+            via(&[
+                ("c_method", "m_render"),
+                ("c_arrow", "m_tick"),
+                ("c_cons_sl", "m_cons_sl"),
+                ("c_file_sl", "m_file_sl"),
+            ]),
+            "scope-walk: method-body c_method→m_render; arrow-property c_arrow→m_tick \
+             (DELTA 2b, the class-scope path B1 misses); the two same-named shouldLog \
+             calls each bind their OWN class (DELTA 2 precision — no flat ambig skip); \
+             'this.a.b' multi-dot, the class-less c_free, cross-file, .rs and .mts \
+             (DELTA 4) all derive nothing"
         );
 
         let calls_specs: Vec<_> = specs.iter().filter(|s| s.edge_type == "CALLS").collect();
