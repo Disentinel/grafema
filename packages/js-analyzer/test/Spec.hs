@@ -355,6 +355,107 @@ exportTests = do
     -- the object KEY `e` is not a local binding and must NOT be exported
     hasExport "e" NamedExport fa `shouldBe` False
 
+  -- Test 8f: `export const { a, b } = obj` must emit an EXPORTS edge from the
+  -- EXPORT statement node to EVERY destructured binding, not just the first.
+  -- On HEAD the binding NODES exist and both reach the export index (test 8d),
+  -- but ruleVariableDeclarationBindings reports only the FIRST binding's id for a
+  -- destructuring declarator (empty name + single firstId), so
+  -- ruleExportNamedDeclaration emits one EXPORTS edge (to `a`) and `b`'s
+  -- CONSTANT node is left without an EXPORTS edge from its EXPORT statement —
+  -- invisible to EXPORTS-edge traversal of that statement. This is the
+  -- destructuring sibling of the multi-declarator edge fix (test 8b) and is
+  -- recorded in _ai/gaps.md as the destructuring-export gap.
+  it "emits an EXPORTS edge to every destructured object binding" $ do
+    let fa = analyzeAST $ BL.concat
+          [ "{\"type\":\"Program\",\"start\":0,\"end\":40,\"body\":["
+          , "{\"type\":\"ExportNamedDeclaration\",\"start\":0,\"end\":40,"
+          , "\"declaration\":{\"type\":\"VariableDeclaration\",\"start\":7,\"end\":39,\"kind\":\"const\",\"declarations\":["
+          , "{\"type\":\"VariableDeclarator\",\"start\":13,\"end\":38,"
+          , "\"id\":{\"type\":\"ObjectPattern\",\"start\":13,\"end\":19,\"properties\":["
+          , "{\"type\":\"Property\",\"start\":15,\"end\":16,\"shorthand\":true,"
+          , "\"key\":{\"type\":\"Identifier\",\"start\":15,\"end\":16,\"name\":\"a\"},"
+          , "\"value\":{\"type\":\"Identifier\",\"start\":15,\"end\":16,\"name\":\"a\"}},"
+          , "{\"type\":\"Property\",\"start\":18,\"end\":19,\"shorthand\":true,"
+          , "\"key\":{\"type\":\"Identifier\",\"start\":18,\"end\":19,\"name\":\"b\"},"
+          , "\"value\":{\"type\":\"Identifier\",\"start\":18,\"end\":19,\"name\":\"b\"}}"
+          , "]},"
+          , "\"init\":{\"type\":\"Identifier\",\"start\":22,\"end\":25,\"name\":\"obj\"}}"
+          , "]},\"specifiers\":[]}"
+          , "]}"
+          ]
+    exportNode <- requireNode "EXPORT" "named" fa
+    aNode <- requireNode "CONSTANT" "a" fa
+    bNode <- requireNode "CONSTANT" "b" fa
+    hasEdge "EXPORTS" (gnId exportNode) (gnId aNode) fa `shouldBe` True
+    hasEdge "EXPORTS" (gnId exportNode) (gnId bNode) fa `shouldBe` True
+    -- the export index must still hold exactly one entry per binding (no double
+    -- emission once the edge path also iterates every binding)
+    length (filter (\e -> eiName e == "a" && eiKind e == NamedExport) (faExports fa)) `shouldBe` 1
+    length (filter (\e -> eiName e == "b" && eiKind e == NamedExport) (faExports fa)) `shouldBe` 1
+
+  -- Test 8g: the same EXPORTS-edge invariant for array patterns —
+  -- `export const [c, d] = arr` must emit an EXPORTS edge to both c and d.
+  it "emits an EXPORTS edge to every destructured array binding" $ do
+    let fa = analyzeAST $ BL.concat
+          [ "{\"type\":\"Program\",\"start\":0,\"end\":40,\"body\":["
+          , "{\"type\":\"ExportNamedDeclaration\",\"start\":0,\"end\":40,"
+          , "\"declaration\":{\"type\":\"VariableDeclaration\",\"start\":7,\"end\":39,\"kind\":\"const\",\"declarations\":["
+          , "{\"type\":\"VariableDeclarator\",\"start\":13,\"end\":38,"
+          , "\"id\":{\"type\":\"ArrayPattern\",\"start\":13,\"end\":19,\"elements\":["
+          , "{\"type\":\"Identifier\",\"start\":14,\"end\":15,\"name\":\"c\"},"
+          , "{\"type\":\"Identifier\",\"start\":17,\"end\":18,\"name\":\"d\"}"
+          , "]},"
+          , "\"init\":{\"type\":\"Identifier\",\"start\":22,\"end\":25,\"name\":\"arr\"}}"
+          , "]},\"specifiers\":[]}"
+          , "]}"
+          ]
+    exportNode <- requireNode "EXPORT" "named" fa
+    cNode <- requireNode "CONSTANT" "c" fa
+    dNode <- requireNode "CONSTANT" "d" fa
+    hasEdge "EXPORTS" (gnId exportNode) (gnId cNode) fa `shouldBe` True
+    hasEdge "EXPORTS" (gnId exportNode) (gnId dNode) fa `shouldBe` True
+
+  -- Test 8h: a multi-declarator export mixing a simple binding and a
+  -- destructuring pattern — `export const a = 1, { b, c } = obj` — must emit an
+  -- EXPORTS edge to all three bindings and exactly one export-index entry each.
+  -- This guards the no-double-emit invariant: the simple binding's index entry
+  -- is owned by ruleExportNamedDeclaration (non-empty name), the destructured
+  -- ones by handleDestructuringDecl (empty name in the bindings list), so each
+  -- name must appear once and only once in the export index.
+  it "handles a mixed simple+destructuring export without double-emitting" $ do
+    let fa = analyzeAST $ BL.concat
+          [ "{\"type\":\"Program\",\"start\":0,\"end\":60,\"body\":["
+          , "{\"type\":\"ExportNamedDeclaration\",\"start\":0,\"end\":60,"
+          , "\"declaration\":{\"type\":\"VariableDeclaration\",\"start\":7,\"end\":59,\"kind\":\"const\",\"declarations\":["
+          , "{\"type\":\"VariableDeclarator\",\"start\":13,\"end\":18,"
+          , "\"id\":{\"type\":\"Identifier\",\"start\":13,\"end\":14,\"name\":\"a\"},"
+          , "\"init\":{\"type\":\"Literal\",\"start\":17,\"end\":18,\"value\":1,\"raw\":\"1\"}},"
+          , "{\"type\":\"VariableDeclarator\",\"start\":20,\"end\":40,"
+          , "\"id\":{\"type\":\"ObjectPattern\",\"start\":20,\"end\":26,\"properties\":["
+          , "{\"type\":\"Property\",\"start\":22,\"end\":23,\"shorthand\":true,"
+          , "\"key\":{\"type\":\"Identifier\",\"start\":22,\"end\":23,\"name\":\"b\"},"
+          , "\"value\":{\"type\":\"Identifier\",\"start\":22,\"end\":23,\"name\":\"b\"}},"
+          , "{\"type\":\"Property\",\"start\":25,\"end\":26,\"shorthand\":true,"
+          , "\"key\":{\"type\":\"Identifier\",\"start\":25,\"end\":26,\"name\":\"c\"},"
+          , "\"value\":{\"type\":\"Identifier\",\"start\":25,\"end\":26,\"name\":\"c\"}}"
+          , "]},"
+          , "\"init\":{\"type\":\"Identifier\",\"start\":29,\"end\":32,\"name\":\"obj\"}}"
+          , "]},\"specifiers\":[]}"
+          , "]}"
+          ]
+    exportNode <- requireNode "EXPORT" "named" fa
+    aNode <- requireNode "CONSTANT" "a" fa
+    bNode <- requireNode "CONSTANT" "b" fa
+    cNode <- requireNode "CONSTANT" "c" fa
+    hasEdge "EXPORTS" (gnId exportNode) (gnId aNode) fa `shouldBe` True
+    hasEdge "EXPORTS" (gnId exportNode) (gnId bNode) fa `shouldBe` True
+    hasEdge "EXPORTS" (gnId exportNode) (gnId cNode) fa `shouldBe` True
+    -- each binding appears exactly once in the export index (no double emission)
+    let countExport nm = length (filter (\e -> eiName e == nm && eiKind e == NamedExport) (faExports fa))
+    countExport "a" `shouldBe` 1
+    countExport "b" `shouldBe` 1
+    countExport "c" `shouldBe` 1
+
 
 edgeCaseTests :: Spec
 edgeCaseTests = do
