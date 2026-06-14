@@ -377,25 +377,36 @@ for pkg in "${PLATFORM_PACKAGES[@]}"; do
     fi
 done
 
-# Inject optionalDependencies into grafema package for publish.
-# These are NOT in the workspace package.json (they cause cross-platform
-# lockfile conflicts with --frozen-lockfile on CI). They are injected
-# here at release time so npm users get the correct native binaries.
-GRAFEMA_PKG="$ROOT_DIR/packages/grafema/package.json"
-if [ -f "$GRAFEMA_PKG" ]; then
+# Inject platform-binary optionalDependencies for publish — SINGLE SOURCE OF TRUTH.
+# These are NOT relied on from the workspace package.json (they cause cross-platform
+# lockfile conflicts with --frozen-lockfile on CI). They are injected here at release
+# time, from the single source $NEW_VERSION, into EVERY package that ships them.
+#
+# 0.4.0 bug (fixed here): only packages/grafema was injected; packages/cli kept a
+# stale hardcoded pin (0.3.29) in source, so `npm i grafema@0.4.0` installed a 0.4.0
+# binary (hoisted from the meta) AND a 0.3.29 binary nested under @grafema/cli — and
+# the CLI resolved the nested 0.3.29 (a pre-derive binary) → 0.4.0 broken. Looping the
+# inject over all pin-bearing packages keeps every shipped pin == $NEW_VERSION.
+PIN_PACKAGES=(
+    "packages/grafema"
+    "packages/cli"
+)
+for PIN_PKG in "${PIN_PACKAGES[@]}"; do
+    PKG_JSON="$ROOT_DIR/$PIN_PKG/package.json"
+    [ -f "$PKG_JSON" ] || continue
     node -e "
       const fs = require('fs');
-      const pkg = JSON.parse(fs.readFileSync('$GRAFEMA_PKG', 'utf8'));
+      const pkg = JSON.parse(fs.readFileSync('$PKG_JSON', 'utf8'));
       pkg.optionalDependencies = {
         '@grafema/grafema-darwin-arm64': '$NEW_VERSION',
         '@grafema/grafema-darwin-x64': '$NEW_VERSION',
         '@grafema/grafema-linux-arm64': '$NEW_VERSION',
         '@grafema/grafema-linux-x64': '$NEW_VERSION',
       };
-      fs.writeFileSync('$GRAFEMA_PKG', JSON.stringify(pkg, null, 2) + '\n');
+      fs.writeFileSync('$PKG_JSON', JSON.stringify(pkg, null, 2) + '\n');
     "
-    echo -e "${GREEN}[x] Injected optionalDependencies in packages/grafema${NC}"
-fi
+    echo -e "${GREEN}[x] Injected optionalDependencies in $PIN_PKG -> $NEW_VERSION${NC}"
+done
 
 # Update rfdb-server Cargo.toml to match npm version
 CARGO_TOML="$ROOT_DIR/packages/rfdb-server/Cargo.toml"

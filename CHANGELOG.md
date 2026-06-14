@@ -8,6 +8,10 @@ All notable changes to this project will be documented in this file.
 
 - feat(derive): `cli:command` / `mcp:tool` / `vscode:command` FEATURE detection moved to default-on derive packs (`@stdlib/js_entrypoint_features_nodes` + `@stdlib/js_entrypoint_features_edges`), continuing the Wave-14 HTTP-route precedent. These mint the commander / `@modelcontextprotocol/sdk` / vscode entry-point FEATURE nodes (+ `EXPOSES`/`HANDLES` edges) the `libraryCallbackEnricher` used to produce, resolving receivers via both the `RECEIVER_CALL` chain and the `DERIVES_FROM[callee]`/`READS_FROM[receiver]` PROPERTY_ACCESS walk for `<obj>.`-rooted namespace receivers (e.g. `vscode.commands.registerCommand`). The three slices were RETIRED from `libraryCallbackEnricher`'s `LIBRARY_NODE_TYPE` map — the pack is the single producer (no duplicate byte-different-id nodes). The MCP `setRequestHandler` ~4-call subset is unchanged; the ~30 per-tool `mcp:tool` nodes remain the separate `mcpToolDefinitionEnricher`'s job.
 
+### Bug Fixes
+
+- fix(release): platform-binary `optionalDependencies` are now injected at release time into **every** pin-bearing package (`packages/grafema` **and** `packages/cli`) from the single source `$NEW_VERSION` — single source of truth. Fixes the 0.4.0 skew where `@grafema/cli@0.4.0` shipped a stale hardcoded `0.3.29` pin (only `packages/grafema` was injected): `npm i grafema@0.4.0` then installed a `0.3.29` binary nested under `@grafema/cli` that shadowed the hoisted `0.4.0`, so the CLI ran a pre-derive binary against derive-required 0.4.0 — making 0.4.0 effectively non-functional from npm. Requires a 0.4.1 publish to take effect.
+
 ## [0.3.31] - 2026-06-11
 
 ### Features
