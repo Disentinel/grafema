@@ -16,7 +16,6 @@ import Data.Text (Text)
 import qualified Data.Map.Strict as Map
 
 import HaskellImportResolution (resolveAll)
-import qualified HaskellLocalCalls
 import qualified HaskellCrossModuleCalls
 import Grafema.Types (GraphNode(..), GraphEdge(..), MetaValue(..))
 import Grafema.Protocol (PluginCommand(..))
@@ -307,34 +306,13 @@ main = hspec $ do
           geTarget edge `shouldBe` "src/Lib.hs->FUNCTION->foo"
         _ -> expectationFailure $ "Expected 1 binding edge, got " ++ show (length bindingEdges)
 
-  -- ── 10. HaskellLocalCalls ──────────────────────────────────────
-  describe "HaskellLocalCalls" $ do
-
-    it "resolves same-file CALL to local FUNCTION" $ do
-      let nodes =
-            [ mkFunctionNode "foo" "src/A.hs" "src/A.hs->FUNCTION->foo" True
-            , mkCallNode     "foo" "src/A.hs" "src/A.hs->CALL->foo@5:4"
-            ]
-      cmds <- HaskellLocalCalls.resolveAll nodes []
-      let edges = extractEdges cmds
-      length edges `shouldBe` 1
-      case edges of
-        [e] -> do
-          geType   e `shouldBe` "CALLS"
-          geTarget e `shouldBe` "src/A.hs->FUNCTION->foo"
-        _ -> expectationFailure "Expected 1 CALLS edge"
-
-    it "skips CALL when an IMPORT_BINDING with same name exists" $ do
-      let nodes =
-            [ mkFunctionNode "foo" "src/A.hs" "src/A.hs->FUNCTION->foo" True
-            , mkImportBindingNode "foo" "B" "src/A.hs" "src/A.hs->IMPORT_BINDING->foo[in:B]"
-            , mkCallNode     "foo" "src/A.hs" "src/A.hs->CALL->foo@5:4"
-            ]
-      cmds <- HaskellLocalCalls.resolveAll nodes []
-      let edges = extractEdges cmds
-      length edges `shouldBe` 0
-
   -- ── 11. HaskellCrossModuleCalls ────────────────────────────────
+  -- NOTE: §10 HaskellLocalCalls and §12 local+cross-module disjoint-partition
+  -- regression were RETIRED with the native HaskellLocalCalls arm — same-file
+  -- CALL resolution now lives in the @stdlib/haskell_local_calls derive pack
+  -- (rfdb-server stdlib.rs + its fixtures), and the single-target /
+  -- local-shadows-import invariant is the pack's namespace-priority guarantee,
+  -- not a native local/cross-module pair.
   describe "HaskellCrossModuleCalls" $ do
 
     it "resolves imported CALL to FUNCTION in exporting module" $ do
@@ -364,45 +342,3 @@ main = hspec $ do
       cmds <- HaskellCrossModuleCalls.resolveAll nodes []
       let edges = extractEdges cmds
       length edges `shouldBe` 0
-
-  -- ── 12. Regression: local + cross-module are disjoint ─────────
-  --
-  -- HaskellLocalCalls skips CALLs whose name matches an IMPORT_BINDING in
-  -- the same file. HaskellCrossModuleCalls only fires for CALLs whose name
-  -- DOES match an IMPORT_BINDING. Therefore for any given CALL node at most
-  -- ONE of the two plugins emits a CALLS edge. This regression test
-  -- exercises both on the same node set and asserts no double emission.
-  describe "Regression: local + cross-module disjoint partition" $ do
-
-    it "emits exactly one CALLS edge for an imported call (no double emission)" $ do
-      let nodes =
-            [ mkModuleNode   "B" "src/B.hs" "MODULE#src/B.hs"
-            , mkFunctionNode "foo" "src/B.hs" "src/B.hs->FUNCTION->foo" True
-            -- Same-name "foo" ALSO declared locally in A.hs (pathological
-            -- shadowing scenario). The import should win — local skips.
-            , mkFunctionNode "foo" "src/A.hs" "src/A.hs->FUNCTION->foo" False
-            , mkImportBindingNode "foo" "B" "src/A.hs"
-                "src/A.hs->IMPORT_BINDING->foo[in:B]"
-            , mkCallNode     "foo" "src/A.hs" "src/A.hs->CALL->foo@5:4"
-            ]
-      localCmds <- HaskellLocalCalls.resolveAll nodes []
-      crossCmds <- HaskellCrossModuleCalls.resolveAll nodes []
-      let localEdges = extractEdges localCmds
-          crossEdges = extractEdges crossCmds
-          allEdges   = localEdges ++ crossEdges
-      length localEdges `shouldBe` 0
-      length crossEdges `shouldBe` 1
-      length allEdges   `shouldBe` 1
-      case crossEdges of
-        [e] -> geTarget e `shouldBe` "src/B.hs->FUNCTION->foo"
-        _ -> expectationFailure "Expected exactly 1 cross-module CALLS edge"
-
-    it "emits exactly one CALLS edge via local when name is NOT imported" $ do
-      let nodes =
-            [ mkFunctionNode "bar" "src/A.hs" "src/A.hs->FUNCTION->bar" False
-            , mkCallNode     "bar" "src/A.hs" "src/A.hs->CALL->bar@5:4"
-            ]
-      localCmds <- HaskellLocalCalls.resolveAll nodes []
-      crossCmds <- HaskellCrossModuleCalls.resolveAll nodes []
-      length (extractEdges localCmds) `shouldBe` 1
-      length (extractEdges crossCmds) `shouldBe` 0
