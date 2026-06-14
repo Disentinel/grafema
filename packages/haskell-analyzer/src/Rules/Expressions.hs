@@ -34,6 +34,8 @@ module Rules.Expressions
   ( walkExpr
   , walkMatchGroup
   , walkGRHSs
+  , MatchScopeTag
+  , functionClauseTag
   ) where
 
 import qualified Data.Text as T
@@ -58,6 +60,7 @@ import GHC.Hs.Binds
   )
 import GHC.Data.Bag (bagToList)
 import GHC.Types.SrcLoc (GenLocated(..), unLoc)
+import GHC.Parser.Annotation (SrcSpanAnnA)
 import GHC.Types.Name.Reader (rdrNameOcc)
 import GHC.Types.Name.Occurrence (occNameString)
 
@@ -67,10 +70,10 @@ import Analysis.Context
   , emitEdge
   , askFile
   , askScopeId
-  , withScope
   , withEnclosingFn
   )
-import Analysis.Types (GraphNode(..), GraphEdge(..), MetaValue(..), Scope(Scope), ScopeKind(..))
+import Analysis.Scope (withScopeNode)
+import Analysis.Types (GraphNode(..), GraphEdge(..), MetaValue(..), ScopeKind(..))
 import Grafema.SemanticId (semanticId)
 import Loc (getLoc)
 
@@ -243,7 +246,7 @@ walkExpr (L ann expr) = do
         , geType     = "CONTAINS"
         , geMetadata = Map.empty
         }
-      bodyResults <- walkMatchGroupResults mg
+      bodyResults <- walkMatchGroupResults lambdaMatchTag nodeId mg
       -- DFG: match bodies flow into lambda result
       mapM_ (\r -> emitDerivedFrom r nodeId) bodyResults
       return (Just nodeId)
@@ -275,7 +278,7 @@ walkExpr (L ann expr) = do
         , geType     = "CONTAINS"
         , geMetadata = Map.empty
         }
-      bodyResults <- walkMatchGroupResults mg
+      bodyResults <- walkMatchGroupResults lambdaMatchTag nodeId mg
       -- DFG: match bodies flow into lambda-case result
       mapM_ (\r -> emitDerivedFrom r nodeId) bodyResults
       return (Just nodeId)
@@ -305,7 +308,7 @@ walkExpr (L ann expr) = do
         , geMetadata = Map.empty
         }
       _ <- walkExpr scrut
-      bodyResults <- walkMatchGroupResults mg
+      bodyResults <- walkMatchGroupResults caseAltTag nodeId mg
       -- DFG: each case alternative body flows into the BRANCH result
       mapM_ (\r -> emitDerivedFrom r nodeId) bodyResults
       return (Just nodeId)
@@ -425,8 +428,11 @@ walkExpr (L ann expr) = do
         , geType     = "CONTAINS"
         , geMetadata = Map.empty
         }
-      walkLocalBinds binds
-      bodyResult <- walkExpr body
+      -- let-bound names are visible in BOTH the binds and the body, so
+      -- wrap both in a single LetScope anchored on the LET_BLOCK node id.
+      bodyResult <- withScopeNode LetScope nodeId $ do
+        walkLocalBinds binds
+        walkExpr body
       -- DFG: body expression flows into LET_BLOCK result
       emitDerivedFrom bodyResult nodeId
       return (Just nodeId)
@@ -494,51 +500,128 @@ extractCallName (HsPar _ _ (L _ e) _) =
   extractCallName e
 extractCallName _ = Nothing
 
--- | Walk a 'MatchGroup', recursing into each alternative's RHS.
+-- | Tag identifying what kind of lexical block a per-'Match' scope is.
+-- The pair carries both the 'ScopeKind' stamped onto the SCOPE node and
+-- the textual tag woven into its anchor id (so sibling clauses\/alts
+-- never collide).
+data MatchScopeTag = MatchScopeTag !ScopeKind !T.Text
+
+functionClauseTag :: MatchScopeTag
+functionClauseTag = MatchScopeTag FunctionScope "clause"
+
+caseAltTag :: MatchScopeTag
+caseAltTag = MatchScopeTag CaseScope "alt"
+
+lambdaMatchTag :: MatchScopeTag
+lambdaMatchTag = MatchScopeTag LambdaScope "lam"
+
+-- | Build the per-'Match' scope anchor id: @\<base\>:\<tag\>@\<line\>:\<col\>@.
+-- Position-stamped so sibling clauses\/alternatives of the same owner
+-- never produce the same SCOPE node id.
+matchScopeAnchor :: T.Text -> T.Text -> Int -> Int -> T.Text
+matchScopeAnchor base tag line col =
+  base <> ":" <> tag <> "@" <> T.pack (show line) <> ":" <> T.pack (show col)
+
+-- | Wrap a per-'Match' action in its own lexical SCOPE.
+-- The scope kind\/tag come from the 'MatchScopeTag'; the anchor base is
+-- the enclosing owner id (function id, case BRANCH id, lambda id).
+withMatchScope
+  :: MatchScopeTag
+  -> T.Text                                  -- ^ anchor base (owner id)
+  -> GenLocated SrcSpanAnnA (Match GhcPs (LHsExpr GhcPs))
+  -> Analyzer a
+  -> Analyzer a
+withMatchScope (MatchScopeTag kind tag) base lmatch inner =
+  let (line, col, _, _) = getLoc lmatch
+  in withScopeNode kind (matchScopeAnchor base tag line col) inner
+
+-- | Walk a 'MatchGroup', recursing into each alternative's RHS, pushing
+-- a per-'Match' lexical SCOPE around each clause\/alternative so its
+-- params and body occurrences are CONTAINS'd from the finer scope.
 -- Discards per-match results (use 'walkMatchGroupResults' when
 -- DFG edges are needed from the caller).
-walkMatchGroup :: MatchGroup GhcPs (LHsExpr GhcPs) -> Analyzer ()
-walkMatchGroup mg =
+walkMatchGroup :: MatchScopeTag -> T.Text -> MatchGroup GhcPs (LHsExpr GhcPs) -> Analyzer ()
+walkMatchGroup mtag base mg =
   let alts = unLoc (mg_alts mg)
-  in  mapM_ walkMatch alts
+  in  mapM_ (walkMatch mtag base) alts
 
 -- | Walk a 'MatchGroup', returning the body result IDs from each
 -- alternative. Used by LAMBDA, CASE, etc. to emit DERIVES_FROM edges.
-walkMatchGroupResults :: MatchGroup GhcPs (LHsExpr GhcPs) -> Analyzer [Maybe T.Text]
-walkMatchGroupResults mg =
+-- Pushes a per-'Match' lexical SCOPE around each alternative.
+walkMatchGroupResults :: MatchScopeTag -> T.Text -> MatchGroup GhcPs (LHsExpr GhcPs) -> Analyzer [Maybe T.Text]
+walkMatchGroupResults mtag base mg =
   let alts = unLoc (mg_alts mg)
-  in  mapM walkMatchResult alts
+  in  mapM (walkMatchResult mtag base) alts
 
--- | Walk a single 'Match', recursing into patterns and guarded RHSes.
-walkMatch :: GenLocated l (Match GhcPs (LHsExpr GhcPs)) -> Analyzer ()
-walkMatch (L _ (Match _ _ctx pats grhss)) = do
-  mapM_ walkPat pats
-  walkGRHSs grhss
+-- | Walk a single 'Match', recursing into patterns and guarded RHSes,
+-- inside its own per-clause lexical SCOPE. The patterns (params) and the
+-- body refs\/calls are CONTAINS'd from this scope, not the enclosing
+-- function\/branch.
+walkMatch :: MatchScopeTag -> T.Text -> GenLocated SrcSpanAnnA (Match GhcPs (LHsExpr GhcPs)) -> Analyzer ()
+walkMatch mtag base lmatch@(L _ (Match _ _ctx pats grhss)) =
+  withMatchScope mtag base lmatch $ do
+    mapM_ walkPat pats
+    walkGRHSs grhss
 
 -- | Walk a single 'Match', returning the body result ID from the
--- first GRHS. Used for DFG edge emission.
-walkMatchResult :: GenLocated l (Match GhcPs (LHsExpr GhcPs)) -> Analyzer (Maybe T.Text)
-walkMatchResult (L _ (Match _ _ctx pats grhss)) = do
-  mapM_ walkPat pats
-  walkGRHSsResult grhss
+-- first GRHS. Used for DFG edge emission. Pushes the per-clause scope.
+walkMatchResult :: MatchScopeTag -> T.Text -> GenLocated SrcSpanAnnA (Match GhcPs (LHsExpr GhcPs)) -> Analyzer (Maybe T.Text)
+walkMatchResult mtag base lmatch@(L _ (Match _ _ctx pats grhss)) =
+  withMatchScope mtag base lmatch $ do
+    mapM_ walkPat pats
+    walkGRHSsResult grhss
 
 -- | Walk guarded RHSes, including local binds (where clause).
+-- When the @where@ block is non-empty, both the guarded bodies AND the
+-- where bindings are wrapped in a single child 'WhereScope' (Haskell
+-- scoping: where-bound names are visible in all guards\/RHS of the clause
+-- and in the where bindings themselves). The where anchor is derived from
+-- the current (clause) scope id.
 walkGRHSs :: GRHSs GhcPs (LHsExpr GhcPs) -> Analyzer ()
-walkGRHSs (GRHSs _ grhsList localBinds) = do
-  mapM_ walkGRHS grhsList
-  walkLocalBinds localBinds
+walkGRHSs (GRHSs _ grhsList localBinds)
+  | isEmptyLocalBinds localBinds =
+      mapM_ walkGRHS grhsList
+  | otherwise = do
+      anchor <- whereScopeAnchor
+      withScopeNode WhereScope anchor $ do
+        mapM_ walkGRHS grhsList
+        walkLocalBinds localBinds
 
 -- | Walk guarded RHSes, returning the body result ID from the first
--- GRHS. Used for DFG edge emission.
+-- GRHS. Used for DFG edge emission. Mirrors 'walkGRHSs' for the where
+-- block: a non-empty @where@ wraps bodies + binds in a 'WhereScope'.
 walkGRHSsResult :: GRHSs GhcPs (LHsExpr GhcPs) -> Analyzer (Maybe T.Text)
-walkGRHSsResult (GRHSs _ grhsList localBinds) = do
-  results <- mapM walkGRHSResult grhsList
-  walkLocalBinds localBinds
-  -- Return the first non-Nothing result (typically only one GRHS for
-  -- unguarded equations; for guarded equations, any branch suffices)
-  return $ case filter (/= Nothing) results of
-    (r:_) -> r
-    []    -> Nothing
+walkGRHSsResult (GRHSs _ grhsList localBinds)
+  | isEmptyLocalBinds localBinds = do
+      results <- mapM walkGRHSResult grhsList
+      return (firstResult results)
+  | otherwise = do
+      anchor <- whereScopeAnchor
+      withScopeNode WhereScope anchor $ do
+        results <- mapM walkGRHSResult grhsList
+        walkLocalBinds localBinds
+        return (firstResult results)
+
+-- | Return the first non-Nothing body result (typically only one GRHS for
+-- unguarded equations; for guarded equations, any branch suffices).
+firstResult :: [Maybe T.Text] -> Maybe T.Text
+firstResult results = case filter (/= Nothing) results of
+  (r:_) -> r
+  []    -> Nothing
+
+-- | The anchor for a clause's @where@ scope: @\<clauseScopeId\>:where@.
+-- Derived from the enclosing (clause) scope id so it nests under it.
+whereScopeAnchor :: Analyzer T.Text
+whereScopeAnchor = do
+  parent <- askScopeId
+  return (parent <> ":where")
+
+-- | True for an absent\/empty @where@\/@let@ binding block.
+isEmptyLocalBinds :: HsLocalBindsLR GhcPs GhcPs -> Bool
+isEmptyLocalBinds (EmptyLocalBinds _)        = True
+isEmptyLocalBinds (HsValBinds _ (ValBinds _ binds sigs)) =
+  null (bagToList binds) && null sigs
+isEmptyLocalBinds _                          = False
 
 -- | Walk a single guarded RHS. Guards are not walked (deferred to
 -- Rules.Guards). The body expression is walked.
@@ -600,10 +683,11 @@ walkValBinds (XValBindsLR _) = pure ()
 walkBind :: GenLocated l (HsBindLR GhcPs GhcPs) -> Analyzer ()
 walkBind (L _ (FunBind { fun_id = funId, fun_matches = mg })) = do
   fnId <- walkFunBind funId mg   -- emit FUNCTION node for local binding
-  -- walk the body inside this local function's scope so its calls/refs
-  -- attach to it rather than the enclosing module/function
-  let fnScope = Scope fnId FunctionScope mempty Nothing
-  withEnclosingFn fnId $ withScope fnScope $ walkMatchGroup mg
+  -- Walk each clause inside its OWN per-clause scope (anchored on this
+  -- local function id) so its params/refs/calls attach to the clause,
+  -- not the enclosing module/function. The FUNCTION node itself stays
+  -- MODULE-CONTAINS'd (emitted by walkFunBind).
+  withEnclosingFn fnId $ walkMatchGroup functionClauseTag fnId mg
 walkBind (L _ (PatBind { pat_lhs = pat, pat_rhs = grhss })) = do
   walkPatBind pat grhss     -- emit VARIABLE node for local binding
   walkGRHSs grhss           -- walk into the body
