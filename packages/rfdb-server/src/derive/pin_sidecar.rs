@@ -409,6 +409,7 @@ mod tests {
             rule_ast_hash: "h".into(),
             additive: false,
             meta: Vec::new(),
+            single_target: false,
         };
 
         let prog = parse_ext_program(r#"p(A, B) :- edge(A, B, "IMPORTS_FROM")."#).unwrap();
