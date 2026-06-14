@@ -343,6 +343,22 @@ id is identical across generations are not tombstoned by changed-file deletion).
    materialize write-back or weaken the one-flush docstring.
 3. **attr(X,"type",T) bypasses the node-feedback stratifier dependency** (edge axis has no such
    bypass — edge_attr can't read the edge type). Track attr-type-const in node_type_arg or fix docs.
+   - **✅ RESOLVED 2026-06-14** (verified at HEAD): tracked the read (not just docs) — it was a real
+     soundness hole, not a deliberate boundary. The base `attr(X,"type",T)` relation resolves to the
+     node's structural type `node_type` at exec (`derive/exec.rs:1710,2903` `lookup_name == "type" => node`),
+     so it reads EXACTLY what `@materialize_node` produces — unlike `edge_attr`, which can only reach edge
+     *metadata* (the edge type is the tracked relation arg `edge(_,_,"T")`). The asymmetry the note flagged
+     is why the old "deliberate boundary" docstring was wrong. Fix: new `attr_node_type_arg` helper
+     (`derive/stratify.rs`) recognizes base `attr(_,"type",const|var)` as a node-type read and routes it to
+     the SAME node-materialize producer maps as `node(X,"T")` (const → exact producer; var → conservative
+     all-node + W-STRAT-001). Scoped to the base `attr` predicate ONLY — `node_attr` (metadata-blob builtin,
+     e.g. a value's declared type `"string"`) stays untracked by construction (`predicate() != "attr"`).
+     Variable attr KEY (`attr(X,K,V)`) remains out of scope (would over-couple every variable-key read) —
+     residual. Blast radius zero on shipped packs (no `.dl` reads base `attr(_,"type",_)`; the only hits are
+     `node_attr` in go_types/java_types). Locked by `attr_type_const_read_creates_node_materialize_dependency`,
+     `attr_type_variable_read_depends_on_all_node_materializers_and_warns`, and the class-guard
+     `node_attr_metadata_type_read_takes_no_node_materialize_dependency` (`derive/stratify.rs`). Full rfdb
+     lib 1403/0, clippy exit 0 (no new warnings).
 4. **O(owned²)**: removed_node_ids is a Vec scanned per node of the type; HashSet one-liner.
 5. **Never-rewrite staleness for OWNED nodes**: a re-derived owned node with a CHANGED surface
    (e.g. ISSUE message after method rename on the same CALL) keeps the stale payload forever —
@@ -351,6 +367,15 @@ id is identical across generations are not tombstoned by changed-file deletion).
    the plugin retires (pack can't rewrite or retract it). Document or co-own _source='shape-verifier'.
 7. **Cache pinning for always-scratch programs**: node-materializing entries still pin prior
    snapshots in datalog2_materialize_cache for zero benefit; skip the insert.
+   - **⚠️ STALE / DO-NOT-IMPLEMENT (triaged 2026-06-14)**: the "zero benefit" premise no longer holds.
+     The W9 unchanged-graph short-circuit (`derive_for_materialize`, `graph/engine_v2.rs:1085-1108`)
+     returns the cached evaluation VERBATIM when the snapshot version + tombstone `Arc` are unchanged,
+     and its own comment states this *explicitly covers node specs*: "Programs outside the maintain
+     envelope (negation, **node specs**) are equally covered — the equality argument needs no envelope."
+     So a node-materializing program DOES benefit from the cached entry on idle re-runs (skips full
+     scratch — the 80.7s→188.9s regression the W9 comment warns about). "Skip the insert" would
+     re-introduce that regression. The pin is also already bounded (each insert drops the prior, line 953).
+     No action.
 
 ### ✅ RESOLVED — item #5 (owned-node staleness), 2026-06-14
 

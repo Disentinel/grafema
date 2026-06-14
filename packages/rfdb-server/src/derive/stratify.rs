@@ -37,9 +37,15 @@
 //! predicate; a **variable** node type conservatively depends on all node-materialized
 //! predicates (the same `W-STRAT-001`). The axes never cross: a variable edge type
 //! depends only on edge materializers, a variable node type only on node materializers.
-//! (Reads of a materialized node's *fields* via `attr(X, …)`/`node_attr(X, …)` are not
-//! tracked — the same deliberate boundary as edge metadata reads via `edge_attr` on the
-//! edge axis.)
+//!
+//! A node's structural type is ALSO readable via the base `attr(X, "type", T)` relation
+//! (it resolves to `node_type` at execution), so that read carries the identical
+//! node-materialize feedback as `node(X, "T")` and is tracked the same way. This is NOT
+//! symmetric with the edge axis: there the type is a relation argument (`edge(_,_,"T")`,
+//! already tracked) and `edge_attr` can only reach edge *metadata*, never the edge type.
+//! Reads of a materialized node's genuine *metadata* fields via `node_attr(X, …)` (and
+//! `attr` keys other than `"type"`) remain untracked — those are field reads, not the
+//! structural type the materializer produces.
 //!
 //! # Algorithm
 //!
@@ -300,6 +306,47 @@ fn node_type_arg(lit: &Literal) -> Option<Option<String>> {
     }
 }
 
+/// The node-type read carried by a base `attr(Id, "type", T)` literal, if any — the
+/// surface-field twin of [`node_type_arg`]. The base `attr` relation's `"type"` key
+/// resolves to a node's structural type (`node_type`) at execution
+/// (`exec.rs` `lookup_name == "type" => node`), so `attr(X, "type", "ISSUE")` reads the
+/// SAME thing `node(X, "ISSUE")` does and the SAME thing `@materialize_node` produces —
+/// it must contribute the identical node-materialize dependency.
+///
+/// Returns:
+/// - `Some(Some(t))` — a constant node type `"t"` (third arg `Const`/`Lit`);
+/// - `Some(None)` — a *variable* node type (third arg `Var`/`Wildcard`); the reader
+///   conservatively depends on all node-materialized predicates (W-STRAT-001);
+/// - `None` — not a base `attr` literal, or its key is not the constant `"type"`.
+///
+/// Only the base `attr` relation is matched — never the `node_attr` builtin, which reads
+/// the METADATA blob (a value's declared/inferred type like `"string"`, not the
+/// structural `node_type`) and is correctly left untracked. A *variable* attr KEY
+/// (`attr(X, K, V)`) is out of scope here: it could read any field including `"type"`,
+/// but coupling every variable-key read to all node materializers over-approximates far
+/// beyond this surface; tracked as a residual (gaps.md W4-#3).
+fn attr_node_type_arg(lit: &Literal) -> Option<Option<String>> {
+    let atom = lit.atom();
+    if atom.predicate() != "attr" {
+        return None;
+    }
+    // The key (2nd arg) must be the constant "type"; anything else is not a type read.
+    let key_is_type = match atom.args().get(1) {
+        Some(Term::Const(k)) => k == "type",
+        Some(Term::Lit(v)) => v.as_str() == "type",
+        _ => false,
+    };
+    if !key_is_type {
+        return None;
+    }
+    match atom.args().get(2) {
+        Some(Term::Const(t)) => Some(Some(t.clone())),
+        Some(Term::Lit(v)) => Some(Some(v.as_str())),
+        Some(Term::Var(_)) | Some(Term::Wildcard) => Some(None),
+        None => None,
+    }
+}
+
 /// A directed dependency edge `from -> to` with a sign.
 struct DepEdge {
     from: String,
@@ -420,7 +467,11 @@ fn add_body_deps(
         //    producers, `node`/`type` readers vs `@materialize_node` producers.
         let type_read = edge_type_arg(lit)
             .map(|arg| (arg, maps.edge, maps.all_edge))
-            .or_else(|| node_type_arg(lit).map(|arg| (arg, maps.node, maps.all_node)));
+            .or_else(|| node_type_arg(lit).map(|arg| (arg, maps.node, maps.all_node)))
+            // The node type is also read via the base `attr(X, "type", T)` relation
+            // (resolves to `node_type` at exec) — same node-materialize feedback as
+            // `node(X, "T")`, routed to the same node producers (never edge).
+            .or_else(|| attr_node_type_arg(lit).map(|arg| (arg, maps.node, maps.all_node)));
         if let Some((type_arg, producer_map, all_producers)) = type_read {
             match type_arg {
                 Some(ty) => {
@@ -829,6 +880,83 @@ mod tests {
         let mk = stratum_of(&strat, "mkissue");
         let rd = stratum_of(&strat, "reader");
         assert!(mk < rd, "reader must sink below the node materializer");
+    }
+
+    #[test]
+    fn attr_type_const_read_creates_node_materialize_dependency() {
+        // The node TYPE is also readable via the base `attr(X, "type", T)` relation — it
+        // resolves to the node's structural type (`node_type`), exactly what
+        // `@materialize_node` produces and the exact join key. So a reader filtering on
+        // `attr(X, "type", "ISSUE")` has the SAME cross-run storage feedback as one reading
+        // `node(X, "ISSUE")` and MUST depend on the ISSUE node materializer. (Regression
+        // guard for the W4-#3 soundness hole: this read previously bypassed the dependency.)
+        let src = r#"
+            @materialize_node(node_type = "ISSUE")
+            mkissue(S, N, F) :- node(C, "CALL"), attr(C, "name", N), attr(C, "file", F),
+                                concat("issue::", C, S).
+            reader(X) :- attr(X, "type", "ISSUE").
+        "#;
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        assert_eq!(strat.strata.len(), 2);
+        let mk = stratum_of(&strat, "mkissue");
+        let rd = stratum_of(&strat, "reader");
+        assert!(
+            mk < rd,
+            "mkissue (node materializer, stratum {mk}) must be below the attr-type reader (stratum {rd})"
+        );
+        // A reader of an UNRELATED type via attr takes no dependency (single stratum).
+        let unrelated = r#"
+            @materialize_node(node_type = "ISSUE")
+            mkissue(S, N, F) :- node(C, "CALL"), attr(C, "name", N), attr(C, "file", F),
+                                concat("issue::", C, S).
+            other(X) :- attr(X, "type", "FUNCTION").
+        "#;
+        let strat2 = stratify(&parse_ext_program(unrelated).expect("parse")).expect("stratify");
+        assert_eq!(strat2.strata.len(), 1, "unrelated attr-type read takes no dependency");
+    }
+
+    #[test]
+    fn attr_type_variable_read_depends_on_all_node_materializers_and_warns() {
+        // `attr(X, "type", Ty)` with a VARIABLE value reads EVERY node's type, so it
+        // conservatively depends on all node materializers (the same W-STRAT-001 treatment
+        // as the variable `node(X, Ty)` form), and never on edge materializers.
+        let src = r#"
+            @materialize_node(node_type = "ISSUE")
+            mkissue(S, N, F) :- node(C, "CALL"), attr(C, "name", N), attr(C, "file", F),
+                                concat("issue::", C, S).
+            reader(X, Ty) :- attr(X, "type", Ty).
+        "#;
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        assert!(
+            strat.warnings.contains(&StratWarning::ConservativeMaterializeDep),
+            "variable attr-type read must warn W-STRAT-001"
+        );
+        let mk = stratum_of(&strat, "mkissue");
+        let rd = stratum_of(&strat, "reader");
+        assert!(mk < rd, "reader must sink below the node materializer");
+    }
+
+    #[test]
+    fn node_attr_metadata_type_read_takes_no_node_materialize_dependency() {
+        // CLASS-NOT-INSTANCE guard: `node_attr(X, "type", T)` is the METADATA-blob builtin
+        // (a value's declared/inferred type like "string"), NOT the structural node type.
+        // It is a genuine field read and must stay UNTRACKED — only the base `attr`
+        // relation reads `node_type`. This pins that the fix does not over-match `node_attr`.
+        let src = r#"
+            @materialize_node(node_type = "ISSUE")
+            mkissue(S, N, F) :- node(C, "CALL"), attr(C, "name", N), attr(C, "file", F),
+                                concat("issue::", C, S).
+            reader(X) :- node(X, "VARIABLE"), node_attr(X, "type", "ISSUE").
+        "#;
+        let strat = stratify(&parse_ext_program(src).expect("parse")).expect("stratify");
+        assert_eq!(
+            strat.strata.len(),
+            1,
+            "node_attr metadata read must not create a node-materialize dependency"
+        );
+        assert!(strat.warnings.is_empty(), "no conservative dep ⇒ no W-STRAT-001");
     }
 
     #[test]
