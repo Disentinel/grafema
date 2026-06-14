@@ -21,6 +21,7 @@ module Grafema.RuntimeGlobals
   , SymbolDB
   , SymbolEntry(..)
   , loadSymbolDB
+  , loadSymbolDBFiles
   , resolveAll
   ) where
 
@@ -33,7 +34,7 @@ import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
 import qualified Data.Set as Set
 import Data.Set (Set)
-import System.Directory (listDirectory, doesDirectoryExist)
+import System.Directory (listDirectory, doesDirectoryExist, doesFileExist)
 import System.FilePath ((</>), takeExtension)
 
 import qualified Data.Yaml as Y
@@ -45,7 +46,19 @@ import qualified Data.Vector as V
 -- | How to filter graph nodes for resolution.
 data NodeFilter
   = FilterCalls       -- ^ Match CALL nodes, use function index for skip (Rust, Haskell)
-  | FilterReferences  -- ^ Match REFERENCE nodes with resolved=False (JS)
+  | FilterReferences  -- ^ Match REFERENCE nodes with @resolved=False@ metadata (JS).
+                      --   The JS analyzer tags every REFERENCE node with an explicit
+                      --   @resolved@ flag; only the still-unresolved ones reach here.
+  | FilterReferencesUnbound
+                      -- ^ Match REFERENCE nodes that are NOT locally bound and NOT
+                      --   imported in their own file (Haskell). Unlike 'FilterReferences'
+                      --   this does not depend on a @resolved@ metadata flag — Haskell
+                      --   REFERENCE nodes carry no such flag — instead it skips any
+                      --   reference whose name has a same-file declaration
+                      --   (FUNCTION\/VARIABLE\/PARAMETER\/…) or IMPORT_BINDING, so a
+                      --   local\/imported binding shadows the prelude name. This is the
+                      --   value-REFERENCE counterpart of 'FilterCalls', mirroring the
+                      --   intent of the retired hardcoded HaskellLocalRefs prelude arm.
   deriving (Show, Eq)
 
 -- | Language-specific resolution strategy.
@@ -54,8 +67,19 @@ data NameStrategy = NameStrategy
   , nsPrefix    :: !Text   -- ^ "RUST_GLOBAL::", "HASKELL_GLOBAL::", "GLOBAL::"
   , nsCategory  :: !Text   -- ^ "rust-stdlib", "haskell-stdlib", "ecmascript"
   , nsFilter    :: !NodeFilter
-  , nsEdgeType  :: !Text   -- ^ "CALLS" or "READS_FROM"
-  , nsVirtualFile :: !Text -- ^ Virtual file for GLOBAL_DEFINITION nodes (must be unique per language)
+  , nsEdgeType  :: !Text   -- ^ "CALLS", "READS_FROM" or "RESOLVES_TO"
+  , nsVirtualFile :: !Text -- ^ Virtual file for the virtual node (must be unique per language)
+  , nsResolvedVia :: !Text -- ^ @resolvedVia@ edge-meta value (provenance).
+                           --   "runtime-globals" for Rust\/JS; "haskell-local-refs"
+                           --   for the Haskell prelude pass so its edge provenance is
+                           --   byte-identical to the retired native resolver.
+  , nsGlobalCategory :: !Text -- ^ @globalCategory@ edge-meta value. Usually equal to
+                              --   'nsCategory'; the Haskell prelude pass uses
+                              --   "haskell-prelude" to match legacy provenance.
+  , nsNodeType    :: !Text -- ^ Virtual node @type@. "GLOBAL_DEFINITION" for Rust\/JS;
+                           --   "EXTERNAL_FUNCTION" for Haskell (legacy parity).
+  , nsNodeSource  :: !Text -- ^ Virtual node @source@ metadata. "effects-db" for
+                           --   Rust\/JS; "haskell-local-refs" for Haskell (legacy parity).
   }
 
 -- | A single symbol entry from the effects database.
@@ -82,6 +106,22 @@ loadSymbolDB dir = do
   runtimeEntries <- loadFromSubdir (dir </> "runtimes")
   packageEntries <- loadFromSubdir (dir </> "packages")
   return (SymbolDB (Map.union runtimeEntries packageEntries))
+
+-- | Load a 'SymbolDB' from an explicit list of YAML files, ignoring any that
+-- do not exist. Use this when a language must NOT inherit symbols from the
+-- whole multi-language effects-db (e.g. the Haskell prelude pass must not match
+-- bare names like @insert@\/@member@\/@run@ that only exist in
+-- rust\/erlang\/elixir\/python runtime files), which would otherwise be tagged
+-- with the Haskell category. Missing files are silently skipped so a partial
+-- effects-db checkout still works.
+loadSymbolDBFiles :: [FilePath] -> IO SymbolDB
+loadSymbolDBFiles paths = do
+  maps <- mapM loadOne paths
+  return (SymbolDB (Map.unions maps))
+  where
+    loadOne p = do
+      exists <- doesFileExist p
+      if exists then parseYamlFile p else return Map.empty
 
 -- | Load all YAML files from a subdirectory and merge into one map.
 loadFromSubdir :: FilePath -> IO (Map Text SymbolEntry)
@@ -213,6 +253,39 @@ isUnresolved n =
   gnType n == "REFERENCE" &&
   Map.lookup "resolved" (gnMetadata n) == Just (MetaBool False)
 
+-- | Node types that introduce a same-file binding which must shadow a prelude
+-- name (mirrors the retired HaskellLocalRefs @declTypes@). A REFERENCE whose
+-- name has such a binding in its own file is NOT a prelude reference.
+bindingDeclTypes :: Set Text
+bindingDeclTypes = Set.fromList
+  [ "FUNCTION", "VARIABLE", "CONSTANT", "DATA_TYPE"
+  , "TYPE_SYNONYM", "CONSTRUCTOR", "RECORD_FIELD"
+  , "PARAMETER"
+  ]
+
+-- | Set of @(file, name)@ pairs that have a same-file binding (declaration or
+-- import). A REFERENCE matching one of these is locally\/imported-bound and
+-- must not be resolved to a prelude global.
+type BoundIndex = Set (Text, Text)
+
+-- | Build the set of @(file, name)@ pairs bound by a same-file declaration or
+-- import binding.
+buildBoundIndex :: [GraphNode] -> BoundIndex
+buildBoundIndex nodes =
+  Set.fromList
+    [ (gnFile n, gnName n)
+    | n <- nodes
+    , gnType n `Set.member` bindingDeclTypes || gnType n == "IMPORT_BINDING"
+    , not (T.null (gnName n))
+    ]
+
+-- | A REFERENCE node that is unbound (no same-file declaration\/import shadows
+-- its name) — the prelude-reference candidate.
+isUnboundReference :: BoundIndex -> GraphNode -> Bool
+isUnboundReference bound n =
+  gnType n == "REFERENCE" &&
+  not (Set.member (gnFile n, gnName n) bound)
+
 -- | Find the first matching 'SymbolEntry' from a list of candidate names.
 -- Also tries replacing "::" with "." and vice versa for cross-language
 -- compatibility (Rust calls use "::", effects-db keys use ".").
@@ -236,7 +309,7 @@ firstMatch db@(SymbolDB m) (x:xs) =
 mkGlobalNode :: NameStrategy -> SymbolEntry -> GraphNode
 mkGlobalNode strat entry = GraphNode
   { gnId        = nsPrefix strat <> seName entry
-  , gnType      = "GLOBAL_DEFINITION"
+  , gnType      = nsNodeType strat
   , gnName      = seName entry
   , gnFile      = nsVirtualFile strat
   , gnLine      = 0
@@ -245,8 +318,8 @@ mkGlobalNode strat entry = GraphNode
   , gnEndColumn = 0
   , gnExported  = True
   , gnMetadata  = Map.fromList $
-      [ ("category", MetaText (nsCategory strat))
-      , ("source",   MetaText "effects-db")
+      [ ("category", MetaText (nsGlobalCategory strat))
+      , ("source",   MetaText (nsNodeSource strat))
       ] ++ effectsMeta
   }
   where
@@ -261,8 +334,8 @@ mkEdge strat srcNode entry = GraphEdge
   , geTarget   = nsPrefix strat <> seName entry
   , geType     = nsEdgeType strat
   , geMetadata = Map.fromList
-      [ ("resolvedVia",    MetaText "runtime-globals")
-      , ("globalCategory", MetaText (nsCategory strat))
+      [ ("resolvedVia",    MetaText (nsResolvedVia strat))
+      , ("globalCategory", MetaText (nsGlobalCategory strat))
       ]
   }
 
@@ -300,5 +373,8 @@ resolveAll strat db nodes =
           in filter (not . isLocallyResolved (nsSeparator strat) funcIdx) callNodes
         FilterReferences ->
           filter isUnresolved nodes
+        FilterReferencesUnbound ->
+          let bound = buildBoundIndex nodes
+          in filter (isUnboundReference bound) nodes
       (globalNodes, edges, _seen) = foldl (resolveOne strat db) ([], [], Set.empty) matching
   in map EmitNode globalNodes ++ map EmitEdge edges

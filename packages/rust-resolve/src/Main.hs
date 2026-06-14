@@ -58,6 +58,10 @@ rustStrategy = NameStrategy
   , nsFilter    = FilterCalls
   , nsEdgeType  = "CALLS"
   , nsVirtualFile = "<runtime/rust>"
+  , nsResolvedVia = "runtime-globals"
+  , nsGlobalCategory = "rust-stdlib"
+  , nsNodeType    = "GLOBAL_DEFINITION"
+  , nsNodeSource  = "effects-db"
   }
 
 -- | Load the effects-db SymbolDB from GRAFEMA_EFFECTS_DB env var.
