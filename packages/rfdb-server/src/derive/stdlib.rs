@@ -1763,62 +1763,142 @@ mod tests {
         );
     }
 
-    /// The bundled js_local_refs pack reproduces JsLocalRefs.hs on a fixture covering
-    /// every arm, every skip-set, one negative per arm, and the pinned deltas:
-    /// - all 8 declaration types resolve a same-file REFERENCE (arm coverage);
-    /// - the imported(F,N) skip-set (IMPORT_BINDING) suppresses resolution;
-    /// - the rt_global ground-facts skip-list suppresses resolution ("console");
-    /// - cross-file declarations never match (file-flat negative);
-    /// - non-JS files are gated out (a .rs REFERENCE with a same-file match);
-    /// - empty names never match (the resolver's index exclusion);
-    /// - DELTA 1 PINNED: duplicate (file,name) declarations derive an edge to EVERY
-    ///   candidate (the resolver's Map kept one arbitrary winner — deriving what the
-    ///   delta says, not what the resolver did).
+    /// The reworked SCOPE-WALK js_local_refs pack on a fixture covering both arms,
+    /// the nearest-binder/shadowing property (the soundness GOAL), every skip-set,
+    /// the negatives, and the accepted same-scope superset:
+    ///
+    /// ARM A (SCOPE-WALK: VARIABLE/CONSTANT/FUNCTION/PARAMETER via SCOPE-DECLARES):
+    /// - a ref in a scope that declares the name resolves to that binder
+    ///   (helper/state/LIMIT/input, all DECLARES'd by the outer scope);
+    /// - SHADOWING: `shadow` is declared in BOTH an outer and an inner scope; a ref
+    ///   inside the inner scope resolves to the INNER binder ONLY (nearest wins) —
+    ///   the flat port would have emitted BOTH; this is DELTA 1, the soundness core;
+    /// - OUTER reach: a ref of `state` inside the inner scope (which does not
+    ///   declare it) climbs HAS_SCOPE to the outer scope's binder;
+    /// - IMPORT_BINDING is DECLARES-attached but EXCLUDED by the ARM A type filter
+    ///   (it is the import skip-set);
+    /// - same-scope duplicate binders derive BOTH (DELTA 2, accepted superset).
+    ///
+    /// ARM B (FILE-FLAT: CLASS/INTERFACE/ENUM/TYPE_SYNONYM — not SCOPE-attached):
+    /// - each resolves its same-file REFERENCE by (file, name), no scope needed.
+    ///
+    /// SKIP-SETS / NEGATIVES (each ref is given a declaring scope so it WOULD
+    /// resolve but for the skip): imported name; rt_global ("console"); cross-file
+    /// decl; non-JS (.rs) file; empty name.
     #[test]
-    fn js_local_refs_resolves_same_file_decls_with_skip_sets() {
+    fn js_local_refs_scope_walk_nearest_binder() {
         let mut v = FixtureStorageView::new(1);
 
-        // One declaration + one reference per declaration type (all in app.ts).
-        let decls = [
+        // ── Scope tree in app.ts: MODULE top-scope (NO module SCOPE node — the JS/TS
+        //    analyzer makes the MODULE itself the module scope, Context.hs:59-64),
+        //    outer SCOPE, inner SCOPE child via HAS_SCOPE ──
+        named_node(&mut v, "m_app", "app.ts", "MODULE", "app.ts");
+        named_node(&mut v, "s_outer", "", "SCOPE", "app.ts");
+        named_node(&mut v, "s_inner", "", "SCOPE", "app.ts");
+        edge(&mut v, "m_app", "s_outer", "HAS_SCOPE"); // MODULE is lexical parent of outer
+        edge(&mut v, "s_outer", "s_inner", "HAS_SCOPE"); // outer is lexical parent
+
+        // ── ARM A: scoped binders DECLARES'd by the outer scope, refs CONTAINS'd ──
+        let scoped = [
             ("d_fn", "helper", "FUNCTION"),
             ("d_var", "state", "VARIABLE"),
             ("d_const", "LIMIT", "CONSTANT"),
-            ("d_class", "Engine", "CLASS"),
             ("d_param", "input", "PARAMETER"),
+        ];
+        for (sid, name, ty) in scoped {
+            named_node(&mut v, sid, name, ty, "app.ts");
+            edge(&mut v, "s_outer", sid, "DECLARES");
+            named_node(&mut v, &format!("r_{sid}"), name, "REFERENCE", "app.ts");
+            edge(&mut v, "s_outer", &format!("r_{sid}"), "CONTAINS");
+        }
+
+        // ── SHADOWING: `shadow` declared in BOTH scopes; ref in INNER → inner only ──
+        named_node(&mut v, "d_shadow_out", "shadow", "VARIABLE", "app.ts");
+        edge(&mut v, "s_outer", "d_shadow_out", "DECLARES");
+        named_node(&mut v, "d_shadow_in", "shadow", "VARIABLE", "app.ts");
+        edge(&mut v, "s_inner", "d_shadow_in", "DECLARES");
+        named_node(&mut v, "r_shadow", "shadow", "REFERENCE", "app.ts");
+        edge(&mut v, "s_inner", "r_shadow", "CONTAINS");
+
+        // ── OUTER reach: ref of `state` in the inner scope climbs to outer binder ──
+        named_node(&mut v, "r_state_inner", "state", "REFERENCE", "app.ts");
+        edge(&mut v, "s_inner", "r_state_inner", "CONTAINS");
+
+        // ── DELTA 2: same-scope duplicate binders of `dup` — derive BOTH ──
+        named_node(&mut v, "d_dup_v", "dup", "VARIABLE", "app.ts");
+        edge(&mut v, "s_outer", "d_dup_v", "DECLARES");
+        named_node(&mut v, "d_dup_p", "dup", "PARAMETER", "app.ts");
+        edge(&mut v, "s_outer", "d_dup_p", "DECLARES");
+        named_node(&mut v, "r_dup", "dup", "REFERENCE", "app.ts");
+        edge(&mut v, "s_outer", "r_dup", "CONTAINS");
+
+        // ── MODULE TOP-SCOPE (regression guard): top-level binder DECLARES'd by the
+        //    MODULE, top-level ref CONTAINS'd by the MODULE — must resolve. The JS/TS
+        //    analyzer emits NO module SCOPE node, so this is the very common top-level
+        //    helper/const case that a SCOPE-only walk silently dropped. ──
+        named_node(&mut v, "d_modfn", "boot", "FUNCTION", "app.ts");
+        edge(&mut v, "m_app", "d_modfn", "DECLARES");
+        named_node(&mut v, "r_modfn", "boot", "REFERENCE", "app.ts");
+        edge(&mut v, "m_app", "r_modfn", "CONTAINS"); // ref is module-contained
+
+        // ── MODULE reach from an inner SCOPE: a ref of a module-level const inside the
+        //    inner function scope climbs SCOPE -> SCOPE -> MODULE via HAS_SCOPE. ──
+        named_node(&mut v, "d_modconst", "GLOBAL_CAP", "CONSTANT", "app.ts");
+        edge(&mut v, "m_app", "d_modconst", "DECLARES");
+        named_node(&mut v, "r_modconst_inner", "GLOBAL_CAP", "REFERENCE", "app.ts");
+        edge(&mut v, "s_inner", "r_modconst_inner", "CONTAINS");
+
+        // ── NEAREST over MODULE: `cfg` declared at module level AND in s_outer; a ref
+        //    in s_inner resolves to the s_outer binder (nearest), NOT the MODULE one. ──
+        named_node(&mut v, "d_cfg_mod", "cfg", "CONSTANT", "app.ts");
+        edge(&mut v, "m_app", "d_cfg_mod", "DECLARES");
+        named_node(&mut v, "d_cfg_outer", "cfg", "VARIABLE", "app.ts");
+        edge(&mut v, "s_outer", "d_cfg_outer", "DECLARES");
+        named_node(&mut v, "r_cfg", "cfg", "REFERENCE", "app.ts");
+        edge(&mut v, "s_inner", "r_cfg", "CONTAINS");
+
+        // ── ARM A skip-set: IMPORT_BINDING is DECLARES-attached but EXCLUDED ──
+        named_node(&mut v, "b_ext", "ext", "IMPORT_BINDING", "app.ts");
+        edge(&mut v, "s_outer", "b_ext", "DECLARES");
+        named_node(&mut v, "r_ext", "ext", "REFERENCE", "app.ts");
+        edge(&mut v, "s_outer", "r_ext", "CONTAINS");
+
+        // ── ARM B: flat type/class decls (NOT scope-attached); flat (file,name) ──
+        let flat = [
+            ("d_class", "Engine", "CLASS"),
             ("d_iface", "Shape", "INTERFACE"),
             ("d_enum", "Color", "ENUM"),
             ("d_syn", "Alias", "TYPE_SYNONYM"),
         ];
-        for (sid, name, ty) in decls {
+        for (sid, name, ty) in flat {
             named_node(&mut v, sid, name, ty, "app.ts");
             named_node(&mut v, &format!("r_{sid}"), name, "REFERENCE", "app.ts");
+            edge(&mut v, "s_outer", &format!("r_{sid}"), "CONTAINS");
         }
 
-        // Skip-set 1: imported name (IMPORT_BINDING shadows the local FUNCTION).
-        named_node(&mut v, "b_ext", "ext", "IMPORT_BINDING", "app.ts");
-        named_node(&mut v, "d_ext", "ext", "FUNCTION", "app.ts");
-        named_node(&mut v, "r_ext", "ext", "REFERENCE", "app.ts");
-
-        // Skip-set 2: runtime global ("console" is on the 97-name facts list).
+        // ── Skip-set: runtime global ("console" is on the 97-name facts list) ──
         named_node(&mut v, "d_console", "console", "VARIABLE", "app.ts");
+        edge(&mut v, "s_outer", "d_console", "DECLARES");
         named_node(&mut v, "r_console", "console", "REFERENCE", "app.ts");
+        edge(&mut v, "s_outer", "r_console", "CONTAINS");
 
-        // Negative: declaration only in ANOTHER file.
+        // ── Negative: declaration only in ANOTHER file (cross-file) ──
         named_node(&mut v, "d_far", "far", "FUNCTION", "b.ts");
         named_node(&mut v, "r_far", "far", "REFERENCE", "app.ts");
+        edge(&mut v, "s_outer", "r_far", "CONTAINS");
 
-        // Negative: non-JS file (gate).
+        // ── Negative: non-JS file (gate) — scoped, but .rs is gated out ──
+        named_node(&mut v, "s_rs", "", "SCOPE", "main.rs");
         named_node(&mut v, "d_rfn", "rfn", "FUNCTION", "main.rs");
+        edge(&mut v, "s_rs", "d_rfn", "DECLARES");
         named_node(&mut v, "r_rfn", "rfn", "REFERENCE", "main.rs");
+        edge(&mut v, "s_rs", "r_rfn", "CONTAINS");
 
-        // Negative: empty names never match.
+        // ── Negative: empty names never match ──
         named_node(&mut v, "d_empty", "", "FUNCTION", "app.ts");
+        edge(&mut v, "s_outer", "d_empty", "DECLARES");
         named_node(&mut v, "r_empty", "", "REFERENCE", "app.ts");
-
-        // DELTA 1: duplicate (file,name) decls — derive BOTH.
-        named_node(&mut v, "d_dup_v", "dup", "VARIABLE", "app.ts");
-        named_node(&mut v, "d_dup_p", "dup", "PARAMETER", "app.ts");
-        named_node(&mut v, "r_dup", "dup", "REFERENCE", "app.ts");
+        edge(&mut v, "s_outer", "r_empty", "CONTAINS");
 
         let (eval, specs, _node_specs) = evaluate_with_materialize(
             &v,
@@ -1829,23 +1909,53 @@ mod tests {
         )
         .expect("js_local_refs.dl evaluates");
 
-        let mut expected: BTreeSet<(u128, u128, String)> = decls
-            .iter()
-            .map(|(sid, _, _)| {
-                (
-                    id_of(&format!("r_{sid}")),
-                    id_of(sid),
-                    "js-local-refs".to_string(),
-                )
-            })
-            .collect();
-        expected.insert((id_of("r_dup"), id_of("d_dup_v"), "js-local-refs".to_string()));
-        expected.insert((id_of("r_dup"), id_of("d_dup_p"), "js-local-refs".to_string()));
+        let mut expected: BTreeSet<(u128, u128, String)> = BTreeSet::new();
+        let edge = |r: &str, d: &str| (id_of(r), id_of(d), "js-local-refs".to_string());
+        // ARM A: each scoped binder, resolved in its own scope.
+        expected.insert(edge("r_d_fn", "d_fn"));
+        expected.insert(edge("r_d_var", "d_var"));
+        expected.insert(edge("r_d_const", "d_const"));
+        expected.insert(edge("r_d_param", "d_param"));
+        // SHADOWING: inner ref resolves to the INNER binder ONLY (nearest wins).
+        expected.insert(edge("r_shadow", "d_shadow_in"));
+        // OUTER reach: inner ref of `state` climbs to the outer binder.
+        expected.insert(edge("r_state_inner", "d_var"));
+        // DELTA 2: same-scope dup — BOTH candidates.
+        expected.insert(edge("r_dup", "d_dup_v"));
+        expected.insert(edge("r_dup", "d_dup_p"));
+        // MODULE top-scope: top-level ref → MODULE-DECLARES'd binder (regression guard).
+        expected.insert(edge("r_modfn", "d_modfn"));
+        // MODULE reach: inner ref climbs SCOPE->SCOPE->MODULE to the module-level const.
+        expected.insert(edge("r_modconst_inner", "d_modconst"));
+        // NEAREST over MODULE: inner ref of `cfg` resolves to s_outer binder (nearest),
+        // NOT the module-level one (the MODULE binder is shadowed by s_outer).
+        expected.insert(edge("r_cfg", "d_cfg_outer"));
+        // ARM B: flat type/class decls.
+        expected.insert(edge("r_d_class", "d_class"));
+        expected.insert(edge("r_d_iface", "d_iface"));
+        expected.insert(edge("r_d_enum", "d_enum"));
+        expected.insert(edge("r_d_syn", "d_syn"));
+
         assert_eq!(
             triples(&eval, "js_local_ref"),
             expected,
-            "all 8 decl types + BOTH dup candidates (DELTA 1); imported/rt_global/\
-             cross-file/.rs/empty-name references derive nothing"
+            "ARM A scope-walk (nearest binder; inner shadows outer; outer reach via \
+             HAS_SCOPE; same-scope dup superset; IMPORT_BINDING excluded) + ARM B flat \
+             (CLASS/INTERFACE/ENUM/TYPE_SYNONYM); rt_global/cross-file/.rs/empty derive nothing"
+        );
+
+        // SHADOWING (explicit): the OUTER `shadow` binder must NOT be derived.
+        assert!(
+            !triples(&eval, "js_local_ref")
+                .contains(&edge("r_shadow", "d_shadow_out")),
+            "nearest-binder: the inner-scope `shadow` shadows the outer — outer must be dropped"
+        );
+
+        // NEAREST over MODULE (explicit): the module-level `cfg` binder must NOT be
+        // derived for r_cfg — the strictly-closer s_outer binder shadows it.
+        assert!(
+            !triples(&eval, "js_local_ref").contains(&edge("r_cfg", "d_cfg_mod")),
+            "nearest-binder over MODULE: s_outer `cfg` shadows the module-level `cfg`"
         );
 
         // READS_FROM is shared vocabulary — additive, with resolvedVia projected.
