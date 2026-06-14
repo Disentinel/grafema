@@ -74,8 +74,12 @@
 //! Node identity is the `id` (hence the semantic id). Two derived facts agreeing on the
 //! semantic id are ONE node — the planner dedups by id, and which fact's name/file/meta
 //! lands is storage-order-defined (the edge meta-identity caveat, verbatim). An already-
-//! present node is never rewritten by the write-back (both modes), so a foreign producer's
-//! node with the same semantic id keeps its own metadata.
+//! present node owned by a FOREIGN producer (a different/absent `_source`) is never
+//! rewritten by the write-back (both modes), so that producer keeps its own name/file/
+//! metadata. An OWNED already-present node (this rule's `_source`) whose user-visible
+//! surface (name/file/node_type/`meta(...)`, with the volatile `_generation` excluded)
+//! CHANGED since the last run IS rewritten in place — last-write-wins for a rule's own
+//! nodes (the engine's `owned_node_surface_changed`); an unchanged owned node is a no-op.
 //!
 //! ## Node `mode` semantics — exclusive is PROVENANCE-SCOPED (unlike edges)
 //!
