@@ -1864,6 +1864,11 @@ mod tests {
     /// - A2 direct → VARIABLE/CONSTANT, with DELTA 1 PINNED (both var+const derive);
     /// - A3 uppercase ctor → CLASS, with a lowercase negative AND the ladder
     ///   suppression (a VARIABLE of the same name beats the CLASS);
+    /// - DELTA 6 (resolve rework) PINNED: A1/A2/A3 SCOPE-WALK the B1/B2 encl_*
+    ///   idiom (SCOPE+HAS_SCOPE+CONTAINS chain, enclosing MODULE for top-level
+    ///   binders + classes) instead of a flat (file, name) join; a same-name
+    ///   FUNCTION in an UNRELATED scope (`orphan`) does NOT resolve a module-level
+    ///   call — the cross-scope false positive the flat match made is dropped;
     /// - the import-binding skip-set on direct calls;
     /// - B1 this./super./<obj>. via the Wave-0 scope chain (block scope →
     ///   lexical parent → METHOD owner → class), with the multi-dot exactness
@@ -1876,33 +1881,75 @@ mod tests {
     fn js_same_file_calls_resolves_all_arms_with_preference_ladder() {
         let mut v = FixtureStorageView::new(1);
 
-        // A1: direct call → FUNCTION.
-        named_node(&mut v, "f_run", "run", "FUNCTION", "app.ts");
-        named_node(&mut v, "c_fn", "run", "CALL", "app.ts");
+        // ── A-arm scope shape (Wave-0 verified on the real graph) ─────────────
+        // The direct-call arms now SCOPE-WALK (DELTA 6): a call resolves only to a
+        // binder declared in a LEXICALLY ENCLOSING container, not any same-(file,
+        // name) binder. The file MODULE owns the top scope (MODULE -HAS_SCOPE->
+        // s_mod) and CONTAINS the top-level binders + classes; s_mod CONTAINS the
+        // direct-call CALLs. Top-level FUNCTION/VARIABLE/CONSTANT are reached via
+        // the enclosing-MODULE leg; CLASS is ONLY ever MODULE-contained.
+        named_node(&mut v, "mod_app", "app.ts", "MODULE", "app.ts");
+        named_node(&mut v, "s_mod", "module", "SCOPE", "app.ts");
+        edge(&mut v, "mod_app", "s_mod", "HAS_SCOPE");
 
-        // Ladder: FUNCTION beats VARIABLE.
+        // A1: direct call → FUNCTION (declared at module top level).
+        named_node(&mut v, "f_run", "run", "FUNCTION", "app.ts");
+        edge(&mut v, "mod_app", "f_run", "CONTAINS");
+        named_node(&mut v, "c_fn", "run", "CALL", "app.ts");
+        edge(&mut v, "s_mod", "c_fn", "CONTAINS");
+
+        // Ladder: FUNCTION beats VARIABLE (both module-level, same chain).
         named_node(&mut v, "f_make", "make", "FUNCTION", "app.ts");
         named_node(&mut v, "v_make", "make", "VARIABLE", "app.ts");
+        edge(&mut v, "mod_app", "f_make", "CONTAINS");
+        edge(&mut v, "mod_app", "v_make", "CONTAINS");
         named_node(&mut v, "c_pref", "make", "CALL", "app.ts");
+        edge(&mut v, "s_mod", "c_pref", "CONTAINS");
 
         // A2 + DELTA 1: VARIABLE and CONSTANT both derive (no FUNCTION).
         named_node(&mut v, "v_cb", "cb", "VARIABLE", "app.ts");
         named_node(&mut v, "k_cb", "cb", "CONSTANT", "app.ts");
+        edge(&mut v, "mod_app", "v_cb", "CONTAINS");
+        edge(&mut v, "mod_app", "k_cb", "CONTAINS");
         named_node(&mut v, "c_var", "cb", "CALL", "app.ts");
+        edge(&mut v, "s_mod", "c_var", "CONTAINS");
 
         // A3: uppercase ctor → CLASS; lowercase negative; ladder suppression.
         named_node(&mut v, "cls_widget", "Widget", "CLASS", "app.ts");
+        edge(&mut v, "mod_app", "cls_widget", "CONTAINS");
         named_node(&mut v, "c_ctor", "Widget", "CALL", "app.ts");
+        edge(&mut v, "s_mod", "c_ctor", "CONTAINS");
         named_node(&mut v, "cls_low", "widget2", "CLASS", "app.ts");
+        edge(&mut v, "mod_app", "cls_low", "CONTAINS");
         named_node(&mut v, "c_low", "widget2", "CALL", "app.ts");
+        edge(&mut v, "s_mod", "c_low", "CONTAINS");
         named_node(&mut v, "v_box", "Box", "VARIABLE", "app.ts");
         named_node(&mut v, "cls_box", "Box", "CLASS", "app.ts");
+        edge(&mut v, "mod_app", "v_box", "CONTAINS");
+        edge(&mut v, "mod_app", "cls_box", "CONTAINS");
         named_node(&mut v, "c_box", "Box", "CALL", "app.ts");
+        edge(&mut v, "s_mod", "c_box", "CONTAINS");
 
         // Import-binding skip on direct calls.
         named_node(&mut v, "b_ext", "ext", "IMPORT_BINDING", "app.ts");
         named_node(&mut v, "f_ext", "ext", "FUNCTION", "app.ts");
+        edge(&mut v, "mod_app", "f_ext", "CONTAINS");
         named_node(&mut v, "c_ext", "ext", "CALL", "app.ts");
+        edge(&mut v, "s_mod", "c_ext", "CONTAINS");
+
+        // DELTA 6 precision lock: a same-name FUNCTION declared in an UNRELATED
+        // scope (a different function body) must NOT resolve a module-level call.
+        // 'orphan' is declared ONLY inside f_other's body scope; the call c_orph
+        // sits at module top level → no enclosing container holds the binder, so
+        // the flat (file, name) match's cross-scope false positive is dropped.
+        named_node(&mut v, "f_other", "other", "FUNCTION", "app.ts");
+        edge(&mut v, "mod_app", "f_other", "CONTAINS");
+        named_node(&mut v, "s_other", "function", "SCOPE", "app.ts");
+        edge(&mut v, "f_other", "s_other", "HAS_SCOPE");
+        named_node(&mut v, "f_orphan", "orphan", "FUNCTION", "app.ts");
+        edge(&mut v, "s_other", "f_orphan", "CONTAINS");
+        named_node(&mut v, "c_orph", "orphan", "CALL", "app.ts");
+        edge(&mut v, "s_mod", "c_orph", "CONTAINS");
 
         // B1 scope-chain fixture: class App { init() { { this.render() } } }.
         // Owner-vs-lexical shape: METHOD m_init -HAS_SCOPE-> s_fn (function scope);
@@ -2019,8 +2066,15 @@ mod tests {
         );
 
         // Every head is CALLS + additive (shared vocabulary) with resolvedVia meta.
+        // A3 (sf_call_ctor) is one logical arm expanded into 26 clauses (one per
+        // uppercase letter, the inline ctor-name check — see ENCODING NOTES), so the
+        // CALLS materialize-spec count is A1(1)+A2(1)+A3(26)+B1(1)+B2(1) = 30.
         let calls_specs: Vec<_> = specs.iter().filter(|s| s.edge_type == "CALLS").collect();
-        assert_eq!(calls_specs.len(), 5, "five CALLS heads (A1, A2, A3, B1, B2)");
+        assert_eq!(
+            calls_specs.len(),
+            30,
+            "CALLS heads: A1, A2, B1, B2 + A3 expanded into 26 uppercase-letter clauses"
+        );
         assert!(
             calls_specs.iter().all(|s| s.additive),
             "CALLS is shared with the analyzers — every head must be additive"
@@ -2100,60 +2154,113 @@ mod tests {
         assert_eq!(calls_specs[0].meta, vec!["resolvedVia".to_string()]);
     }
 
-    /// The bundled rust_calls pack reproduces RustCallResolution.hs:
-    /// - R1 exact (file,name) match, including a receiver-shaped method call (the
-    ///   Wave-0 direct CALL -READS_FROM-> receiver — the resolver never conditioned
-    ///   on it, the bare-name exact arm covers it);
-    /// - R2 '::'-suffix fallback with the segment boundary ("do_y" must NOT match
-    ///   FUNCTION "y") and the exact-beats-suffix preference negation;
+    /// The bundled rust_calls pack resolves same-file CALLs by SCOPE-WALK to the
+    /// nearest enclosing FUNCTION binder (not flat (file,name)):
+    /// - R1 scope-walk exact: a bare-name call resolves to the same-name FUNCTION
+    ///   lexically visible from the call's enclosing FUNCTION — sibling in the same
+    ///   IMPL_BLOCK/MODULE owner, or a file-level free function. Covers the call
+    ///   directly under a FUNCTION, a call nested in a block SCOPE (HAS_SCOPE walk),
+    ///   and a MODULE-level call (no enclosing fn → free-fn arm);
+    /// - R1 PRECISION (the rework, ex-DELTA-1): two `fn process` in two different
+    ///   impl blocks — a call inside `impl A` resolves to ONLY `A::process`, NOT the
+    ///   same-named `B::process` (flat resolution emitted BOTH; the scope-walk drops
+    ///   the out-of-scope twin);
+    /// - R2 '::'-suffix fallback (FLAT by design — a qualified path names its type)
+    ///   with the segment boundary ("do_y" must NOT match FUNCTION "y") and the
+    ///   exact-beats-suffix preference negation;
     /// - cross-file and non-.rs negatives;
-    /// - DELTA 1 PINNED: duplicate (file,name) FUNCTIONs derive an edge per
-    ///   candidate (the resolver's Map kept the last one);
-    /// - DELTA 2 PINNED: a multi-segment FUNCTION name ("b::c") matches via the
+    /// - DELTA 2 PINNED (R2): a multi-segment FUNCTION name ("b::c") matches via the
     ///   suffix arm (the resolver's lastSegment comparison never could).
+    ///
+    /// Scope shape mirrors rust_analyzer.rs: the file is one MODULE; free fns and
+    /// IMPL_BLOCKs are MODULE-CONTAINS children; an IMPL_BLOCK CONTAINS its methods;
+    /// a FUNCTION directly CONTAINS its top-level CALLs (the fn IS its own scope, no
+    /// separate body SCOPE); block bodies are SCOPE nodes the fn HAS_SCOPEs.
     #[test]
-    fn rust_calls_exact_then_suffix_fallback() {
+    fn rust_calls_scope_walk_exact_then_suffix_fallback() {
         let mut v = FixtureStorageView::new(1);
 
-        // R1 exact.
+        // The file MODULE (one per file; inline `mod` is walked inline).
+        named_node(&mut v, "m_lib", "lib", "MODULE", "lib.rs");
+
+        // R1: free fn `helper`, called from a sibling free fn `caller_a`.
         named_node(&mut v, "f_helper", "helper", "FUNCTION", "lib.rs");
+        named_node(&mut v, "f_caller_a", "caller_a", "FUNCTION", "lib.rs");
+        edge(&mut v, "m_lib", "f_helper", "CONTAINS");
+        edge(&mut v, "m_lib", "f_caller_a", "CONTAINS");
         named_node(&mut v, "c1", "helper", "CALL", "lib.rs");
+        edge(&mut v, "f_caller_a", "c1", "CONTAINS"); // call directly under the fn
+
+        // R1 nested-block: a call to `helper` inside an if-block SCOPE of caller_a
+        // resolves through the HAS_SCOPE walk up to caller_a → m_lib → free fn.
+        named_node(&mut v, "s_blk", "block", "SCOPE", "lib.rs");
+        edge(&mut v, "f_caller_a", "s_blk", "HAS_SCOPE");
+        named_node(&mut v, "c1b", "helper", "CALL", "lib.rs");
+        edge(&mut v, "s_blk", "c1b", "CONTAINS");
+
+        // R1 PRECISION: `process` exists in BOTH impl A and impl B. A call inside
+        // a method of impl A must resolve to A's process only.
+        named_node(&mut v, "ib_a", "A", "IMPL_BLOCK", "lib.rs");
+        named_node(&mut v, "ib_b", "B", "IMPL_BLOCK", "lib.rs");
+        edge(&mut v, "m_lib", "ib_a", "CONTAINS");
+        edge(&mut v, "m_lib", "ib_b", "CONTAINS");
+        named_node(&mut v, "f_process_a", "process", "FUNCTION", "lib.rs");
+        named_node(&mut v, "f_process_b", "process", "FUNCTION", "lib.rs");
+        edge(&mut v, "ib_a", "f_process_a", "CONTAINS");
+        edge(&mut v, "ib_b", "f_process_b", "CONTAINS");
+        // method `run` in impl A that calls `process()` (bare name / self.process).
+        named_node(&mut v, "f_run_a", "run", "FUNCTION", "lib.rs");
+        edge(&mut v, "ib_a", "f_run_a", "CONTAINS");
+        named_node(&mut v, "c4", "process", "CALL", "lib.rs");
+        edge(&mut v, "f_run_a", "c4", "CONTAINS");
+
+        // R1 MODULE-level call to a free fn (no enclosing FUNCTION → free-fn arm).
+        named_node(&mut v, "f_init", "init", "FUNCTION", "lib.rs");
+        edge(&mut v, "m_lib", "f_init", "CONTAINS");
+        named_node(&mut v, "c_mod", "init", "CALL", "lib.rs");
+        edge(&mut v, "m_lib", "c_mod", "CONTAINS"); // top-level const-initializer call
 
         // R2 suffix.
         named_node(&mut v, "f_helper2", "helper2", "FUNCTION", "lib.rs");
+        edge(&mut v, "m_lib", "f_helper2", "CONTAINS");
         named_node(&mut v, "c2", "utils::helper2", "CALL", "lib.rs");
+        edge(&mut v, "f_caller_a", "c2", "CONTAINS");
 
-        // Exact beats suffix: both "m::foo" and "foo" exist; only the exact fires.
+        // Exact beats suffix: both "m::foo" and "foo" exist; only the scoped exact
+        // fires for the bare call "m::foo"? No — the call name IS "m::foo" (qualified
+        // path). The bare-name exact arm requires FUNCTION.name == call name, so a
+        // FUNCTION literally named "m::foo" matches R1 (scoped); the "::"-suffix R2
+        // is then suppressed by the has_scoped preference negation.
         named_node(&mut v, "f_qual", "m::foo", "FUNCTION", "lib.rs");
         named_node(&mut v, "f_foo", "foo", "FUNCTION", "lib.rs");
+        edge(&mut v, "m_lib", "f_qual", "CONTAINS");
+        edge(&mut v, "m_lib", "f_foo", "CONTAINS");
         named_node(&mut v, "c3", "m::foo", "CALL", "lib.rs");
+        edge(&mut v, "f_caller_a", "c3", "CONTAINS");
 
-        // Method call with a Wave-0 receiver shape — resolves by bare name (R1).
-        named_node(&mut v, "f_process", "process", "FUNCTION", "lib.rs");
-        named_node(&mut v, "c4", "process", "CALL", "lib.rs");
-        named_node(&mut v, "recv", "w", "REFERENCE", "lib.rs");
-        edge(&mut v, "c4", "recv", "READS_FROM");
-
-        // Cross-file negative.
+        // Cross-file negative: `far` is in other.rs; the call is in lib.rs.
         named_node(&mut v, "f_far", "far", "FUNCTION", "other.rs");
         named_node(&mut v, "c5", "far", "CALL", "lib.rs");
+        edge(&mut v, "f_caller_a", "c5", "CONTAINS");
 
         // File gate negative: same shape in a .ts file.
+        named_node(&mut v, "m_app", "app", "MODULE", "app.ts");
         named_node(&mut v, "f_js", "jsfn", "FUNCTION", "app.ts");
+        edge(&mut v, "m_app", "f_js", "CONTAINS");
         named_node(&mut v, "c6", "jsfn", "CALL", "app.ts");
+        edge(&mut v, "f_js", "c6", "CONTAINS");
 
         // Suffix boundary negative: "do_y" must not match FUNCTION "y".
         named_node(&mut v, "f_y", "y", "FUNCTION", "lib.rs");
+        edge(&mut v, "m_lib", "f_y", "CONTAINS");
         named_node(&mut v, "c7", "do_y", "CALL", "lib.rs");
+        edge(&mut v, "f_caller_a", "c7", "CONTAINS");
 
-        // DELTA 1: two `fn new` in one file — both derive.
-        named_node(&mut v, "f_new1", "new", "FUNCTION", "lib.rs");
-        named_node(&mut v, "f_new2", "new", "FUNCTION", "lib.rs");
-        named_node(&mut v, "c8", "Widget::new", "CALL", "lib.rs");
-
-        // DELTA 2: multi-segment FUNCTION name matches as a suffix.
+        // R2 DELTA 2: multi-segment FUNCTION name matches as a suffix.
         named_node(&mut v, "f_bc", "b::c", "FUNCTION", "lib.rs");
+        edge(&mut v, "m_lib", "f_bc", "CONTAINS");
         named_node(&mut v, "c9", "a::b::c", "CALL", "lib.rs");
+        edge(&mut v, "f_caller_a", "c9", "CONTAINS");
 
         let (eval, specs, _node_specs) = evaluate_with_materialize(
             &v,
@@ -2172,21 +2279,29 @@ mod tests {
         };
         assert_eq!(
             triples(&eval, "rust_call"),
-            via(&[("c1", "f_helper"), ("c3", "f_qual"), ("c4", "f_process")]),
-            "R1: exact matches incl. the qualified name and the receiver-shaped \
-             method call; cross-file/.ts/empty negatives derive nothing"
+            via(&[
+                ("c1", "f_helper"),     // free fn, sibling-of-caller via m_lib
+                ("c1b", "f_helper"),    // nested block SCOPE → HAS_SCOPE walk → free fn
+                ("c4", "f_process_a"),  // PRECISION: impl-A method calling process →
+                                        // ONLY A::process (B::process out of scope)
+                ("c_mod", "f_init"),    // MODULE-level call → free fn
+                ("c3", "f_qual"),       // qualified-name FUNCTION matched bare-exact
+            ]),
+            "R1 scope-walk: free fns resolve via the file MODULE, the nested-block \
+             call walks HAS_SCOPE to its fn, the impl-A `process` call resolves to \
+             A::process ONLY (not B::process — the precision fix), the MODULE-level \
+             call resolves the free fn, and the qualified-name FUNCTION matches the \
+             bare exact arm. Cross-file/.ts negatives derive nothing"
         );
         assert_eq!(
             triples(&eval, "rust_suffix_call"),
             via(&[
                 ("c2", "f_helper2"),
-                ("c8", "f_new1"),
-                ("c8", "f_new2"),
                 ("c9", "f_bc"),
             ]),
-            "R2: suffix fallback — c3 is suppressed by its exact match (preference \
-             negation), 'do_y' misses the '::y' boundary, c8 derives BOTH dup \
-             functions (DELTA 1), c9 matches the multi-segment name (DELTA 2)"
+            "R2: suffix fallback — c3 is suppressed by its scoped exact match \
+             (preference negation), 'do_y' misses the '::y' boundary, c9 matches the \
+             multi-segment name (DELTA 2)"
         );
 
         let calls_specs: Vec<_> = specs.iter().filter(|s| s.edge_type == "CALLS").collect();
@@ -2217,17 +2332,28 @@ mod tests {
     fn rust_calls_macro_invocations_are_excluded() {
         let mut v = FixtureStorageView::new(1);
 
+        // The file MODULE + a calling fn (scope-walk needs an enclosing binder /
+        // file MODULE for R1 to resolve the plain call).
+        named_node(&mut v, "m_lib", "lib", "MODULE", "lib.rs");
+        named_node(&mut v, "f_caller", "caller", "FUNCTION", "lib.rs");
+        edge(&mut v, "m_lib", "f_caller", "CONTAINS");
+
         named_node(&mut v, "f_helper", "helper", "FUNCTION", "lib.rs");
+        edge(&mut v, "m_lib", "f_helper", "CONTAINS");
         // (a) macro invocation `helper!()` — same name, same file.
         named_node(&mut v, "c_mac", "helper", "CALL", "lib.rs");
+        edge(&mut v, "f_caller", "c_mac", "CONTAINS");
         v.put_node_metadata(id_of("c_mac"), r#"{"macro":true,"method":false}"#);
         // (b) plain call `helper()`.
         named_node(&mut v, "c_plain", "helper", "CALL", "lib.rs");
+        edge(&mut v, "f_caller", "c_plain", "CONTAINS");
 
         // (c) macro `paths::mk!()` — would suffix-match fn mk across R2's
         // "::" boundary if not filtered.
         named_node(&mut v, "f_mk", "mk", "FUNCTION", "lib.rs");
+        edge(&mut v, "m_lib", "f_mk", "CONTAINS");
         named_node(&mut v, "c_macq", "paths::mk", "CALL", "lib.rs");
+        edge(&mut v, "f_caller", "c_macq", "CONTAINS");
         v.put_node_metadata(id_of("c_macq"), r#"{"macro":true,"method":false}"#);
 
         let (eval, _specs, _node_specs) = evaluate_with_materialize(
