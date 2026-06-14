@@ -1,0 +1,115 @@
+% haskell_local_calls.dl — in-engine replacement for the HaskellLocalCalls.hs
+% resolver (packages/haskell-resolve/src/HaskellLocalCalls.hs): a CALLS edge from
+% each same-file CALL of a value-name to its same-file VALUE binding, as the SINGLE
+% callable target. The analyzer gives Haskell CALLs NO scope container and NO
+% receiver metadata (both live-queried = 0 on graph.rfdb), so resolution is the flat
+% (file, name) join — exactly as the resolver did, and the only mechanism available.
+%
+% INTENT CONTRACT (judged vs Haskell semantics, NOT legacy):
+%   Priority order: nearest-local > same-file-top-level > import(skip, not ours) >
+%   prelude(not ours). With no scope, "in-scope local" = "a same-file callable
+%   binding of N exists". Result is a FUNCTION: exactly one target or none.
+%
+% CALLABLE TARGET NAMESPACES (KEEP): FUNCTION, VARIABLE, CONSTANT, CONSTRUCTOR,
+%   RECORD_FIELD. TYPE_SIGNATURE is DROPPED (Q-fix / spec §verdict "выкинуть"): a
+%   call does not call a type signature — it was the x4.8 differential source, and
+%   it is simply absent from the callable namespace set below.
+%
+% Q1 (in-scope local SHADOWS import): emit CALLS whenever a same-file callable
+%   binding of N exists, REGARDLESS of any import of the same name (local wins —
+%   the legacy blanket himp skip-set gate is DROPPED). `local(C,F,N)` therefore
+%   requires a same-file callable binding to exist; the import index `himp` is NOT
+%   consulted to suppress a call that has a local binder. (Cross-module resolution
+%   for calls with NO local binder stays with haskell-cross-module-calls, which is
+%   gated by the ABSENCE of a local binder — it never fires when a local exists.)
+%
+% Q3 (qualified = non-local): the legacy `T.breakOnEnd "."` bare-name strip
+%   (HaskellLocalCalls.hs:64) is DROPPED — we DO NOT split on ".". The analyzer
+%   stores CALL names via occNameString(rdrNameOcc) (haskell-analyzer
+%   Rules/Expressions.hs:489-490), which STRIPS the module qualifier, so a source
+%   `Map.lookup` is already stored as bare "lookup". The only dotted CALL names on
+%   the real graph are OPERATORS (".&.", ".:", ".!=", ".", ".:?") — operator chars,
+%   not `Mod.f` qualifiers. NOT stripping is therefore correct: an operator ".&."
+%   matches a same-file binding literally named ".&." (a legit local operator def)
+%   and no qualifier ever appears to mis-route. The Q3 ruling is satisfied by the
+%   ABSENCE of the strip.
+%
+% SINGLE-TARGET via NAMESPACE-PRIORITY + stratified negation (NO aggregate — the
+%   engine has no id/string tiebreak builtin; parser_ext.rs E-AGG-001 forbids
+%   aggregates). Tier ladder FUNCTION > VARIABLE > CONSTANT > CONSTRUCTOR >
+%   RECORD_FIELD: each lower tier's @materialize head carries `\+ has_<higher>(C)`
+%   for every higher tier (the js_same_file_calls sf_has_func/sf_has_varconst
+%   placement). The has_* predicates derive ONLY from positive cand_* (an earlier
+%   stratum than the negating heads) → no negation cycle.
+%
+% meta(resolvedVia="haskell-local-calls") — identical string to the legacy
+%   provenance so downstream consumers/queries are unchanged.
+%
+% NUMBERED DELTAS vs the resolver (everything not listed is exact):
+%   DELTA H1 (Q-fix, the x4.8 source): TYPE_SIGNATURE dropped from the callable
+%     namespace — a call cannot call a signature.
+%   DELTA H2 (Q1, local shadows import): a call with BOTH a same-file binding AND
+%     an import of N resolves LOCALLY (local wins), where the resolver SKIPPED it
+%     (HaskellLocalCalls.hs:68 Set.member key importIdx). The §12 disjoint-partition
+%     invariant now lives in this pack's single-target guarantee.
+%   DELTA H3 (Q3, no strip): no `.`-split bare-name strip; bare names are already
+%     stored bare by the analyzer, dotted names are operators that match local
+%     operator defs by their literal name.
+%   DELTA H4 (single-target superset, provably 0 on the real graph): two same-file
+%     same-name bindings in the SAME tier (e.g. two FUNCTIONs) — the resolver's Map
+%     kept one last-wins winner; this pack derives both (sound superset, provenance-
+%     correct via meta). Live count of such collisions = 0 (two same-file same-name
+%     FUNCTIONs = 0; a CALL with both a same-file FUNCTION and a same-file VARIABLE
+%     of the same name = 0). Documented exactly like js_same_file_calls DELTA 1 and
+%     go_calls DELTA-G3-1/G5-1.
+%   DELTA H5 (metadata): resolvedVia="haskell-local-calls" projected as a meta
+%     column; engine provenance (_source/_generation) added.
+
+% Every CALL in a .hs file with its (file, name). File gate ends_with(F, ".hs").
+hcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".hs"), attr(C, "name", N), neq(N, "").
+
+% Per-namespace same-file callable candidates. attr(T,"name",N) is a CHECK (N
+% pre-bound from hcall); hcall binds C, F, N first (planner-filter-before-
+% generator). The callable namespace set is FUNCTION, VARIABLE, CONSTANT,
+% CONSTRUCTOR, RECORD_FIELD — TYPE_SIGNATURE deliberately ABSENT (DELTA H1).
+cand_fn(C, T)     :- hcall(C, F, N), node(T, "FUNCTION"),     attr(T, "file", F), attr(T, "name", N).
+cand_var(C, T)    :- hcall(C, F, N), node(T, "VARIABLE"),     attr(T, "file", F), attr(T, "name", N).
+cand_const(C, T)  :- hcall(C, F, N), node(T, "CONSTANT"),     attr(T, "file", F), attr(T, "name", N).
+cand_ctor(C, T)   :- hcall(C, F, N), node(T, "CONSTRUCTOR"),  attr(T, "file", F), attr(T, "name", N).
+cand_field(C, T)  :- hcall(C, F, N), node(T, "RECORD_FIELD"), attr(T, "file", F), attr(T, "name", N).
+
+% Per-tier existence predicates — derived ONLY from positive cand_* (an earlier
+% stratum than the negating @materialize heads → no negation cycle, exactly the
+% js_same_file_calls sf_has_func/sf_has_varconst placement). These are the
+% namespace-priority guards.
+has_fn(C)    :- cand_fn(C, _).
+has_var(C)   :- cand_var(C, _).
+has_const(C) :- cand_const(C, _).
+has_ctor(C)  :- cand_ctor(C, _).
+
+% ── Single-target namespace-priority ladder ─────────────────────────────────────
+% FUNCTION > VARIABLE > CONSTANT > CONSTRUCTOR > RECORD_FIELD. Each lower tier
+% fires only when no higher tier has a candidate for THIS call (the \+ has_<higher>
+% guards). Cross-namespace collisions are practically nonexistent (live count = 0),
+% so the ladder is the correctness guard, not a hot path. Within a tier, DELTA H4
+% (sound superset on the provably-empty same-tier duplicate set).
+
+% Tier 1: FUNCTION wins outright.
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+hcalls(C, T, "haskell-local-calls") :- cand_fn(C, T).
+
+% Tier 2: VARIABLE, only when no same-file FUNCTION binds the name.
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+hcalls(C, T, "haskell-local-calls") :- cand_var(C, T), \+ has_fn(C).
+
+% Tier 3: CONSTANT, only when no FUNCTION and no VARIABLE binds the name.
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+hcalls(C, T, "haskell-local-calls") :- cand_const(C, T), \+ has_fn(C), \+ has_var(C).
+
+% Tier 4: CONSTRUCTOR, only when no FUNCTION/VARIABLE/CONSTANT binds the name.
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+hcalls(C, T, "haskell-local-calls") :- cand_ctor(C, T), \+ has_fn(C), \+ has_var(C), \+ has_const(C).
+
+% Tier 5: RECORD_FIELD, only when no higher tier binds the name.
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+hcalls(C, T, "haskell-local-calls") :- cand_field(C, T), \+ has_fn(C), \+ has_var(C), \+ has_const(C), \+ has_ctor(C).

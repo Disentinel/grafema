@@ -38,6 +38,15 @@ analyzeSource file source =
           dispatchEdges = checkDispatch rawResult
       in  Right rawResult { faEdges = faEdges rawResult ++ coverageEdges ++ dispatchEdges }
 
+-- | Remove duplicate elements, preserving first occurrence.
+dedup :: Eq a => [a] -> [a]
+dedup = go []
+  where
+    go seen [] = reverse seen
+    go seen (x:xs)
+      | x `elem` seen = go seen xs
+      | otherwise     = go (x : seen) xs
+
 -- | Find the first node with gnType == "MODULE" in a FileAnalysis.
 findModuleNode :: FileAnalysis -> Maybe GraphNode
 findModuleNode fa = case filter (\n -> gnType n == "MODULE") (faNodes fa) of
@@ -932,3 +941,175 @@ main = hspec $ do
       let Right fa = analyzeSource "Test.hs" "module Test where\nfoo :: Int -> Int\nfoo x = x"
       let constraints = filter (\n -> gnType n == "CONSTRAINT") (faNodes fa)
       length constraints `shouldBe` 0
+
+  -- ── Finer lexical scopes ────────────────────────────────────────────
+  -- Each lexical block (function clause, lambda, let, where, case-alt)
+  -- gets its own SCOPE node; binders and occurrences are CONTAINS'd from
+  -- the finer scope, and HAS_SCOPE wires the lexical parent chain.
+  describe "Finer lexical scopes" $ do
+
+    -- Helper: the SCOPE id that CONTAINS a given node id (its lexical
+    -- parent). Returns the geSource of the CONTAINS edge to that target.
+    let scopeOf fa nid =
+          [ geSource e
+          | e <- faEdges fa
+          , geType e == "CONTAINS"
+          , geTarget e == nid
+          ]
+
+    it "emits SCOPE nodes for function clauses" $ do
+      let Right fa = analyzeSource "Test.hs" "module Test where\nf x = x"
+      let scopes = filter (\n -> gnType n == "SCOPE") (faNodes fa)
+      length scopes `shouldSatisfy` (>= 1)
+      -- the clause scope carries kind=function in metadata
+      let kinds = [ gnName n | n <- scopes ]
+      kinds `shouldContain` ["function"]
+
+    it "each REFERENCE is CONTAINS'd by exactly one scope" $ do
+      -- cardinality invariant: a ref has a single enclosing (innermost) scope
+      let Right fa = analyzeSource "Test.hs" "module Test where\nf x = x"
+      let refs = filter (\n -> gnType n == "REFERENCE") (faNodes fa)
+      mapM_ (\r -> length (scopeOf fa (gnId r)) `shouldBe` 1) refs
+
+    it "two clauses binding the same name get DISTINCT scopes" $ do
+      -- THE fan-out fixture: f x = x ; g x = x — each clause's PARAMETER x
+      -- and REFERENCE x must live in its OWN scope, not a shared one.
+      let src = T.unlines
+            [ "module Test where"
+            , "f x = x"
+            , "g x = x"
+            ]
+      let Right fa = analyzeSource "Test.hs" src
+      let params = filter (\n -> gnType n == "PARAMETER" && gnName n == "x") (faNodes fa)
+      length params `shouldBe` 2
+      -- the two PARAMETER x binders are CONTAINS'd from two DISTINCT scopes
+      let paramScopes = concatMap (scopeOf fa . gnId) params
+      length paramScopes `shouldBe` 2
+      (head paramScopes /= last paramScopes) `shouldBe` True
+
+    it "a clause's REFERENCE resolves into the SAME scope as its own param" $ do
+      -- Within one clause, the PARAMETER x and the REFERENCE x share a scope;
+      -- across clauses they do not. We verify each REFERENCE x sits in a scope
+      -- that also contains a PARAMETER x.
+      let src = T.unlines
+            [ "module Test where"
+            , "f x = x"
+            , "g x = x"
+            ]
+      let Right fa = analyzeSource "Test.hs" src
+      let refsX  = filter (\n -> gnType n == "REFERENCE" && gnName n == "x") (faNodes fa)
+      let paramsX = filter (\n -> gnType n == "PARAMETER" && gnName n == "x") (faNodes fa)
+      let paramScopeSet = concatMap (scopeOf fa . gnId) paramsX
+      length refsX `shouldBe` 2
+      -- every REFERENCE x's enclosing scope is one that also binds a param x
+      mapM_ (\r ->
+        case scopeOf fa (gnId r) of
+          [s] -> s `elem` paramScopeSet `shouldBe` True
+          _   -> expectationFailure "REFERENCE x must have exactly one enclosing scope"
+        ) refsX
+
+    it "at most one same-name binder per scope" $ do
+      -- the core invariant: within any single SCOPE id there is at most one
+      -- PARAMETER of a given name.
+      let src = T.unlines
+            [ "module Test where"
+            , "f x = x"
+            , "g x = x"
+            ]
+      let Right fa = analyzeSource "Test.hs" src
+      let paramsX = filter (\n -> gnType n == "PARAMETER" && gnName n == "x") (faNodes fa)
+      -- each scope appears at most once across the param x binders
+      let paramScopes = concatMap (scopeOf fa . gnId) paramsX
+      length paramScopes `shouldBe` length (dedup paramScopes)
+
+    it "emits HAS_SCOPE chain MODULE -> FUNCTION-clause -> where" $ do
+      let src = T.unlines
+            [ "module Test where"
+            , "f x = helper x"
+            , "  where helper y = y + 1"
+            ]
+      let Right fa = analyzeSource "Test.hs" src
+      let hasScope = filter (\e -> geType e == "HAS_SCOPE") (faEdges fa)
+      -- there is a clause scope HAS_SCOPE'd from the FUNCTION id, and a where
+      -- scope HAS_SCOPE'd from a clause scope.
+      length hasScope `shouldSatisfy` (>= 2)
+      let whereScopes = [ gnId n | n <- faNodes fa, gnType n == "SCOPE", gnName n == "where" ]
+      length whereScopes `shouldBe` 1
+      -- the where scope's HAS_SCOPE parent is itself a SCOPE (the clause scope),
+      -- and that clause scope's HAS_SCOPE parent is the FUNCTION node id.
+      let scopeIds = [ gnId n | n <- faNodes fa, gnType n == "SCOPE" ]
+      let parentOf t = [ geSource e | e <- hasScope, geTarget e == t ]
+      let ws = head whereScopes
+      case parentOf ws of
+        [clauseScope] -> do
+          clauseScope `elem` scopeIds `shouldBe` True
+          case parentOf clauseScope of
+            [fnId] -> (fnId `elem` scopeIds) `shouldBe` False  -- parent is the FUNCTION, not another SCOPE
+            _      -> expectationFailure "clause scope must have exactly one HAS_SCOPE parent"
+        _ -> expectationFailure "where scope must have exactly one HAS_SCOPE parent"
+
+    it "top-level FUNCTION stays CONTAINS'd from MODULE" $ do
+      -- the declaration must remain MODULE-children (mutual recursion / forward refs)
+      let Right fa = analyzeSource "Test.hs" "module Test where\nf x = x"
+      let moduleId = faModuleId fa
+      let fns = filter (\n -> gnType n == "FUNCTION") (faNodes fa)
+      let fnIds = map gnId fns
+      let moduleContains =
+            [ geTarget e
+            | e <- faEdges fa
+            , geType e == "CONTAINS"
+            , geSource e == moduleId
+            , geTarget e `elem` fnIds
+            ]
+      length moduleContains `shouldBe` length fns
+
+    it "a param shadowing a top-level name lives in its own scope" $ do
+      -- top-level `x = 0` and a where-helper PARAMETER `x` must NOT collapse:
+      -- the param binder is CONTAINS'd from the helper's clause scope, never
+      -- from the module. (GHC parses zero-arg `x = 0` as a FunBind, so the
+      -- top-level declaration node is a FUNCTION named x — module-CONTAINS'd.)
+      let src = T.unlines
+            [ "module Test where"
+            , "x :: Int"
+            , "x = 0"
+            , "f a = g a"
+            , "  where g x = x"
+            ]
+      let Right fa = analyzeSource "Test.hs" src
+      let moduleId = faModuleId fa
+      -- exactly one node named x is CONTAINS'd from the MODULE: the top-level decl.
+      let moduleBoundX =
+            [ geTarget e
+            | e <- faEdges fa
+            , geType e == "CONTAINS"
+            , geSource e == moduleId
+            , n <- faNodes fa
+            , gnId n == geTarget e
+            , gnName n == "x"
+            ]
+      length moduleBoundX `shouldBe` 1
+      -- the helper's PARAMETER x is CONTAINS'd from a SCOPE, not the module.
+      let paramX = filter (\n -> gnType n == "PARAMETER" && gnName n == "x") (faNodes fa)
+      length paramX `shouldBe` 1
+      let scopeIds = [ gnId n | n <- faNodes fa, gnType n == "SCOPE" ]
+      case scopeOf fa (gnId (head paramX)) of
+        [s] -> do
+          (s `elem` scopeIds) `shouldBe` True
+          (s == moduleId)     `shouldBe` False
+        _   -> expectationFailure "PARAMETER x must have exactly one enclosing scope"
+
+    it "lambda gets its own scope distinct from the enclosing clause" $ do
+      let Right fa = analyzeSource "Test.hs" "module Test where\nf = \\x -> x"
+      let scopes = filter (\n -> gnType n == "SCOPE") (faNodes fa)
+      let kinds = map gnName scopes
+      kinds `shouldContain` ["lambda"]
+
+    it "case alternatives get per-alt scopes" $ do
+      let src = "module Test where\nf x = case x of { Just y -> y; Nothing -> x }"
+      let Right fa = analyzeSource "Test.hs" src
+      let scopes = filter (\n -> gnType n == "SCOPE") (faNodes fa)
+      let caseScopes = filter (\n -> gnName n == "case") scopes
+      -- two alternatives -> two distinct case scopes
+      length caseScopes `shouldBe` 2
+      let ids = map gnId caseScopes
+      length ids `shouldBe` length (dedup ids)

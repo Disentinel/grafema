@@ -25,8 +25,8 @@ import GHC.Types.SrcLoc (GenLocated(..))
 import GHC.Parser.Annotation (SrcSpanAnnA)
 import GHC.Unit.Module (moduleNameString)
 
-import Analysis.Context (emitNode, askFile, askModuleId, Analyzer, withScope, withEnclosingFn)
-import Analysis.Types (GraphNode(..), Scope(Scope), ScopeKind(..))
+import Analysis.Context (emitNode, askFile, askModuleId, Analyzer, withEnclosingFn)
+import Analysis.Types (GraphNode(..))
 import Loc (getLoc)
 
 import Rules.Declarations (walkFunBind, walkPatBind, walkTypeSig)
@@ -35,7 +35,7 @@ import Rules.TypeClasses (walkClassDecl, walkInstDecl)
 import Rules.TypeLevel (walkTypeSynonym, walkTypeFamily)
 import Rules.Imports (walkImports)
 import Rules.Exports (walkExports)
-import Rules.Expressions (walkMatchGroup, walkGRHSs)
+import Rules.Expressions (walkMatchGroup, walkGRHSs, functionClauseTag)
 
 -- | Walk a parsed Haskell module, emitting graph nodes.
 --
@@ -93,11 +93,11 @@ walkDecl (L _ decl) = case decl of
   -- Value declarations: function bindings
   ValD _ (FunBind { fun_id = funId, fun_matches = matches }) -> do
     fnId <- walkFunBind funId matches
-    -- Phase 4: walk the body INSIDE the function's scope, so calls/refs
-    -- emitted by Rules.Expressions attach to this FUNCTION (via askScopeId)
-    -- instead of the module. Mirrors the JS analyzer's withScope wrapping.
-    let fnScope = Scope fnId FunctionScope Map.empty Nothing
-    withEnclosingFn fnId $ withScope fnScope $ walkMatchGroup matches
+    -- Phase 4: walk EACH equation inside its OWN per-clause SCOPE (anchored
+    -- on this function id), so params/refs/calls of distinct clauses no
+    -- longer collapse into a single FUNCTION scope. The FUNCTION node stays
+    -- MODULE-CONTAINS'd (emitted by walkFunBind); only the body is scoped.
+    withEnclosingFn fnId $ walkMatchGroup functionClauseTag fnId matches
 
   -- Value declarations: pattern bindings
   ValD _ (PatBind { pat_lhs = pat, pat_rhs = rhs }) -> do

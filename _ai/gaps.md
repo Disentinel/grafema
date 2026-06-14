@@ -328,12 +328,37 @@ id is identical across generations are not tombstoned by changed-file deletion).
 1. **All-numeric semantic-id drift**: plan_node_writeback blake3-hashes unconditionally;
    the wire writer string_to_id() parses decimal FIRST — a bare-decimal sid mints a divergent
    u128. Unreachable by shipped packs (prefixed sids); extend E-MAT-010 to reject all-decimal sids.
+   **✅ RESOLVED 2026-06-14 (branch `claude/vigilant-lamport-y65ysu`)**: `plan_node_writeback`
+   (`packages/rfdb-server/src/derive/materialize.rs`) now aborts with `E-MAT-010` when the
+   semantic-id column is an all-decimal string — guarded by `s.parse::<u128>().is_ok()`, the
+   EXACT same predicate the wire path (`string_to_id`/`resolve_node_id`, `bin/rfdb_server.rs:1009,1022`)
+   uses, so the rejected set is provably the exact divergence set (and overflowing/negative/prefixed
+   sids that BOTH paths hash stay accepted). Locked by
+   `derive::materialize::tests::plan_node_writeback_rejects_all_decimal_semantic_id` (asserts
+   `blake3("12345") != 12345`, rejects "12345"/"0"/"007", and that prefixed "issue::…::42" still
+   mints one node). Full rfdb lib 1401/0; clippy clean.
 2. **Auto-flush can tear run isolation under buffer pressure**: add_nodes/add_edges end with
    maybe_auto_flush which publishes WITHOUT the run's pending tombstones — a mid-delta flush
    shows adds before retractions (self-heals at the explicit flush). Suppress auto-flush during
    materialize write-back or weaken the one-flush docstring.
 3. **attr(X,"type",T) bypasses the node-feedback stratifier dependency** (edge axis has no such
    bypass — edge_attr can't read the edge type). Track attr-type-const in node_type_arg or fix docs.
+   - **✅ RESOLVED 2026-06-14** (verified at HEAD): tracked the read (not just docs) — it was a real
+     soundness hole, not a deliberate boundary. The base `attr(X,"type",T)` relation resolves to the
+     node's structural type `node_type` at exec (`derive/exec.rs:1710,2903` `lookup_name == "type" => node`),
+     so it reads EXACTLY what `@materialize_node` produces — unlike `edge_attr`, which can only reach edge
+     *metadata* (the edge type is the tracked relation arg `edge(_,_,"T")`). The asymmetry the note flagged
+     is why the old "deliberate boundary" docstring was wrong. Fix: new `attr_node_type_arg` helper
+     (`derive/stratify.rs`) recognizes base `attr(_,"type",const|var)` as a node-type read and routes it to
+     the SAME node-materialize producer maps as `node(X,"T")` (const → exact producer; var → conservative
+     all-node + W-STRAT-001). Scoped to the base `attr` predicate ONLY — `node_attr` (metadata-blob builtin,
+     e.g. a value's declared type `"string"`) stays untracked by construction (`predicate() != "attr"`).
+     Variable attr KEY (`attr(X,K,V)`) remains out of scope (would over-couple every variable-key read) —
+     residual. Blast radius zero on shipped packs (no `.dl` reads base `attr(_,"type",_)`; the only hits are
+     `node_attr` in go_types/java_types). Locked by `attr_type_const_read_creates_node_materialize_dependency`,
+     `attr_type_variable_read_depends_on_all_node_materializers_and_warns`, and the class-guard
+     `node_attr_metadata_type_read_takes_no_node_materialize_dependency` (`derive/stratify.rs`). Full rfdb
+     lib 1403/0, clippy exit 0 (no new warnings).
 4. **O(owned²)**: removed_node_ids is a Vec scanned per node of the type; HashSet one-liner.
 5. **Never-rewrite staleness for OWNED nodes**: a re-derived owned node with a CHANGED surface
    (e.g. ISSUE message after method rename on the same CALL) keeps the stale payload forever —
@@ -342,6 +367,46 @@ id is identical across generations are not tombstoned by changed-file deletion).
    the plugin retires (pack can't rewrite or retract it). Document or co-own _source='shape-verifier'.
 7. **Cache pinning for always-scratch programs**: node-materializing entries still pin prior
    snapshots in datalog2_materialize_cache for zero benefit; skip the insert.
+   - **⚠️ STALE / DO-NOT-IMPLEMENT (triaged 2026-06-14)**: the "zero benefit" premise no longer holds.
+     The W9 unchanged-graph short-circuit (`derive_for_materialize`, `graph/engine_v2.rs:1085-1108`)
+     returns the cached evaluation VERBATIM when the snapshot version + tombstone `Arc` are unchanged,
+     and its own comment states this *explicitly covers node specs*: "Programs outside the maintain
+     envelope (negation, **node specs**) are equally covered — the equality argument needs no envelope."
+     So a node-materializing program DOES benefit from the cached entry on idle re-runs (skips full
+     scratch — the 80.7s→188.9s regression the W9 comment warns about). "Skip the insert" would
+     re-introduce that regression. The pin is also already bounded (each insert drops the prior, line 953).
+     No action.
+
+### ✅ RESOLVED — item #5 (owned-node staleness), 2026-06-14
+
+The `@materialize_node` write-back now REWRITES an owned node whose surface changed since the
+last run (last-write-wins, the plugin contract), instead of keeping the stale payload forever.
+
+- **Root cause (verified at HEAD before fix):** `materialize_writeback_delta`
+  (`packages/rfdb-server/src/graph/engine_v2.rs`) built `added_nodes` by filtering out EVERY
+  planned node whose id already exists (`!self.store.node_exists_at(snapshot, n.id)`), and the
+  retraction loop skipped any re-derived id (`new_node_ids.contains(&n.id)`). So an owned node
+  re-derived with a CHANGED surface was neither re-added nor tombstoned → stale forever.
+- **Why it's CROSS-FILE (and not masked by file-cleanup):** the bug only bites when the
+  materialized node's `file` is NOT in `changed_files` but its surface depends on a node in a
+  file that IS (e.g. an ISSUE anchored to the caller's file whose `msg` is a renamed callee in
+  another file). When the node shares the changed file, file-level cleanup sweeps it first and
+  the staleness never surfaces — which is why the first repro attempt (same-file) passed.
+- **Fix:** an existing node is now upserted iff it is OWNED by the same rule (`_source` matches)
+  AND its user-visible surface differs (`name`/`file`/`node_type`/`meta(...)`, with the volatile
+  `_generation` excluded so unchanged nodes stay a true no-op) — `owned_node_surface_changed`.
+  A FOREIGN producer's node at the same id is still never rewritten. No `delete_node` is used
+  (which would cascade-tombstone the node's edges); the upserted version supersedes the old on
+  read (newest-segment-wins, `get_node_at`/`find_nodes_at` iterate `node_segments.rev()`), so
+  edges are preserved.
+- **Evidence:** RED→GREEN test `materialize_node_rewrites_owned_node_when_surface_changes`
+  (cross-file ISSUE: `msg` "v1"→"v2" after a `b.js`-only rename; run 3 asserts idempotent no-op).
+  Full `rfdb` lib suite **1401 passed / 0 failed / 25 ignored**; `cargo clippy --profile fast
+  --lib` exit 0 with no new warnings. Module doc (`derive/materialize.rs`) updated to match.
+- **Sibling (NOT fixed, documented caveat):** the EDGE path (`plan_writeback`) dedups by
+  `(src,dst,edge_type)` only, so an edge whose endpoints are unchanged but whose `meta(...)`
+  columns changed is likewise not refreshed — this is the pre-existing, module-documented "edge
+  meta-identity caveat", out of scope for this node fix. Items #2, #3, #4, #6, #7 remain open.
 
 ## Two JS-analyzer producer bugs found by Wave-0 live probing (2026-06-10, wf_07c95bfd-e52)
 

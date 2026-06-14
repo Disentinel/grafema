@@ -12,7 +12,6 @@ executable haskell-resolve
   other-modules:
     HaskellImportResolution
     HaskellLocalRefs
-    HaskellLocalCalls
     HaskellCrossModuleCalls
 
   build-depends:
@@ -34,7 +33,6 @@ test-suite spec
 
   other-modules:
     HaskellImportResolution
-    HaskellLocalCalls
     HaskellCrossModuleCalls
 
   build-depends:

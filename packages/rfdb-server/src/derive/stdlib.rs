@@ -357,6 +357,29 @@ pub const JS_RUNTIME_GLOBALS_EDGES_DL: &str = concat!(
 /// analyzer EDB only. node_attr ⇒ scratch floor under maintain.
 pub const KOTLIN_INHERITANCE_DL: &str = include_str!("stdlib/kotlin_inheritance.dl");
 
+/// The bundled Haskell local-call-resolution pack — the in-engine replacement for
+/// the `HaskellLocalCalls.hs` resolver: a `CALLS` edge from each same-file `.hs`
+/// CALL of a value-name to its same-file VALUE binding, as the SINGLE callable
+/// target. Haskell CALLs carry NO scope container and NO receiver metadata (both
+/// live-queried = 0), so resolution is the flat (file, name) join — the only
+/// mechanism available, exactly as the resolver did. Callable namespaces (KEEP):
+/// FUNCTION, VARIABLE, CONSTANT, CONSTRUCTOR, RECORD_FIELD; TYPE_SIGNATURE is
+/// DROPPED (Q-fix — a call does not call a signature, the x4.8 differential
+/// source). Single-target via NAMESPACE-PRIORITY (FUNCTION > VARIABLE > CONSTANT >
+/// CONSTRUCTOR > RECORD_FIELD) through stratified negation (`\+ has_<higher>`, the
+/// js_same_file_calls placement — has_* derive only from positive cand_*, no
+/// negation cycle); NO aggregate (E-AGG-001). Q1 (in-scope local SHADOWS import):
+/// emit CALLS whenever a same-file callable binding exists, regardless of import —
+/// the legacy blanket himp skip-set gate is DROPPED. Q3 (qualified = non-local):
+/// no `.`-split bare-name strip — the analyzer stores bare names and dotted CALL
+/// names are operators that match local operator defs by their literal name.
+/// `CALLS` additive (SHARED with the analyzers), `resolvedVia = "haskell-local-calls"`
+/// meta (identical to legacy provenance). PRODUCER of `CALLS` — must run BEFORE the
+/// CALLS negators `method_calls`/`shape_verifier` (shape_verifier negates
+/// `edge(C,_,"CALLS")` with NO file gate); consumes analyzer EDB only. Deltas
+/// numbered in the `.dl` header.
+pub const HASKELL_LOCAL_CALLS_DL: &str = include_str!("stdlib/haskell_local_calls.dl");
+
 /// The JS module-path kernel pack (Wave 3b, path/string-kit-unblocked): the
 /// in-engine replacement for the module-level arms of `ImportResolution.hs` —
 /// IMPORT → MODULE `IMPORTS_FROM` (`resolveModuleImports`) and star re-export
@@ -552,7 +575,8 @@ pub const JAVA_ANNOTATIONS_DL: &str = include_str!("stdlib/java_annotations.dl")
 /// js_cross_file_calls → js_property_access_ns → js_property_access_full →
 /// js_builtins_nodes → js_builtins_edges → js_runtime_globals_nodes →
 /// js_runtime_globals_edges → java_imports → java_types → java_calls →
-/// java_annotations → kotlin_inheritance → go_imports → go_imports_nomod →
+/// java_annotations → kotlin_inheritance → haskell_local_calls → go_imports →
+/// go_imports_nomod →
 /// go_calls → go_interfaces → go_types → go_context → depends → method_calls →
 /// shape_verifier → axum_routes → js_http_routes_nodes → js_http_routes_edges →
 /// js_entrypoint_features_nodes → js_entrypoint_features_edges.
@@ -568,6 +592,12 @@ pub const JAVA_ANNOTATIONS_DL: &str = include_str!("stdlib/java_annotations.dl")
 /// - the Kotlin wave: `kotlin_inheritance` PRODUCES EXTENDS/IMPLEMENTS for
 ///   shape_verifier's inheritance closure (analyzer EDB only), so it precedes
 ///   the negators.
+/// - the Haskell wave: `haskell_local_calls` PRODUCES `CALLS` (same-file
+///   flat (file, name) value-binding resolution, single-target via the
+///   FUNCTION > VARIABLE > CONSTANT > CONSTRUCTOR > RECORD_FIELD namespace-
+///   priority ladder), so it precedes the CALLS negators
+///   `method_calls`/`shape_verifier`; consumes analyzer EDB only (no inter-pack
+///   seam — any position before the negators is legal).
 pub const STDLIB_PACKS: &[(&str, &str)] = &[
     ("js_local_refs", JS_LOCAL_REFS_DL),
     ("js_same_file_calls", JS_SAME_FILE_CALLS_DL),
@@ -623,6 +653,13 @@ pub const STDLIB_PACKS: &[(&str, &str)] = &[
     // EXTENDS-closed member lookup — strictly before the negators; consumes
     // analyzer EDB only (CLASS metadata stamps), so no run-after seam.
     ("kotlin_inheritance", KOTLIN_INHERITANCE_DL),
+    // Haskell wave: haskell_local_calls PRODUCES CALLS (same-file flat (file,name)
+    // value-binding resolution, single-target via namespace priority) — strictly
+    // before the CALLS negators method_calls / shape_verifier (shape_verifier
+    // negates edge(C,_,"CALLS") with NO file gate). Consumes analyzer EDB only
+    // (CALL/FUNCTION/VARIABLE/CONSTANT/CONSTRUCTOR/RECORD_FIELD nodes), so it has
+    // no inter-pack EDB seam — any position before the negators is legal.
+    ("haskell_local_calls", HASKELL_LOCAL_CALLS_DL),
     // Go wave: go_imports / go_imports_nomod PRODUCE IMPORTS_FROM — strictly
     // before depends (verdict C4); the nomod VARIANT is orchestrator-selected
     // (P3: runs only when go.mod is absent — both registered, runtime skip).
@@ -977,6 +1014,97 @@ mod tests {
         assert!(
             ratio < 10.0,
             "method_calls pack scales super-linearly: 4x input cost {ratio:.1}x"
+        );
+    }
+
+    /// The Haskell local-call pack (`haskell_local_calls.dl`) on a `.hs` fixture
+    /// exercising the four INTENT rulings:
+    ///   1. A same-file value call resolves SINGLE-TARGET to its FUNCTION binding.
+    ///   2. A name with BOTH a TYPE_SIGNATURE and a FUNCTION resolves ONLY to the
+    ///      FUNCTION (TYPE_SIGNATURE is dropped from the callable namespace — the
+    ///      Q-fix / x4.8 differential source).
+    ///   3. A qualified `Map.lookup` call (the analyzer would store it bare, but we
+    ///      pin a literal dotted CALL name here) does NOT resolve to a local
+    ///      same-bare-name `lookup` FUNCTION — no `.`-split strip (Q3).
+    ///   4. An in-scope local binding SHADOWS an import of the same name: a CALL with
+    ///      BOTH a same-file FUNCTION and an IMPORT_BINDING of the name resolves
+    ///      LOCALLY (Q1 — the legacy himp skip is dropped).
+    /// Also asserts the namespace-priority ladder (FUNCTION beats a same-name
+    /// VARIABLE) and that the materialize spec is CALLS / additive / resolvedVia.
+    #[test]
+    fn haskell_local_calls_resolves_single_target_minus_type_signature() {
+        let mut v = FixtureStorageView::new(1);
+
+        // (1) Plain local call → FUNCTION, single target. Also a same-name VARIABLE
+        //     in the same file: FUNCTION must win the tier ladder (no VARIABLE edge).
+        named_node(&mut v, "fn_foo", "foo", "FUNCTION", "src/A.hs");
+        named_node(&mut v, "var_foo", "foo", "VARIABLE", "src/A.hs");
+        named_node(&mut v, "call_foo", "foo", "CALL", "src/A.hs");
+
+        // (2) name "bar" has BOTH a TYPE_SIGNATURE and a FUNCTION → only FUNCTION.
+        named_node(&mut v, "sig_bar", "bar", "TYPE_SIGNATURE", "src/A.hs");
+        named_node(&mut v, "fn_bar", "bar", "FUNCTION", "src/A.hs");
+        named_node(&mut v, "call_bar", "bar", "CALL", "src/A.hs");
+
+        // (3) qualified call "Map.lookup" + a local FUNCTION literally named
+        //     "lookup" → NO edge (no bare-name strip; the dotted name only matches a
+        //     local binding literally named "Map.lookup", which does not exist).
+        named_node(&mut v, "fn_lookup", "lookup", "FUNCTION", "src/A.hs");
+        named_node(&mut v, "call_qual", "Map.lookup", "CALL", "src/A.hs");
+
+        // (4) in-scope local SHADOWS import: "baz" has a same-file FUNCTION AND an
+        //     IMPORT_BINDING of the same name → resolves LOCALLY to the FUNCTION.
+        named_node(&mut v, "fn_baz", "baz", "FUNCTION", "src/A.hs");
+        named_node(&mut v, "imp_baz", "baz", "IMPORT_BINDING", "src/A.hs");
+        named_node(&mut v, "call_baz", "baz", "CALL", "src/A.hs");
+
+        let (eval, specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            HASKELL_LOCAL_CALLS_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("haskell_local_calls.dl evaluates");
+
+        // The (call, target) pairs of the materialized CALLS head.
+        let edges: BTreeSet<(u128, u128)> = triples(&eval, "hcalls")
+            .into_iter()
+            .map(|(c, t, via)| {
+                assert_eq!(via, "haskell-local-calls", "resolvedVia meta must be the legacy provenance string");
+                (c, t)
+            })
+            .collect();
+
+        assert_eq!(
+            edges,
+            BTreeSet::from([
+                (id_of("call_foo"), id_of("fn_foo")),   // (1) FUNCTION, not VARIABLE
+                (id_of("call_bar"), id_of("fn_bar")),   // (2) FUNCTION, not TYPE_SIGNATURE
+                (id_of("call_baz"), id_of("fn_baz")),   // (4) local shadows import
+                // (3) call_qual derives NOTHING — no dotted-name strip
+            ]),
+            "exactly the FUNCTION targets: foo (not its same-name VARIABLE), bar (not \
+             its TYPE_SIGNATURE), baz (local shadows import); the qualified Map.lookup \
+             resolves to nothing"
+        );
+
+        // TYPE_SIGNATURE is not a candidate at all — sig_bar never appears as a target.
+        assert!(
+            !edges.iter().any(|(_, t)| *t == id_of("sig_bar")),
+            "a TYPE_SIGNATURE must never be a CALLS target (dropped from the callable namespace)"
+        );
+
+        // The materialize spec: CALLS, additive, exactly the five tier heads.
+        let calls_specs: Vec<_> = specs.iter().filter(|s| s.edge_type == "CALLS").collect();
+        assert_eq!(
+            calls_specs.len(),
+            5,
+            "five @materialize CALLS heads (FUNCTION/VARIABLE/CONSTANT/CONSTRUCTOR/RECORD_FIELD tiers)"
+        );
+        assert!(
+            calls_specs.iter().all(|s| s.additive),
+            "CALLS is shared with the analyzers — every head must be mode = \"additive\""
         );
     }
 
@@ -1523,6 +1651,7 @@ mod tests {
                 "java_calls",
                 "java_annotations",
                 "kotlin_inheritance",
+                "haskell_local_calls",
                 "go_imports",
                 "go_imports_nomod",
                 "go_calls",
@@ -1590,6 +1719,10 @@ mod tests {
         assert_eq!(
             stdlib_pack("js_property_access_full"),
             Some(JS_PROPERTY_ACCESS_FULL_DL)
+        );
+        assert_eq!(
+            stdlib_pack("haskell_local_calls"),
+            Some(HASKELL_LOCAL_CALLS_DL)
         );
         assert_eq!(stdlib_pack("method_calls"), Some(METHOD_CALLS_DL));
         assert_eq!(stdlib_pack("shape_verifier"), Some(SHAPE_VERIFIER_DL));
