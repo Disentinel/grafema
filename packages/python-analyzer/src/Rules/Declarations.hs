@@ -28,7 +28,6 @@ import Analysis.Types
     ( GraphNode(..)
     , GraphEdge(..)
     , MetaValue(..)
-    , Scope(..)
     , ScopeKind(..)
     )
 import Analysis.Context
@@ -39,12 +38,12 @@ import Analysis.Context
     , askScopeId
     , askEnclosingClass
     , askNamedParent
-    , withScope
     , withEnclosingFn
     , withEnclosingClass
     , withNamedParent
     , withAsync
     )
+import Analysis.Scope (withLexicalScope)
 import Grafema.SemanticId (semanticId, contentHash)
 
 -- ── Decorator helpers ────────────────────────────────────────────────
@@ -159,16 +158,10 @@ walkDeclarations (FunctionDef name args body decos mReturns isAsync sp) = do
   -- Emit VARIABLE nodes for each parameter
   walkFunctionParams nodeId args
 
-  -- Walk body in function scope
-  let fnScope = Scope
-        { scopeId           = nodeId
-        , scopeKind         = FunctionScope
-        , scopeDeclarations = mempty
-        , scopeParent       = Nothing
-        }
-      asyncAction = if isAsync then withAsync else id
+  -- Walk body in function scope (emits SCOPE node + HAS_SCOPE from this FUNCTION)
+  let asyncAction = if isAsync then withAsync else id
   asyncAction $
-    withScope fnScope $
+    withLexicalScope FunctionScope nodeId $
     withEnclosingFn nodeId $
     withNamedParent name $
       mapM_ walkDeclarations body
@@ -227,14 +220,8 @@ walkDeclarations (ClassDef name bases keywords body decos sp) = do
       }
     ) bases
 
-  -- Walk body in class scope
-  let classScope = Scope
-        { scopeId           = nodeId
-        , scopeKind         = ClassScope
-        , scopeDeclarations = mempty
-        , scopeParent       = Nothing
-        }
-  withScope classScope $
+  -- Walk body in class scope (emits SCOPE node + HAS_SCOPE from this CLASS)
+  withLexicalScope ClassScope nodeId $
     withEnclosingClass nodeId $
     withNamedParent name $
       mapM_ walkDeclarations body
@@ -592,13 +579,8 @@ walkExprDeclarations (LambdaExpr args body sp) _outerSp = do
   walkFunctionParams nodeId args
 
   -- Lambda body is a single expression — walk for nested lambdas
-  let lambdaScope = Scope
-        { scopeId           = nodeId
-        , scopeKind         = LambdaScope
-        , scopeDeclarations = mempty
-        , scopeParent       = Nothing
-        }
-  withScope lambdaScope $
+  -- (emits SCOPE node + HAS_SCOPE from this lambda FUNCTION)
+  withLexicalScope LambdaScope nodeId $
     withEnclosingFn nodeId $
       walkExprDeclarations body (Span (spanStart sp) (spanEnd sp))
 
