@@ -352,6 +352,37 @@ id is identical across generations are not tombstoned by changed-file deletion).
 7. **Cache pinning for always-scratch programs**: node-materializing entries still pin prior
    snapshots in datalog2_materialize_cache for zero benefit; skip the insert.
 
+### ✅ RESOLVED — item #5 (owned-node staleness), 2026-06-14
+
+The `@materialize_node` write-back now REWRITES an owned node whose surface changed since the
+last run (last-write-wins, the plugin contract), instead of keeping the stale payload forever.
+
+- **Root cause (verified at HEAD before fix):** `materialize_writeback_delta`
+  (`packages/rfdb-server/src/graph/engine_v2.rs`) built `added_nodes` by filtering out EVERY
+  planned node whose id already exists (`!self.store.node_exists_at(snapshot, n.id)`), and the
+  retraction loop skipped any re-derived id (`new_node_ids.contains(&n.id)`). So an owned node
+  re-derived with a CHANGED surface was neither re-added nor tombstoned → stale forever.
+- **Why it's CROSS-FILE (and not masked by file-cleanup):** the bug only bites when the
+  materialized node's `file` is NOT in `changed_files` but its surface depends on a node in a
+  file that IS (e.g. an ISSUE anchored to the caller's file whose `msg` is a renamed callee in
+  another file). When the node shares the changed file, file-level cleanup sweeps it first and
+  the staleness never surfaces — which is why the first repro attempt (same-file) passed.
+- **Fix:** an existing node is now upserted iff it is OWNED by the same rule (`_source` matches)
+  AND its user-visible surface differs (`name`/`file`/`node_type`/`meta(...)`, with the volatile
+  `_generation` excluded so unchanged nodes stay a true no-op) — `owned_node_surface_changed`.
+  A FOREIGN producer's node at the same id is still never rewritten. No `delete_node` is used
+  (which would cascade-tombstone the node's edges); the upserted version supersedes the old on
+  read (newest-segment-wins, `get_node_at`/`find_nodes_at` iterate `node_segments.rev()`), so
+  edges are preserved.
+- **Evidence:** RED→GREEN test `materialize_node_rewrites_owned_node_when_surface_changes`
+  (cross-file ISSUE: `msg` "v1"→"v2" after a `b.js`-only rename; run 3 asserts idempotent no-op).
+  Full `rfdb` lib suite **1401 passed / 0 failed / 25 ignored**; `cargo clippy --profile fast
+  --lib` exit 0 with no new warnings. Module doc (`derive/materialize.rs`) updated to match.
+- **Sibling (NOT fixed, documented caveat):** the EDGE path (`plan_writeback`) dedups by
+  `(src,dst,edge_type)` only, so an edge whose endpoints are unchanged but whose `meta(...)`
+  columns changed is likewise not refreshed — this is the pre-existing, module-documented "edge
+  meta-identity caveat", out of scope for this node fix. Items #2, #3, #4, #6, #7 remain open.
+
 ## Two JS-analyzer producer bugs found by Wave-0 live probing (2026-06-10, wf_07c95bfd-e52)
 
 1. **Multi-declarator export loses declarators 2+**: `export const a = 1, b = 2` emits the

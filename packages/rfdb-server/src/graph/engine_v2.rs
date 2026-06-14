@@ -143,6 +143,53 @@ fn edge_v1_to_v2(v1: &EdgeRecord) -> EdgeRecordV2 {
     }
 }
 
+/// The `_source` provenance stamp of a materialized node's metadata, if present. Used to
+/// decide ownership: a node is OWNED by a deriving rule iff its stored `_source` equals
+/// that rule's `rule_ast_hash`. Returns `None` for nodes with no/unparseable metadata or
+/// no `_source` (a foreign producer or a plain analyzer node).
+fn materialized_source(metadata: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(metadata)
+        .ok()
+        .and_then(|m| m.get("_source").and_then(|s| s.as_str().map(String::from)))
+}
+
+/// The user-visible surface of a node's metadata: the parsed object with the volatile
+/// `_generation` bookkeeping field removed. `_generation` advances every run even when
+/// nothing a query can observe changed, so it MUST be excluded from any "did the surface
+/// change?" comparison — otherwise an unchanged owned node would be rewritten every run.
+/// `_source` is kept (it is part of identity/ownership and is constant for an owned node).
+fn metadata_surface(metadata: &str) -> serde_json::Value {
+    match serde_json::from_str::<serde_json::Value>(metadata) {
+        Ok(serde_json::Value::Object(mut map)) => {
+            map.remove("_generation");
+            serde_json::Value::Object(map)
+        }
+        Ok(other) => other,
+        Err(_) => serde_json::Value::Null,
+    }
+}
+
+/// Decide whether a freshly-derived `@materialize_node` node should REWRITE the node
+/// already stored at the same id. Returns `true` only when the stored node is OWNED by
+/// the SAME deriving rule (its `_source` matches `new`'s — a FOREIGN producer's node with
+/// a different/absent `_source` is never clobbered) AND its user-visible surface differs
+/// from the new derivation: any of `name`, `file`, `node_type`, or a `meta(...)` column,
+/// with the volatile `_generation` bookkeeping field excluded. This restores last-write-
+/// wins for a rule's own nodes (the plugin contract) — e.g. an ISSUE whose `msg` changes
+/// after a renamed callee — while keeping an unchanged owned node a true idempotent no-op
+/// (no churn rewrite).
+fn owned_node_surface_changed(new: &NodeRecordV2, stored: &NodeRecordV2) -> bool {
+    // Eligibility: only our OWN nodes may be rewritten (never a foreign producer's).
+    match (materialized_source(&new.metadata), materialized_source(&stored.metadata)) {
+        (Some(new_src), Some(stored_src)) if new_src == stored_src => {}
+        _ => return false,
+    }
+    new.node_type != stored.node_type
+        || new.name != stored.name
+        || new.file != stored.file
+        || metadata_surface(&new.metadata) != metadata_surface(&stored.metadata)
+}
+
 // ── GraphEngineV2 ──────────────────────────────────────────────────
 
 /// Graph engine backed by v2 sharded columnar storage.
@@ -1200,16 +1247,27 @@ impl GraphEngineV2 {
             .filter(|k| !new_keys.contains(k) && !additive_types.contains(&k.2))
             .collect();
 
-        // ── Node delta. Adds: planned nodes whose id is ABSENT at the snapshot (a present
-        // node is never rewritten, both modes — a foreign producer's node with the same
-        // semantic id keeps its own name/file/metadata). Removes: per EXCLUSIVE spec, the
-        // provenance-scoped owned set (`node_type` ∩ `metadata._source == rule_ast_hash`)
-        // minus everything derived this run. A node id derived by ANY spec this run is
-        // kept, so overlapping specs never flap each other's nodes.
+        // ── Node delta. Adds: planned nodes that are genuinely new (id ABSENT at the
+        // snapshot), PLUS owned nodes whose surface CHANGED since the last run — an
+        // existing OWNED node (this rule's `_source`) whose name/file/meta differs is
+        // upserted (the new version supersedes the old on read, newest-segment-wins;
+        // [`owned_node_surface_changed`]). A FOREIGN producer's node at the same id is
+        // still never rewritten (it keeps its own name/file/metadata), and an unchanged
+        // owned node is a no-op. This is the last-write-wins (plugin) contract for a
+        // rule's own nodes — without it, a re-derived owned node with a changed surface
+        // (e.g. an ISSUE message after a renamed callee) kept its stale payload forever.
+        // Removes: per EXCLUSIVE spec, the provenance-scoped owned set (`node_type` ∩
+        // `metadata._source == rule_ast_hash`) minus everything derived this run. A node
+        // id derived by ANY spec this run is kept, so overlapping specs never flap each
+        // other's nodes, and a rewritten owned node (in `new_node_ids`) is upserted, not
+        // tombstoned — its edges are preserved.
         let new_node_ids: HashSet<u128> = new_nodes.iter().map(|n| n.id).collect();
         let added_nodes: Vec<NodeRecordV2> = new_nodes
             .into_iter()
-            .filter(|n| !self.store.node_exists_at(snapshot, n.id))
+            .filter(|n| match self.store.get_node_at(snapshot, n.id) {
+                None => true,
+                Some(stored) => owned_node_surface_changed(n, &stored),
+            })
             .collect();
         let mut removed_node_ids: Vec<u128> = Vec::new();
         for spec in node_specs {
@@ -4435,6 +4493,103 @@ mod tests {
         assert!(engine
             .store
             .node_exists_at(&snap, crate::graph::string_id_to_u128(&format!("note::{id_b}"))));
+    }
+
+    /// W4 review follow-up #5 (`_ai/gaps.md`): an OWNED `@materialize_node` node whose
+    /// user-visible surface changes between runs — same derived id, different `name`/meta
+    /// (the recorded example: an ISSUE message after a renamed callee) — must be REWRITTEN
+    /// to the fresh surface (last-write-wins, the plugin contract), not left stale forever.
+    /// A re-run with NO surface change stays a true idempotent no-op.
+    ///
+    /// The bug is CROSS-FILE by nature: the ISSUE is anchored to file `a.js` (whose nodes
+    /// are NOT re-committed), while its `msg` meta column is the name of a FUNCTION in
+    /// `b.js` that gets renamed (only `b.js` is in `changed_files`). So file-level cleanup
+    /// never touches the stale ISSUE — only the materialize write-back can refresh it.
+    #[test]
+    fn materialize_node_rewrites_owned_node_when_surface_changes() {
+        // The ISSUE is anchored to the `a.js` FUNCTION (stable id + file), its `msg`
+        // surface is the `b.js` FUNCTION's name. Renaming `b.js`'s function changes the
+        // derived `msg` without re-committing `a.js`.
+        const PROG: &str = r#"@materialize_node(node_type = "ISSUE", mode = "exclusive", meta(msg))
+            issue(Sid, Aname, Afile, Msg) :-
+                node(A, "FUNCTION"), attr(A, "file", "a.js"), attr(A, "name", Aname),
+                attr(A, "file", Afile), node(B, "FUNCTION"), attr(B, "file", "b.js"),
+                attr(B, "name", Msg), concat("issue::fn::", A, Sid)."#;
+        let prog_hash = {
+            let parsed = crate::derive::parser_ext::parse_ext_program(PROG).unwrap();
+            crate::derive::materialize::rule_ast_hash(&parsed.items[0].rule)
+        };
+
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let anchor = make_v2_node("a.js->FUNCTION->anchor", "FUNCTION", "anchor", "a.js");
+        let aid = anchor.id;
+        let callee1 = make_v2_node("b.js->FUNCTION->callee", "FUNCTION", "v1", "b.js");
+        let bid = callee1.id;
+        engine
+            .commit_batch_ext(
+                vec![anchor, callee1],
+                Vec::new(),
+                &["a.js".to_string(), "b.js".to_string()],
+                HashMap::new(),
+                &[],
+            )
+            .expect("base commit");
+
+        // Run 1: derive the ISSUE — its `msg` meta surface = the callee name "v1".
+        let (a1, _r1) = engine
+            .eval_derive_materialize_incremental(PROG, crate::datalog::EvalLimits::none())
+            .expect("first derivation");
+        assert_eq!(a1, 1, "exactly one ISSUE derived (one a.js × one b.js FUNCTION)");
+        let issue_id = crate::graph::string_id_to_u128(&format!("issue::fn::{aid}"));
+        {
+            let snap = engine.snapshot();
+            let n = engine.store.get_node_at(&snap, issue_id).expect("ISSUE exists");
+            assert_eq!(n.file, "a.js", "ISSUE anchored to a.js, NOT b.js");
+            let meta: serde_json::Value = serde_json::from_str(&n.metadata).unwrap();
+            assert_eq!(meta["_source"], serde_json::Value::String(prog_hash.clone()));
+            assert_eq!(meta["msg"], serde_json::json!("v1"));
+        }
+
+        // Rename the b.js callee in place: SAME semantic id, new `name`. Only `b.js` is in
+        // changed_files, so the ISSUE (file a.js) is NOT swept by file-level cleanup — the
+        // only thing that can refresh it is the materialize write-back.
+        let callee2 = make_v2_node("b.js->FUNCTION->callee", "FUNCTION", "v2", "b.js");
+        assert_eq!(callee2.id, bid, "rename keeps the callee node id");
+        engine
+            .commit_batch_ext(vec![callee2], Vec::new(), &["b.js".to_string()], HashMap::new(), &[])
+            .expect("rename commit");
+        assert!(
+            engine.store.node_exists_at(&engine.snapshot(), issue_id),
+            "stale ISSUE survives the b.js-only commit (different file) — this is the bug surface"
+        );
+
+        // Run 2: the derived ISSUE id is unchanged but its `msg` surface changed → REWRITE.
+        let (a2, r2) = engine
+            .eval_derive_materialize_incremental(PROG, crate::datalog::EvalLimits::none())
+            .expect("rewrite run");
+        {
+            let snap = engine.snapshot();
+            let n = engine.store.get_node_at(&snap, issue_id).expect("ISSUE still exists");
+            let meta: serde_json::Value = serde_json::from_str(&n.metadata).unwrap();
+            assert_eq!(
+                meta["msg"],
+                serde_json::json!("v2"),
+                "owned node meta rewritten to the fresh surface (was stale 'v1')"
+            );
+        }
+        assert_eq!(
+            (a2, r2),
+            (1, 0),
+            "one owned node rewritten (upsert add), nothing tombstoned"
+        );
+
+        // Run 3: no surface change → idempotent no-op (no churn rewrite, no new flip).
+        let v_before = engine.snapshot().version;
+        let (a3, r3) = engine
+            .eval_derive_materialize_incremental(PROG, crate::datalog::EvalLimits::none())
+            .expect("idempotent re-run");
+        assert_eq!((a3, r3), (0, 0), "unchanged surface is a true no-op");
+        assert_eq!(engine.snapshot().version, v_before, "a no-op run commits nothing");
     }
 
     /// A `@materialize_node` head whose arity is not `3 + len(meta)` aborts the run with
