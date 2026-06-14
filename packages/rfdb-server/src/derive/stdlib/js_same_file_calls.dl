@@ -2,12 +2,15 @@
 % (packages/grafema-resolve/src/SameFileCalls.hs:95-154): CALLS edges for calls
 % whose callee is defined in the same file. Four arms, exactly the resolver's:
 %
-%   A1 direct call  "foo()"            → same-file FUNCTION            (Hs:127-128)
-%   A2 direct call  "foo()"            → same-file VARIABLE/CONSTANT
+%   A1 direct call  "foo()"            → enclosing-scope FUNCTION      (Hs:127-128)
+%   A2 direct call  "foo()"            → enclosing-scope VARIABLE/CONSTANT
 %                                        (arrow fns), only when no FUNCTION wins
 %                                        (the Map-merge precedence, Hs:52-66)
-%   A3 direct ctor  "Foo()"            → same-file CLASS, uppercase-first only,
-%                                        only when A1/A2 found nothing (Hs:130-134)
+%   A3 direct ctor  "Foo()"            → enclosing-MODULE CLASS, uppercase-first
+%                                        only, only when A1/A2 found nothing (Hs:130-134)
+%
+% A1/A2/A3 now SCOPE-WALK to the binder in a LEXICALLY ENCLOSING container (the
+% B1/B2 encl_* idiom), not a flat (file, name) match — see DELTA 6.
 %   B1 this/super/<obj> method call    → enclosing class's method     (Hs:141-147)
 %   B2 ClassName.staticMethod()        → that class's method, ClassName
 %                                        uppercase-first               (Hs:149-152)
@@ -63,6 +66,20 @@
 %   DELTA 5 (file gate): the resolver's effective gate was the orchestrator's
 %     detect_language == JavaScript stream filter (8 extensions) — the js_call
 %     clause set below.
+%   DELTA 6 (precision, resolve rework): the DIRECT-call arms A1/A2/A3 resolve by
+%     SCOPE-WALK to the binder in a LEXICALLY ENCLOSING container — the same live
+%     SCOPE+HAS_SCOPE+CONTAINS chain B1/B2 use (extended with the enclosing MODULE
+%     leg for top-level binders + classes; see the pcall_scope/pcall_mod block) —
+%     instead of the old flat (file, name) join, which over-resolved a local `foo`
+%     in function A to an unrelated `foo` in function B of the same file. Verified
+%     on the real 503k-node graph: the scope-walk set is EXACTLY a subset of the
+%     flat (file, name) set (0 spurious edges), dropping only cross-scope false
+%     positives. The FUNCTION>VARIABLE/CONSTANT precedence ladder is preserved but
+%     is now PER-CALL (sf_has_func/sf_has_varconst, scope-aware) rather than
+%     per-(file, name) — a FUNCTION in an OUTER enclosing scope still beats a
+%     VARIABLE in the same chain, exactly JS lexical resolution. Non-shadowing
+%     (idiom parity with B1's DELTA 2a): every enclosing-container binder of the
+%     name derives an edge (sound superset, provenance-correct via meta).
 
 % Every CALL in a JS/TS file with its (file, name) — the 8-extension language
 % gate (DELTA 5), one clause per extension (see ENCODING NOTES).
@@ -85,12 +102,7 @@ dotted(C) :- node(C, "CALL"), attr(C, "name", N), string_contains(N, ".").
 % A direct (dotless) call in a JS file whose name is not an import binding.
 plain_call(C, F, N) :- js_call(C, F, N), \+ dotted(C), \+ imported(F, N).
 
-func_named(F, N, T)     :- node(T, "FUNCTION"), attr(T, "file", F), attr(T, "name", N).
-varconst_named(F, N, T) :- node(T, "VARIABLE"), attr(T, "file", F), attr(T, "name", N).
-varconst_named(F, N, T) :- node(T, "CONSTANT"), attr(T, "file", F), attr(T, "name", N).
 class_named(F, N, T)    :- node(T, "CLASS"),    attr(T, "file", F), attr(T, "name", N).
-has_func(F, N)     :- func_named(F, N, T).
-has_varconst(F, N) :- varconst_named(F, N, T).
 
 % Uppercase-first-named classes — the constructor heuristic's test (Hs:131,149),
 % one clause per letter (no char-class builtin; a 26-fact relation would be a
@@ -122,24 +134,227 @@ uc_class(F, N, T) :- class_named(F, N, T), starts_with(N, "X").
 uc_class(F, N, T) :- class_named(F, N, T), starts_with(N, "Y").
 uc_class(F, N, T) :- class_named(F, N, T), starts_with(N, "Z").
 
-% A1: FUNCTION wins outright.
+% ── Scope-walk for direct calls (A1/A2/A3) — the B1/B2 encl_* idiom ────────────
+% DELTA 6 (precision, this pack's resolve rework): A1/A2/A3 no longer resolve a
+% direct call to ANY same-(file, name) binder (the old flat func_named /
+% varconst_named / class_named (file, name) joins, which over-resolved a local
+% `foo` in function A to an unrelated `foo` in function B of the same file).
+% They now resolve to the binder declared in a LEXICALLY ENCLOSING container of
+% the call site — the same SCOPE+HAS_SCOPE+CONTAINS chain B1/B2 walk, seeded from
+% plain_call (a SEPARATE chain from B1's this_call-seeded encl_scope — B1/B2 are
+% untouched). Verified on the real 503k-node graph (HEAD 1bcea99b): the scope
+% chain produces EXACTLY a subset of the old flat (file, name) match (0 spurious
+% edges), dropping only cross-scope false positives. Soundness + provenance.
+%
+% Wave-0-verified declaration-containment shape (live-queried on graph.rfdb):
+%   - A free binder (FUNCTION / VARIABLE / CONSTANT) is reached by
+%     container -CONTAINS-> binder, where the container is a SCOPE for nested
+%     declarations and the file MODULE for top-level declarations (the bulk:
+%     7241 top-level FUNCTIONs are MODULE-contained, not SCOPE-contained).
+%   - A CLASS is ONLY ever MODULE-contained (SCOPE -CONTAINS-> CLASS = 0 on the
+%     real graph), so A3's ctor resolution uses the enclosing-MODULE leg alone.
+%   - Every CALL has an innermost SCOPE container (SCOPE -CONTAINS-> CALL).
+%   - The lexical chain climbs SCOPE -HAS_SCOPE-> SCOPE for nested scopes, and
+%     hops out of a function body via owner -HAS_SCOPE-> scope (owner FUNCTION)
+%     then owner -CONTAINS-> outerScope/MODULE — because a function-body scope's
+%     parent is the owning FUNCTION node, not another SCOPE.
+
+% The scope directly containing the call, then its lexical ancestors: nested
+% SCOPE parents (SCOPE -HAS_SCOPE-> SCOPE), and the container scope of the
+% enclosing FUNCTION (hop out of a function body: owner FUNCTION -HAS_SCOPE->
+% innerScope, then that FUNCTION -CONTAINS-> outerScope). Separate from B1's
+% encl_scope (different seed) so B1/B2 stay byte-identical.
+pcall_scope(C, S)  :- plain_call(C, F, N), edge(S, C, "CONTAINS"), node(S, "SCOPE").
+pcall_scope(C, S2) :- pcall_scope(C, S), edge(S2, S, "HAS_SCOPE"), node(S2, "SCOPE").
+pcall_scope(C, S2) :- pcall_scope(C, S), edge(O, S, "HAS_SCOPE"), node(O, "FUNCTION"),
+                      edge(S2, O, "CONTAINS"), node(S2, "SCOPE").
+
+% The enclosing file MODULE of the call: it owns a scope on the chain, OR
+% contains an owner-FUNCTION on the chain, OR directly contains the call
+% (top-level calls are CONTAINS-d by the MODULE, not a scope). Top-level binders
+% and ALL classes live here.
+pcall_mod(C, M) :- pcall_scope(C, S), edge(M, S, "HAS_SCOPE"), node(M, "MODULE").
+pcall_mod(C, M) :- pcall_scope(C, S), edge(O, S, "HAS_SCOPE"), node(O, "FUNCTION"),
+                   edge(M, O, "CONTAINS"), node(M, "MODULE").
+pcall_mod(C, M) :- plain_call(C, F, N), edge(M, C, "CONTAINS"), node(M, "MODULE").
+
+% Scope-resolved binder lookups (replace the flat *_named (file, name) joins).
+% attr(T, "name", N) is a CHECK (N pre-bound from plain_call), not a generator;
+% pcall_scope/pcall_mod bind C and the container first (planner-filter-before-
+% generator). A binder declared in EITHER an enclosing SCOPE or the enclosing
+% MODULE is in scope for the call.
+sf_func_named(C, T) :- pcall_scope(C, S), edge(S, T, "CONTAINS"), node(T, "FUNCTION"),
+                       plain_call(C, F, N), attr(T, "name", N).
+sf_func_named(C, T) :- pcall_mod(C, M),   edge(M, T, "CONTAINS"), node(T, "FUNCTION"),
+                       plain_call(C, F, N), attr(T, "name", N).
+sf_var_named(C, T)  :- pcall_scope(C, S), edge(S, T, "CONTAINS"), node(T, "VARIABLE"),
+                       plain_call(C, F, N), attr(T, "name", N).
+sf_var_named(C, T)  :- pcall_scope(C, S), edge(S, T, "CONTAINS"), node(T, "CONSTANT"),
+                       plain_call(C, F, N), attr(T, "name", N).
+sf_var_named(C, T)  :- pcall_mod(C, M),   edge(M, T, "CONTAINS"), node(T, "VARIABLE"),
+                       plain_call(C, F, N), attr(T, "name", N).
+sf_var_named(C, T)  :- pcall_mod(C, M),   edge(M, T, "CONTAINS"), node(T, "CONSTANT"),
+                       plain_call(C, F, N), attr(T, "name", N).
+
+% Per-CALL negation ladder (was per-(file, name) has_func / has_varconst). Now
+% SCOPE-AWARE: A2 fires only when no FUNCTION binder is reachable by scope-walk
+% for THIS call; A3 only when neither a FUNCTION nor a VARIABLE/CONSTANT binder
+% is. A FUNCTION in an OUTER enclosing scope still beats a VARIABLE/CONSTANT in
+% the same chain — exactly JS lexical resolution. (Stratification: sf_has_func /
+% sf_has_varconst are derived only from positive sf_*_named rules, so they sit in
+% an earlier stratum than the negating sf_call_var / sf_call_ctor — no negation
+% cycle, mirroring the old has_func / has_varconst placement.)
+sf_has_func(C)     :- sf_func_named(C, T).
+sf_has_varconst(C) :- sf_var_named(C, T).
+
+% A1: FUNCTION wins outright — the nearest enclosing FUNCTION binder of the name.
 @materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
 sf_call_fn(C, T, "same-file-calls") :-
-    plain_call(C, F, N), func_named(F, N, T).
+    sf_func_named(C, T).
 
-% A2: VARIABLE/CONSTANT only when no same-(file,name) FUNCTION exists
-% (the resolver's FUNCTION-last Map merge, Hs:52-66). DELTA 1.
+% A2: VARIABLE/CONSTANT (arrow fns) only when no enclosing FUNCTION binds the
+% name (the resolver's FUNCTION-last Map merge, Hs:52-66). DELTA 1.
 @materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
 sf_call_var(C, T, "same-file-calls") :-
-    plain_call(C, F, N), \+ has_func(F, N), varconst_named(F, N, T).
+    sf_var_named(C, T), \+ sf_has_func(C).
 
-% A3: uppercase-first constructor fallback, only when the function index had
-% nothing at all (Hs:129-134).
+% A3: uppercase-first constructor fallback, only when no enclosing FUNCTION and
+% no enclosing VARIABLE/CONSTANT binds the name (Hs:129-134). A CLASS is only
+% MODULE-contained, so the enclosing-MODULE leg alone reaches it; the uppercase-
+% first ctor heuristic (Hs:131) is an inline CHECK on the already-bound call name
+% N, one clause per letter (a derived gate predicate cannot bind a head var, and
+% an uc_name(N) fact relation joined by a filter is a §3 cross-join — see
+% ENCODING NOTES; uc_class is keyed (file, name) flat and is reserved for B2).
 @materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
 sf_call_ctor(C, T, "same-file-calls") :-
-    plain_call(C, F, N),
-    \+ has_func(F, N), \+ has_varconst(F, N),
-    uc_class(F, N, T).
+    pcall_mod(C, M), edge(M, T, "CONTAINS"), node(T, "CLASS"),
+    plain_call(C, F, N), attr(T, "name", N), starts_with(N, "A"),
+    \+ sf_has_func(C), \+ sf_has_varconst(C).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+sf_call_ctor(C, T, "same-file-calls") :-
+    pcall_mod(C, M), edge(M, T, "CONTAINS"), node(T, "CLASS"),
+    plain_call(C, F, N), attr(T, "name", N), starts_with(N, "B"),
+    \+ sf_has_func(C), \+ sf_has_varconst(C).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+sf_call_ctor(C, T, "same-file-calls") :-
+    pcall_mod(C, M), edge(M, T, "CONTAINS"), node(T, "CLASS"),
+    plain_call(C, F, N), attr(T, "name", N), starts_with(N, "C"),
+    \+ sf_has_func(C), \+ sf_has_varconst(C).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+sf_call_ctor(C, T, "same-file-calls") :-
+    pcall_mod(C, M), edge(M, T, "CONTAINS"), node(T, "CLASS"),
+    plain_call(C, F, N), attr(T, "name", N), starts_with(N, "D"),
+    \+ sf_has_func(C), \+ sf_has_varconst(C).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+sf_call_ctor(C, T, "same-file-calls") :-
+    pcall_mod(C, M), edge(M, T, "CONTAINS"), node(T, "CLASS"),
+    plain_call(C, F, N), attr(T, "name", N), starts_with(N, "E"),
+    \+ sf_has_func(C), \+ sf_has_varconst(C).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+sf_call_ctor(C, T, "same-file-calls") :-
+    pcall_mod(C, M), edge(M, T, "CONTAINS"), node(T, "CLASS"),
+    plain_call(C, F, N), attr(T, "name", N), starts_with(N, "F"),
+    \+ sf_has_func(C), \+ sf_has_varconst(C).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+sf_call_ctor(C, T, "same-file-calls") :-
+    pcall_mod(C, M), edge(M, T, "CONTAINS"), node(T, "CLASS"),
+    plain_call(C, F, N), attr(T, "name", N), starts_with(N, "G"),
+    \+ sf_has_func(C), \+ sf_has_varconst(C).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+sf_call_ctor(C, T, "same-file-calls") :-
+    pcall_mod(C, M), edge(M, T, "CONTAINS"), node(T, "CLASS"),
+    plain_call(C, F, N), attr(T, "name", N), starts_with(N, "H"),
+    \+ sf_has_func(C), \+ sf_has_varconst(C).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+sf_call_ctor(C, T, "same-file-calls") :-
+    pcall_mod(C, M), edge(M, T, "CONTAINS"), node(T, "CLASS"),
+    plain_call(C, F, N), attr(T, "name", N), starts_with(N, "I"),
+    \+ sf_has_func(C), \+ sf_has_varconst(C).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+sf_call_ctor(C, T, "same-file-calls") :-
+    pcall_mod(C, M), edge(M, T, "CONTAINS"), node(T, "CLASS"),
+    plain_call(C, F, N), attr(T, "name", N), starts_with(N, "J"),
+    \+ sf_has_func(C), \+ sf_has_varconst(C).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+sf_call_ctor(C, T, "same-file-calls") :-
+    pcall_mod(C, M), edge(M, T, "CONTAINS"), node(T, "CLASS"),
+    plain_call(C, F, N), attr(T, "name", N), starts_with(N, "K"),
+    \+ sf_has_func(C), \+ sf_has_varconst(C).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+sf_call_ctor(C, T, "same-file-calls") :-
+    pcall_mod(C, M), edge(M, T, "CONTAINS"), node(T, "CLASS"),
+    plain_call(C, F, N), attr(T, "name", N), starts_with(N, "L"),
+    \+ sf_has_func(C), \+ sf_has_varconst(C).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+sf_call_ctor(C, T, "same-file-calls") :-
+    pcall_mod(C, M), edge(M, T, "CONTAINS"), node(T, "CLASS"),
+    plain_call(C, F, N), attr(T, "name", N), starts_with(N, "M"),
+    \+ sf_has_func(C), \+ sf_has_varconst(C).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+sf_call_ctor(C, T, "same-file-calls") :-
+    pcall_mod(C, M), edge(M, T, "CONTAINS"), node(T, "CLASS"),
+    plain_call(C, F, N), attr(T, "name", N), starts_with(N, "N"),
+    \+ sf_has_func(C), \+ sf_has_varconst(C).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+sf_call_ctor(C, T, "same-file-calls") :-
+    pcall_mod(C, M), edge(M, T, "CONTAINS"), node(T, "CLASS"),
+    plain_call(C, F, N), attr(T, "name", N), starts_with(N, "O"),
+    \+ sf_has_func(C), \+ sf_has_varconst(C).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+sf_call_ctor(C, T, "same-file-calls") :-
+    pcall_mod(C, M), edge(M, T, "CONTAINS"), node(T, "CLASS"),
+    plain_call(C, F, N), attr(T, "name", N), starts_with(N, "P"),
+    \+ sf_has_func(C), \+ sf_has_varconst(C).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+sf_call_ctor(C, T, "same-file-calls") :-
+    pcall_mod(C, M), edge(M, T, "CONTAINS"), node(T, "CLASS"),
+    plain_call(C, F, N), attr(T, "name", N), starts_with(N, "Q"),
+    \+ sf_has_func(C), \+ sf_has_varconst(C).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+sf_call_ctor(C, T, "same-file-calls") :-
+    pcall_mod(C, M), edge(M, T, "CONTAINS"), node(T, "CLASS"),
+    plain_call(C, F, N), attr(T, "name", N), starts_with(N, "R"),
+    \+ sf_has_func(C), \+ sf_has_varconst(C).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+sf_call_ctor(C, T, "same-file-calls") :-
+    pcall_mod(C, M), edge(M, T, "CONTAINS"), node(T, "CLASS"),
+    plain_call(C, F, N), attr(T, "name", N), starts_with(N, "S"),
+    \+ sf_has_func(C), \+ sf_has_varconst(C).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+sf_call_ctor(C, T, "same-file-calls") :-
+    pcall_mod(C, M), edge(M, T, "CONTAINS"), node(T, "CLASS"),
+    plain_call(C, F, N), attr(T, "name", N), starts_with(N, "T"),
+    \+ sf_has_func(C), \+ sf_has_varconst(C).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+sf_call_ctor(C, T, "same-file-calls") :-
+    pcall_mod(C, M), edge(M, T, "CONTAINS"), node(T, "CLASS"),
+    plain_call(C, F, N), attr(T, "name", N), starts_with(N, "U"),
+    \+ sf_has_func(C), \+ sf_has_varconst(C).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+sf_call_ctor(C, T, "same-file-calls") :-
+    pcall_mod(C, M), edge(M, T, "CONTAINS"), node(T, "CLASS"),
+    plain_call(C, F, N), attr(T, "name", N), starts_with(N, "V"),
+    \+ sf_has_func(C), \+ sf_has_varconst(C).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+sf_call_ctor(C, T, "same-file-calls") :-
+    pcall_mod(C, M), edge(M, T, "CONTAINS"), node(T, "CLASS"),
+    plain_call(C, F, N), attr(T, "name", N), starts_with(N, "W"),
+    \+ sf_has_func(C), \+ sf_has_varconst(C).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+sf_call_ctor(C, T, "same-file-calls") :-
+    pcall_mod(C, M), edge(M, T, "CONTAINS"), node(T, "CLASS"),
+    plain_call(C, F, N), attr(T, "name", N), starts_with(N, "X"),
+    \+ sf_has_func(C), \+ sf_has_varconst(C).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+sf_call_ctor(C, T, "same-file-calls") :-
+    pcall_mod(C, M), edge(M, T, "CONTAINS"), node(T, "CLASS"),
+    plain_call(C, F, N), attr(T, "name", N), starts_with(N, "Y"),
+    \+ sf_has_func(C), \+ sf_has_varconst(C).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+sf_call_ctor(C, T, "same-file-calls") :-
+    pcall_mod(C, M), edge(M, T, "CONTAINS"), node(T, "CLASS"),
+    plain_call(C, F, N), attr(T, "name", N), starts_with(N, "Z"),
+    \+ sf_has_func(C), \+ sf_has_varconst(C).
 
 % ── Scope chain (Wave-0 verified shape) — B1's enclosing class ────────────────
 % Seeded ONLY from this/super/<obj> calls (planner-filter-before-generator: the

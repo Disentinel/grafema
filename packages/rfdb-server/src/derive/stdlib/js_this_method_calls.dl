@@ -3,35 +3,42 @@
 % sole reason for the orchestrator's SECOND full-graph streaming pass
 % (main.rs js-this-method-calls — pure IPC overhead); the pack kills that pass.
 %
-% Resolver semantics reproduced EXACTLY (deliberately file-flat — the resolver
-% never looked at the enclosing class; parity over ambition. The scope-aware
-% enclosing-class arm lives in js_same_file_calls.dl B1, which legacy ALSO ran on
-% the same calls — the two packs overlap on additive CALLS exactly as the two
-% resolvers did):
-%   - CALL whose name starts with "this." in a JS/TS file (the resolver's OWN
-%     6-extension gate, Hs:45 — see DELTA 2);
-%   - the rest of the name after "this." is looked up among the file's METHOD
-%     nodes by (file, name) (Hs:29-36);
-%   - resolve ONLY when exactly one candidate exists (Hs:56-66) — the documented
-%     neq/ambig negation idiom;
-%   - empty method names never indexed (Hs:35) — the neq(MN, "") guard.
+% SCOPE-WALK rework (resolve-pack #23): the flat (file, name)→METHOD rule was
+% UNSOUND-by-imprecision and ambiguity-blind. On the real Grafema graph
+% (503296 nodes) the flat arm and js_same_file_calls.dl B1 (the scope-walk
+% this-arm) diverged BOTH ways: the flat `ambig` guard refused every member of
+% any (file, name) collision (e.g. two private `shouldLog` in Logger.ts — one per
+% class), giving false NEGATIVES; while B1's scope-walk bound the enclosing class
+% as a NODE and resolved each call to its OWN class. Conversely B1 alone MISSED
+% the call inside an arrow-function class property (DELTA 2b: js_same_file_calls.dl
+% :49-51) — e.g. SceneManager.ts `private _animate = () => { … this._tickFly() }`,
+% whose `<arrow>` FUNCTION owner is NOT a CLASS -HAS_METHOD-> member, so B1's
+% encl_member→encl_class link breaks at the arrow-property boundary.
 %
-% Multi-dot names are NOT a delta: concat in check mode pins
-% Full == "this." ++ MethodName — "this.a.b" only matches a METHOD literally
-% named "a.b" (never exists), identical to the resolver's index miss after
-% stripThis. This CORRECTS the migration spec's anticipated method_suffix
-% superset delta — eliminated by construction.
+% This pack now resolves this.-prefixed method calls SOUNDLY via the same
+% live SCOPE chain B1 uses (CALL <-CONTAINS- SCOPE, lexical HAS_SCOPE parents,
+% owner METHOD/FUNCTION → CLASS via HAS_METHOD) AND additionally derives the
+% enclosing CLASS directly from any enclosing SCOPE the CLASS owns
+% (CLASS -HAS_SCOPE-> enclosing-scope) — covering the arrow-property / static-block
+% case the HAS_METHOD-owner path cannot. CALLS is SHARED vocabulary ⇒ "additive";
+% the pack overlaps B1's additive CALLS exactly as the two resolvers did. Pack
+% scoped to this.-prefix only; super./<obj>. method calls are left to B1.
 %
-% CALLS is SHARED vocabulary ⇒ mode = "additive".
-%
-% NUMBERED DELTAS vs the resolver (everything not listed is exact):
+% NUMBERED DELTAS vs the original flat resolver (everything not listed is exact):
 %   DELTA 1 (metadata): resolvedVia="js-this-method-calls" projected as a meta
 %     column; engine provenance (_source/_generation) added.
-%   DELTA 2 (file gate, exact parity — recorded for the harness): the pack uses
-%     the resolver's own 6-extension gate (.ts/.tsx/.js/.jsx/.mjs/.cjs, Hs:45),
-%     which is NARROWER than the orchestrator's 8-extension stream filter —
-%     .mts/.cts this-calls were streamed to the resolver and rejected by it;
-%     the pack rejects them identically.
+%   DELTA 2 (precision, was a flat false-NEGATIVE): two same-named members in one
+%     file (distinct classes) no longer trigger the flat `ambig` skip — each call
+%     site binds its OWN enclosing class as a node and resolves to that class's
+%     member (mirrors js_same_file_calls.dl DELTA 2c).
+%   DELTA 3 (recall, was a flat false-POSITIVE source removed): the call must be
+%     lexically inside an enclosing CLASS via the live scope chain, not merely
+%     share a (file, name) with some METHOD anywhere in the file.
+%   DELTA 4 (file gate, exact parity, recorded for the harness): the pack keeps the
+%     resolver's own 6-extension gate (.ts/.tsx/.js/.jsx/.mjs/.cjs, Hs:45), which
+%     is NARROWER than the orchestrator's 8-extension stream filter — .mts/.cts
+%     this-calls were streamed to the resolver and rejected by it; the pack rejects
+%     them identically.
 
 % The resolver's own JS/TS gate — 6 extensions (Hs:45), NOT the orchestrator's 8 —
 % expanded as one clause per extension with a CONSTANT ends_with filter. (A
@@ -46,15 +53,42 @@ this_call6(C, F, Full) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".js
 this_call6(C, F, Full) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".mjs"), attr(C, "name", Full), starts_with(Full, "this.").
 this_call6(C, F, Full) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".cjs"), attr(C, "name", Full), starts_with(Full, "this.").
 
-% (file, name) → METHOD node (the resolver's MethodIndex, Hs:29-36).
-meth(F, N, M) :- node(M, "METHOD"), attr(M, "file", F), attr(M, "name", N), neq(N, "").
+% ── Scope chain (Wave-0 verified shape) — B1's enclosing-class idiom, reused ────
+% Seeded ONLY from the gated this-calls (planner-filter-before-generator: the
+% closure must not enumerate every scope content in the graph).
+%
+% The scope directly containing the call, then lexical parents: a scope's
+% HAS_SCOPE sources are its owner (FUNCTION/METHOD) AND its lexical parent scope
+% (and, at the top of a class body, the CLASS's own scope) — the node-type filter
+% separates them.
+encl_scope(C, S)  :- this_call6(C, F, Full), edge(S, C, "CONTAINS"), node(S, "SCOPE").
+encl_scope(C, S2) :- encl_scope(C, S), edge(S2, S, "HAS_SCOPE"), node(S2, "SCOPE").
 
-% More than one same-named METHOD in the file — the exactly-one guard (Hs:56-66).
-ambig(F, N) :- meth(F, N, M1), meth(F, N, M2), neq(M1, M2).
+% Scope owners along the chain (METHOD for class methods; FUNCTION kept for parity
+% with the resolver's FUNCTION|METHOD member index, Hs:75).
+encl_member(C, M) :- encl_scope(C, S), edge(M, S, "HAS_SCOPE"), node(M, "METHOD").
+encl_member(C, M) :- encl_scope(C, S), edge(M, S, "HAS_SCOPE"), node(M, "FUNCTION").
+
+% Every enclosing class of the call. Two sound paths into the CLASS node:
+%   (a) the method-owner path — the class owns the enclosing member via HAS_METHOD
+%       (the call sits in a method/function body); identical to B1.
+%   (b) the class-scope path — the class owns an enclosing SCOPE directly via
+%       HAS_SCOPE (the call sits in a class-body position with no METHOD/FUNCTION
+%       owner: an arrow-function class property or a static block). This closes the
+%       DELTA 2b gap that the HAS_METHOD-owner path alone cannot reach.
+encl_class(C, Cls) :- encl_member(C, M), edge(Cls, M, "HAS_METHOD"), node(Cls, "CLASS").
+encl_class(C, Cls) :- encl_scope(C, S), edge(Cls, S, "HAS_SCOPE"), node(Cls, "CLASS").
+
+% this. method call → a member of an enclosing class. concat in
+% check mode pins Full == Prefix ++ MemberName — the resolver's first-dot split,
+% exactly (so "this.a.b" only matches a member literally named "a.b", which never
+% exists — the migration spec's anticipated method_suffix superset delta is
+% eliminated by construction). One clause per prefix constant (a this_prefix fact
+% relation would be a §3 cross-join).
+this_method(C, M) :-
+    this_call6(C, F, Full), encl_class(C, Cls),
+    edge(Cls, M, "HAS_METHOD"), attr(M, "name", MN), neq(MN, ""),
+    concat("this.", MN, Full).
 
 @materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
-js_this_method_call(C, M, "js-this-method-calls") :-
-    this_call6(C, F, Full),
-    meth(F, MN, M),
-    \+ ambig(F, MN),
-    concat("this.", MN, Full).
+js_this_method_call(C, M, "js-this-method-calls") :- this_method(C, M).

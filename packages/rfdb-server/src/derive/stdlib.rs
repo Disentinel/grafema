@@ -1763,62 +1763,142 @@ mod tests {
         );
     }
 
-    /// The bundled js_local_refs pack reproduces JsLocalRefs.hs on a fixture covering
-    /// every arm, every skip-set, one negative per arm, and the pinned deltas:
-    /// - all 8 declaration types resolve a same-file REFERENCE (arm coverage);
-    /// - the imported(F,N) skip-set (IMPORT_BINDING) suppresses resolution;
-    /// - the rt_global ground-facts skip-list suppresses resolution ("console");
-    /// - cross-file declarations never match (file-flat negative);
-    /// - non-JS files are gated out (a .rs REFERENCE with a same-file match);
-    /// - empty names never match (the resolver's index exclusion);
-    /// - DELTA 1 PINNED: duplicate (file,name) declarations derive an edge to EVERY
-    ///   candidate (the resolver's Map kept one arbitrary winner — deriving what the
-    ///   delta says, not what the resolver did).
+    /// The reworked SCOPE-WALK js_local_refs pack on a fixture covering both arms,
+    /// the nearest-binder/shadowing property (the soundness GOAL), every skip-set,
+    /// the negatives, and the accepted same-scope superset:
+    ///
+    /// ARM A (SCOPE-WALK: VARIABLE/CONSTANT/FUNCTION/PARAMETER via SCOPE-DECLARES):
+    /// - a ref in a scope that declares the name resolves to that binder
+    ///   (helper/state/LIMIT/input, all DECLARES'd by the outer scope);
+    /// - SHADOWING: `shadow` is declared in BOTH an outer and an inner scope; a ref
+    ///   inside the inner scope resolves to the INNER binder ONLY (nearest wins) —
+    ///   the flat port would have emitted BOTH; this is DELTA 1, the soundness core;
+    /// - OUTER reach: a ref of `state` inside the inner scope (which does not
+    ///   declare it) climbs HAS_SCOPE to the outer scope's binder;
+    /// - IMPORT_BINDING is DECLARES-attached but EXCLUDED by the ARM A type filter
+    ///   (it is the import skip-set);
+    /// - same-scope duplicate binders derive BOTH (DELTA 2, accepted superset).
+    ///
+    /// ARM B (FILE-FLAT: CLASS/INTERFACE/ENUM/TYPE_SYNONYM — not SCOPE-attached):
+    /// - each resolves its same-file REFERENCE by (file, name), no scope needed.
+    ///
+    /// SKIP-SETS / NEGATIVES (each ref is given a declaring scope so it WOULD
+    /// resolve but for the skip): imported name; rt_global ("console"); cross-file
+    /// decl; non-JS (.rs) file; empty name.
     #[test]
-    fn js_local_refs_resolves_same_file_decls_with_skip_sets() {
+    fn js_local_refs_scope_walk_nearest_binder() {
         let mut v = FixtureStorageView::new(1);
 
-        // One declaration + one reference per declaration type (all in app.ts).
-        let decls = [
+        // ── Scope tree in app.ts: MODULE top-scope (NO module SCOPE node — the JS/TS
+        //    analyzer makes the MODULE itself the module scope, Context.hs:59-64),
+        //    outer SCOPE, inner SCOPE child via HAS_SCOPE ──
+        named_node(&mut v, "m_app", "app.ts", "MODULE", "app.ts");
+        named_node(&mut v, "s_outer", "", "SCOPE", "app.ts");
+        named_node(&mut v, "s_inner", "", "SCOPE", "app.ts");
+        edge(&mut v, "m_app", "s_outer", "HAS_SCOPE"); // MODULE is lexical parent of outer
+        edge(&mut v, "s_outer", "s_inner", "HAS_SCOPE"); // outer is lexical parent
+
+        // ── ARM A: scoped binders DECLARES'd by the outer scope, refs CONTAINS'd ──
+        let scoped = [
             ("d_fn", "helper", "FUNCTION"),
             ("d_var", "state", "VARIABLE"),
             ("d_const", "LIMIT", "CONSTANT"),
-            ("d_class", "Engine", "CLASS"),
             ("d_param", "input", "PARAMETER"),
+        ];
+        for (sid, name, ty) in scoped {
+            named_node(&mut v, sid, name, ty, "app.ts");
+            edge(&mut v, "s_outer", sid, "DECLARES");
+            named_node(&mut v, &format!("r_{sid}"), name, "REFERENCE", "app.ts");
+            edge(&mut v, "s_outer", &format!("r_{sid}"), "CONTAINS");
+        }
+
+        // ── SHADOWING: `shadow` declared in BOTH scopes; ref in INNER → inner only ──
+        named_node(&mut v, "d_shadow_out", "shadow", "VARIABLE", "app.ts");
+        edge(&mut v, "s_outer", "d_shadow_out", "DECLARES");
+        named_node(&mut v, "d_shadow_in", "shadow", "VARIABLE", "app.ts");
+        edge(&mut v, "s_inner", "d_shadow_in", "DECLARES");
+        named_node(&mut v, "r_shadow", "shadow", "REFERENCE", "app.ts");
+        edge(&mut v, "s_inner", "r_shadow", "CONTAINS");
+
+        // ── OUTER reach: ref of `state` in the inner scope climbs to outer binder ──
+        named_node(&mut v, "r_state_inner", "state", "REFERENCE", "app.ts");
+        edge(&mut v, "s_inner", "r_state_inner", "CONTAINS");
+
+        // ── DELTA 2: same-scope duplicate binders of `dup` — derive BOTH ──
+        named_node(&mut v, "d_dup_v", "dup", "VARIABLE", "app.ts");
+        edge(&mut v, "s_outer", "d_dup_v", "DECLARES");
+        named_node(&mut v, "d_dup_p", "dup", "PARAMETER", "app.ts");
+        edge(&mut v, "s_outer", "d_dup_p", "DECLARES");
+        named_node(&mut v, "r_dup", "dup", "REFERENCE", "app.ts");
+        edge(&mut v, "s_outer", "r_dup", "CONTAINS");
+
+        // ── MODULE TOP-SCOPE (regression guard): top-level binder DECLARES'd by the
+        //    MODULE, top-level ref CONTAINS'd by the MODULE — must resolve. The JS/TS
+        //    analyzer emits NO module SCOPE node, so this is the very common top-level
+        //    helper/const case that a SCOPE-only walk silently dropped. ──
+        named_node(&mut v, "d_modfn", "boot", "FUNCTION", "app.ts");
+        edge(&mut v, "m_app", "d_modfn", "DECLARES");
+        named_node(&mut v, "r_modfn", "boot", "REFERENCE", "app.ts");
+        edge(&mut v, "m_app", "r_modfn", "CONTAINS"); // ref is module-contained
+
+        // ── MODULE reach from an inner SCOPE: a ref of a module-level const inside the
+        //    inner function scope climbs SCOPE -> SCOPE -> MODULE via HAS_SCOPE. ──
+        named_node(&mut v, "d_modconst", "GLOBAL_CAP", "CONSTANT", "app.ts");
+        edge(&mut v, "m_app", "d_modconst", "DECLARES");
+        named_node(&mut v, "r_modconst_inner", "GLOBAL_CAP", "REFERENCE", "app.ts");
+        edge(&mut v, "s_inner", "r_modconst_inner", "CONTAINS");
+
+        // ── NEAREST over MODULE: `cfg` declared at module level AND in s_outer; a ref
+        //    in s_inner resolves to the s_outer binder (nearest), NOT the MODULE one. ──
+        named_node(&mut v, "d_cfg_mod", "cfg", "CONSTANT", "app.ts");
+        edge(&mut v, "m_app", "d_cfg_mod", "DECLARES");
+        named_node(&mut v, "d_cfg_outer", "cfg", "VARIABLE", "app.ts");
+        edge(&mut v, "s_outer", "d_cfg_outer", "DECLARES");
+        named_node(&mut v, "r_cfg", "cfg", "REFERENCE", "app.ts");
+        edge(&mut v, "s_inner", "r_cfg", "CONTAINS");
+
+        // ── ARM A skip-set: IMPORT_BINDING is DECLARES-attached but EXCLUDED ──
+        named_node(&mut v, "b_ext", "ext", "IMPORT_BINDING", "app.ts");
+        edge(&mut v, "s_outer", "b_ext", "DECLARES");
+        named_node(&mut v, "r_ext", "ext", "REFERENCE", "app.ts");
+        edge(&mut v, "s_outer", "r_ext", "CONTAINS");
+
+        // ── ARM B: flat type/class decls (NOT scope-attached); flat (file,name) ──
+        let flat = [
+            ("d_class", "Engine", "CLASS"),
             ("d_iface", "Shape", "INTERFACE"),
             ("d_enum", "Color", "ENUM"),
             ("d_syn", "Alias", "TYPE_SYNONYM"),
         ];
-        for (sid, name, ty) in decls {
+        for (sid, name, ty) in flat {
             named_node(&mut v, sid, name, ty, "app.ts");
             named_node(&mut v, &format!("r_{sid}"), name, "REFERENCE", "app.ts");
+            edge(&mut v, "s_outer", &format!("r_{sid}"), "CONTAINS");
         }
 
-        // Skip-set 1: imported name (IMPORT_BINDING shadows the local FUNCTION).
-        named_node(&mut v, "b_ext", "ext", "IMPORT_BINDING", "app.ts");
-        named_node(&mut v, "d_ext", "ext", "FUNCTION", "app.ts");
-        named_node(&mut v, "r_ext", "ext", "REFERENCE", "app.ts");
-
-        // Skip-set 2: runtime global ("console" is on the 97-name facts list).
+        // ── Skip-set: runtime global ("console" is on the 97-name facts list) ──
         named_node(&mut v, "d_console", "console", "VARIABLE", "app.ts");
+        edge(&mut v, "s_outer", "d_console", "DECLARES");
         named_node(&mut v, "r_console", "console", "REFERENCE", "app.ts");
+        edge(&mut v, "s_outer", "r_console", "CONTAINS");
 
-        // Negative: declaration only in ANOTHER file.
+        // ── Negative: declaration only in ANOTHER file (cross-file) ──
         named_node(&mut v, "d_far", "far", "FUNCTION", "b.ts");
         named_node(&mut v, "r_far", "far", "REFERENCE", "app.ts");
+        edge(&mut v, "s_outer", "r_far", "CONTAINS");
 
-        // Negative: non-JS file (gate).
+        // ── Negative: non-JS file (gate) — scoped, but .rs is gated out ──
+        named_node(&mut v, "s_rs", "", "SCOPE", "main.rs");
         named_node(&mut v, "d_rfn", "rfn", "FUNCTION", "main.rs");
+        edge(&mut v, "s_rs", "d_rfn", "DECLARES");
         named_node(&mut v, "r_rfn", "rfn", "REFERENCE", "main.rs");
+        edge(&mut v, "s_rs", "r_rfn", "CONTAINS");
 
-        // Negative: empty names never match.
+        // ── Negative: empty names never match ──
         named_node(&mut v, "d_empty", "", "FUNCTION", "app.ts");
+        edge(&mut v, "s_outer", "d_empty", "DECLARES");
         named_node(&mut v, "r_empty", "", "REFERENCE", "app.ts");
-
-        // DELTA 1: duplicate (file,name) decls — derive BOTH.
-        named_node(&mut v, "d_dup_v", "dup", "VARIABLE", "app.ts");
-        named_node(&mut v, "d_dup_p", "dup", "PARAMETER", "app.ts");
-        named_node(&mut v, "r_dup", "dup", "REFERENCE", "app.ts");
+        edge(&mut v, "s_outer", "r_empty", "CONTAINS");
 
         let (eval, specs, _node_specs) = evaluate_with_materialize(
             &v,
@@ -1829,23 +1909,53 @@ mod tests {
         )
         .expect("js_local_refs.dl evaluates");
 
-        let mut expected: BTreeSet<(u128, u128, String)> = decls
-            .iter()
-            .map(|(sid, _, _)| {
-                (
-                    id_of(&format!("r_{sid}")),
-                    id_of(sid),
-                    "js-local-refs".to_string(),
-                )
-            })
-            .collect();
-        expected.insert((id_of("r_dup"), id_of("d_dup_v"), "js-local-refs".to_string()));
-        expected.insert((id_of("r_dup"), id_of("d_dup_p"), "js-local-refs".to_string()));
+        let mut expected: BTreeSet<(u128, u128, String)> = BTreeSet::new();
+        let edge = |r: &str, d: &str| (id_of(r), id_of(d), "js-local-refs".to_string());
+        // ARM A: each scoped binder, resolved in its own scope.
+        expected.insert(edge("r_d_fn", "d_fn"));
+        expected.insert(edge("r_d_var", "d_var"));
+        expected.insert(edge("r_d_const", "d_const"));
+        expected.insert(edge("r_d_param", "d_param"));
+        // SHADOWING: inner ref resolves to the INNER binder ONLY (nearest wins).
+        expected.insert(edge("r_shadow", "d_shadow_in"));
+        // OUTER reach: inner ref of `state` climbs to the outer binder.
+        expected.insert(edge("r_state_inner", "d_var"));
+        // DELTA 2: same-scope dup — BOTH candidates.
+        expected.insert(edge("r_dup", "d_dup_v"));
+        expected.insert(edge("r_dup", "d_dup_p"));
+        // MODULE top-scope: top-level ref → MODULE-DECLARES'd binder (regression guard).
+        expected.insert(edge("r_modfn", "d_modfn"));
+        // MODULE reach: inner ref climbs SCOPE->SCOPE->MODULE to the module-level const.
+        expected.insert(edge("r_modconst_inner", "d_modconst"));
+        // NEAREST over MODULE: inner ref of `cfg` resolves to s_outer binder (nearest),
+        // NOT the module-level one (the MODULE binder is shadowed by s_outer).
+        expected.insert(edge("r_cfg", "d_cfg_outer"));
+        // ARM B: flat type/class decls.
+        expected.insert(edge("r_d_class", "d_class"));
+        expected.insert(edge("r_d_iface", "d_iface"));
+        expected.insert(edge("r_d_enum", "d_enum"));
+        expected.insert(edge("r_d_syn", "d_syn"));
+
         assert_eq!(
             triples(&eval, "js_local_ref"),
             expected,
-            "all 8 decl types + BOTH dup candidates (DELTA 1); imported/rt_global/\
-             cross-file/.rs/empty-name references derive nothing"
+            "ARM A scope-walk (nearest binder; inner shadows outer; outer reach via \
+             HAS_SCOPE; same-scope dup superset; IMPORT_BINDING excluded) + ARM B flat \
+             (CLASS/INTERFACE/ENUM/TYPE_SYNONYM); rt_global/cross-file/.rs/empty derive nothing"
+        );
+
+        // SHADOWING (explicit): the OUTER `shadow` binder must NOT be derived.
+        assert!(
+            !triples(&eval, "js_local_ref")
+                .contains(&edge("r_shadow", "d_shadow_out")),
+            "nearest-binder: the inner-scope `shadow` shadows the outer — outer must be dropped"
+        );
+
+        // NEAREST over MODULE (explicit): the module-level `cfg` binder must NOT be
+        // derived for r_cfg — the strictly-closer s_outer binder shadows it.
+        assert!(
+            !triples(&eval, "js_local_ref").contains(&edge("r_cfg", "d_cfg_mod")),
+            "nearest-binder over MODULE: s_outer `cfg` shadows the module-level `cfg`"
         );
 
         // READS_FROM is shared vocabulary — additive, with resolvedVia projected.
@@ -1864,6 +1974,11 @@ mod tests {
     /// - A2 direct → VARIABLE/CONSTANT, with DELTA 1 PINNED (both var+const derive);
     /// - A3 uppercase ctor → CLASS, with a lowercase negative AND the ladder
     ///   suppression (a VARIABLE of the same name beats the CLASS);
+    /// - DELTA 6 (resolve rework) PINNED: A1/A2/A3 SCOPE-WALK the B1/B2 encl_*
+    ///   idiom (SCOPE+HAS_SCOPE+CONTAINS chain, enclosing MODULE for top-level
+    ///   binders + classes) instead of a flat (file, name) join; a same-name
+    ///   FUNCTION in an UNRELATED scope (`orphan`) does NOT resolve a module-level
+    ///   call — the cross-scope false positive the flat match made is dropped;
     /// - the import-binding skip-set on direct calls;
     /// - B1 this./super./<obj>. via the Wave-0 scope chain (block scope →
     ///   lexical parent → METHOD owner → class), with the multi-dot exactness
@@ -1876,33 +1991,75 @@ mod tests {
     fn js_same_file_calls_resolves_all_arms_with_preference_ladder() {
         let mut v = FixtureStorageView::new(1);
 
-        // A1: direct call → FUNCTION.
-        named_node(&mut v, "f_run", "run", "FUNCTION", "app.ts");
-        named_node(&mut v, "c_fn", "run", "CALL", "app.ts");
+        // ── A-arm scope shape (Wave-0 verified on the real graph) ─────────────
+        // The direct-call arms now SCOPE-WALK (DELTA 6): a call resolves only to a
+        // binder declared in a LEXICALLY ENCLOSING container, not any same-(file,
+        // name) binder. The file MODULE owns the top scope (MODULE -HAS_SCOPE->
+        // s_mod) and CONTAINS the top-level binders + classes; s_mod CONTAINS the
+        // direct-call CALLs. Top-level FUNCTION/VARIABLE/CONSTANT are reached via
+        // the enclosing-MODULE leg; CLASS is ONLY ever MODULE-contained.
+        named_node(&mut v, "mod_app", "app.ts", "MODULE", "app.ts");
+        named_node(&mut v, "s_mod", "module", "SCOPE", "app.ts");
+        edge(&mut v, "mod_app", "s_mod", "HAS_SCOPE");
 
-        // Ladder: FUNCTION beats VARIABLE.
+        // A1: direct call → FUNCTION (declared at module top level).
+        named_node(&mut v, "f_run", "run", "FUNCTION", "app.ts");
+        edge(&mut v, "mod_app", "f_run", "CONTAINS");
+        named_node(&mut v, "c_fn", "run", "CALL", "app.ts");
+        edge(&mut v, "s_mod", "c_fn", "CONTAINS");
+
+        // Ladder: FUNCTION beats VARIABLE (both module-level, same chain).
         named_node(&mut v, "f_make", "make", "FUNCTION", "app.ts");
         named_node(&mut v, "v_make", "make", "VARIABLE", "app.ts");
+        edge(&mut v, "mod_app", "f_make", "CONTAINS");
+        edge(&mut v, "mod_app", "v_make", "CONTAINS");
         named_node(&mut v, "c_pref", "make", "CALL", "app.ts");
+        edge(&mut v, "s_mod", "c_pref", "CONTAINS");
 
         // A2 + DELTA 1: VARIABLE and CONSTANT both derive (no FUNCTION).
         named_node(&mut v, "v_cb", "cb", "VARIABLE", "app.ts");
         named_node(&mut v, "k_cb", "cb", "CONSTANT", "app.ts");
+        edge(&mut v, "mod_app", "v_cb", "CONTAINS");
+        edge(&mut v, "mod_app", "k_cb", "CONTAINS");
         named_node(&mut v, "c_var", "cb", "CALL", "app.ts");
+        edge(&mut v, "s_mod", "c_var", "CONTAINS");
 
         // A3: uppercase ctor → CLASS; lowercase negative; ladder suppression.
         named_node(&mut v, "cls_widget", "Widget", "CLASS", "app.ts");
+        edge(&mut v, "mod_app", "cls_widget", "CONTAINS");
         named_node(&mut v, "c_ctor", "Widget", "CALL", "app.ts");
+        edge(&mut v, "s_mod", "c_ctor", "CONTAINS");
         named_node(&mut v, "cls_low", "widget2", "CLASS", "app.ts");
+        edge(&mut v, "mod_app", "cls_low", "CONTAINS");
         named_node(&mut v, "c_low", "widget2", "CALL", "app.ts");
+        edge(&mut v, "s_mod", "c_low", "CONTAINS");
         named_node(&mut v, "v_box", "Box", "VARIABLE", "app.ts");
         named_node(&mut v, "cls_box", "Box", "CLASS", "app.ts");
+        edge(&mut v, "mod_app", "v_box", "CONTAINS");
+        edge(&mut v, "mod_app", "cls_box", "CONTAINS");
         named_node(&mut v, "c_box", "Box", "CALL", "app.ts");
+        edge(&mut v, "s_mod", "c_box", "CONTAINS");
 
         // Import-binding skip on direct calls.
         named_node(&mut v, "b_ext", "ext", "IMPORT_BINDING", "app.ts");
         named_node(&mut v, "f_ext", "ext", "FUNCTION", "app.ts");
+        edge(&mut v, "mod_app", "f_ext", "CONTAINS");
         named_node(&mut v, "c_ext", "ext", "CALL", "app.ts");
+        edge(&mut v, "s_mod", "c_ext", "CONTAINS");
+
+        // DELTA 6 precision lock: a same-name FUNCTION declared in an UNRELATED
+        // scope (a different function body) must NOT resolve a module-level call.
+        // 'orphan' is declared ONLY inside f_other's body scope; the call c_orph
+        // sits at module top level → no enclosing container holds the binder, so
+        // the flat (file, name) match's cross-scope false positive is dropped.
+        named_node(&mut v, "f_other", "other", "FUNCTION", "app.ts");
+        edge(&mut v, "mod_app", "f_other", "CONTAINS");
+        named_node(&mut v, "s_other", "function", "SCOPE", "app.ts");
+        edge(&mut v, "f_other", "s_other", "HAS_SCOPE");
+        named_node(&mut v, "f_orphan", "orphan", "FUNCTION", "app.ts");
+        edge(&mut v, "s_other", "f_orphan", "CONTAINS");
+        named_node(&mut v, "c_orph", "orphan", "CALL", "app.ts");
+        edge(&mut v, "s_mod", "c_orph", "CONTAINS");
 
         // B1 scope-chain fixture: class App { init() { { this.render() } } }.
         // Owner-vs-lexical shape: METHOD m_init -HAS_SCOPE-> s_fn (function scope);
@@ -2019,8 +2176,15 @@ mod tests {
         );
 
         // Every head is CALLS + additive (shared vocabulary) with resolvedVia meta.
+        // A3 (sf_call_ctor) is one logical arm expanded into 26 clauses (one per
+        // uppercase letter, the inline ctor-name check — see ENCODING NOTES), so the
+        // CALLS materialize-spec count is A1(1)+A2(1)+A3(26)+B1(1)+B2(1) = 30.
         let calls_specs: Vec<_> = specs.iter().filter(|s| s.edge_type == "CALLS").collect();
-        assert_eq!(calls_specs.len(), 5, "five CALLS heads (A1, A2, A3, B1, B2)");
+        assert_eq!(
+            calls_specs.len(),
+            30,
+            "CALLS heads: A1, A2, B1, B2 + A3 expanded into 26 uppercase-letter clauses"
+        );
         assert!(
             calls_specs.iter().all(|s| s.additive),
             "CALLS is shared with the analyzers — every head must be additive"
@@ -2033,46 +2197,128 @@ mod tests {
         );
     }
 
-    /// The bundled js_this_method_calls pack reproduces JsThisMethodCalls.hs exactly:
-    /// - unique same-file METHOD resolves (the arm firing);
-    /// - two same-named METHODs in the file → ambiguity skip (the neq/ambig idiom);
-    /// - "this.a.b" derives NOTHING even with a METHOD named "b" present — the
-    ///   concat-equality construction reproduces the resolver's stripThis miss and
-    ///   CORRECTS the migration spec's anticipated method_suffix superset delta;
-    /// - non-this calls, cross-file methods, .rs files derive nothing;
-    /// - DELTA 2 PINNED: .mts is rejected (the resolver's OWN 6-extension gate,
+    /// The bundled js_this_method_calls pack resolves this.-method calls SOUNDLY
+    /// via the live SCOPE chain (resolve-pack #23 rework — the flat (file,name)
+    /// arm was both imprecise and ambiguity-blind):
+    /// - a this.-call inside a METHOD body resolves to its enclosing class's member
+    ///   (the HAS_METHOD-owner path, shared with js_same_file_calls.dl B1);
+    /// - DELTA 2b PINNED: a this.-call inside an ARROW-FUNCTION CLASS PROPERTY (no
+    ///   METHOD/FUNCTION HAS_METHOD owner — the `<arrow>` FUNCTION owner is NOT a
+    ///   class member) resolves via the CLASS -HAS_SCOPE-> enclosing-scope path —
+    ///   the exact SceneManager.ts `_animate`/`_tickFly` case B1 alone MISSES;
+    /// - DELTA 2 PRECISION: two same-named members in distinct classes in one file
+    ///   each bind their OWN enclosing class (the old flat `ambig` guard refused
+    ///   BOTH — a false negative; the scope chain resolves each correctly);
+    /// - "this.a.b" derives NOTHING even with a member named "b" — concat-equality
+    ///   first-dot parity (the migration spec's method_suffix superset delta is
+    ///   eliminated by construction);
+    /// - a this.-call not lexically inside any class derives nothing;
+    /// - cross-file / .rs negatives;
+    /// - DELTA 4 PINNED: .mts is rejected (the resolver's OWN 6-extension gate,
     ///   narrower than the orchestrator's 8-extension stream filter).
     #[test]
-    fn js_this_method_calls_unique_method_with_ambiguity_skip() {
+    fn js_this_method_calls_scope_walk_with_arrow_property_and_precision() {
         let mut v = FixtureStorageView::new(1);
 
-        // Arm fires: unique "save" METHOD in app.ts.
-        named_node(&mut v, "m_save", "save", "METHOD", "app.ts");
-        named_node(&mut v, "c1", "this.save", "CALL", "app.ts");
+        // ── Method-body path: class App { init() { { this.render() } } } ──────────
+        // m_init -HAS_SCOPE-> s_fn (function scope) -HAS_SCOPE-> s_blk (lexical
+        // child block) -CONTAINS-> the call.
+        named_node(&mut v, "cls_app", "App", "CLASS", "app.ts");
+        named_node(&mut v, "m_init", "init", "METHOD", "app.ts");
+        named_node(&mut v, "m_render", "render", "METHOD", "app.ts");
+        edge(&mut v, "cls_app", "m_init", "HAS_METHOD");
+        edge(&mut v, "cls_app", "m_render", "HAS_METHOD");
+        named_node(&mut v, "s_app_cls", "class", "SCOPE", "app.ts");
+        named_node(&mut v, "s_fn", "function", "SCOPE", "app.ts");
+        named_node(&mut v, "s_blk", "block", "SCOPE", "app.ts");
+        edge(&mut v, "cls_app", "s_app_cls", "HAS_SCOPE");
+        edge(&mut v, "m_init", "s_fn", "HAS_SCOPE");
+        edge(&mut v, "s_app_cls", "s_fn", "HAS_SCOPE"); // lexical: class body owns the method scope
+        edge(&mut v, "s_fn", "s_blk", "HAS_SCOPE");
+        named_node(&mut v, "c_method", "this.render", "CALL", "app.ts");
+        edge(&mut v, "s_blk", "c_method", "CONTAINS");
 
-        // Ambiguity skip: two "load" METHODs in app.ts.
-        named_node(&mut v, "m_load1", "load", "METHOD", "app.ts");
-        named_node(&mut v, "m_load2", "load", "METHOD", "app.ts");
-        named_node(&mut v, "c2", "this.load", "CALL", "app.ts");
+        // Multi-dot pin inside the same class — METHOD-less, must derive nothing.
+        named_node(&mut v, "c_md", "this.a.b", "CALL", "app.ts");
+        edge(&mut v, "s_blk", "c_md", "CONTAINS");
 
-        // Multi-dot exactness pin: METHOD "b" exists, "this.a.b" must NOT resolve.
-        named_node(&mut v, "m_b", "b", "METHOD", "app.ts");
-        named_node(&mut v, "c3", "this.a.b", "CALL", "app.ts");
+        // ── DELTA 2b: arrow-function CLASS PROPERTY. Owner of the arrow scope is a
+        // FUNCTION (NOT a HAS_METHOD member); the class reaches the arrow scope only
+        // through CLASS -HAS_SCOPE-> arrow-fn-scope. Mirrors SceneManager._tickFly.
+        named_node(&mut v, "cls_scene", "Scene", "CLASS", "scene.ts");
+        named_node(&mut v, "m_tick", "_tickFly", "METHOD", "scene.ts");
+        edge(&mut v, "cls_scene", "m_tick", "HAS_METHOD");
+        named_node(&mut v, "s_scene_cls", "class", "SCOPE", "scene.ts");
+        named_node(&mut v, "f_arrow", "<arrow>", "FUNCTION", "scene.ts");
+        named_node(&mut v, "s_arrow_fn", "function", "SCOPE", "scene.ts");
+        named_node(&mut v, "s_arrow_blk", "block", "SCOPE", "scene.ts");
+        edge(&mut v, "cls_scene", "s_scene_cls", "HAS_SCOPE");
+        edge(&mut v, "f_arrow", "s_arrow_fn", "HAS_SCOPE"); // owner FUNCTION, NOT a class member
+        edge(&mut v, "s_scene_cls", "s_arrow_fn", "HAS_SCOPE"); // class body owns the arrow scope
+        edge(&mut v, "s_arrow_fn", "s_arrow_blk", "HAS_SCOPE");
+        named_node(&mut v, "c_arrow", "this._tickFly", "CALL", "scene.ts");
+        edge(&mut v, "s_arrow_blk", "c_arrow", "CONTAINS");
 
-        // File gate: .rs is not JS.
+        // ── DELTA 2 precision: two classes in one file, each a private "shouldLog".
+        // The old flat `ambig` guard refused BOTH; the scope chain resolves each
+        // call to its OWN class's member. (Mirrors util/.../Logger.ts.)
+        named_node(&mut v, "cls_cons", "ConsoleLogger", "CLASS", "log.ts");
+        named_node(&mut v, "m_cons_sl", "shouldLog", "METHOD", "log.ts");
+        named_node(&mut v, "m_cons_w", "write", "METHOD", "log.ts");
+        edge(&mut v, "cls_cons", "m_cons_sl", "HAS_METHOD");
+        edge(&mut v, "cls_cons", "m_cons_w", "HAS_METHOD");
+        named_node(&mut v, "s_cons_cls", "class", "SCOPE", "log.ts");
+        named_node(&mut v, "s_cons_fn", "function", "SCOPE", "log.ts");
+        edge(&mut v, "cls_cons", "s_cons_cls", "HAS_SCOPE");
+        edge(&mut v, "m_cons_w", "s_cons_fn", "HAS_SCOPE");
+        edge(&mut v, "s_cons_cls", "s_cons_fn", "HAS_SCOPE");
+        named_node(&mut v, "c_cons_sl", "this.shouldLog", "CALL", "log.ts");
+        edge(&mut v, "s_cons_fn", "c_cons_sl", "CONTAINS");
+
+        named_node(&mut v, "cls_file", "FileLogger", "CLASS", "log.ts");
+        named_node(&mut v, "m_file_sl", "shouldLog", "METHOD", "log.ts");
+        named_node(&mut v, "m_file_w", "writeLine", "METHOD", "log.ts");
+        edge(&mut v, "cls_file", "m_file_sl", "HAS_METHOD");
+        edge(&mut v, "cls_file", "m_file_w", "HAS_METHOD");
+        named_node(&mut v, "s_file_cls", "class", "SCOPE", "log.ts");
+        named_node(&mut v, "s_file_fn", "function", "SCOPE", "log.ts");
+        edge(&mut v, "cls_file", "s_file_cls", "HAS_SCOPE");
+        edge(&mut v, "m_file_w", "s_file_fn", "HAS_SCOPE");
+        edge(&mut v, "s_file_cls", "s_file_fn", "HAS_SCOPE");
+        named_node(&mut v, "c_file_sl", "this.shouldLog", "CALL", "log.ts");
+        edge(&mut v, "s_file_fn", "c_file_sl", "CONTAINS");
+
+        // ── Negative: this.-call inside a plain top-level function (no class).
+        named_node(&mut v, "f_free", "standalone", "FUNCTION", "free.ts");
+        named_node(&mut v, "m_orphan", "render", "METHOD", "free.ts"); // same-file METHOD, no class
+        named_node(&mut v, "s_free", "function", "SCOPE", "free.ts");
+        edge(&mut v, "f_free", "s_free", "HAS_SCOPE");
+        named_node(&mut v, "c_free", "this.render", "CALL", "free.ts");
+        edge(&mut v, "s_free", "c_free", "CONTAINS");
+
+        // ── File gate: .rs is not JS (a fully-wired class+scope, still rejected).
+        named_node(&mut v, "cls_rs", "Rs", "CLASS", "main.rs");
         named_node(&mut v, "m_go", "go", "METHOD", "main.rs");
-        named_node(&mut v, "c4", "this.go", "CALL", "main.rs");
+        edge(&mut v, "cls_rs", "m_go", "HAS_METHOD");
+        named_node(&mut v, "s_rs_cls", "class", "SCOPE", "main.rs");
+        named_node(&mut v, "s_rs_fn", "function", "SCOPE", "main.rs");
+        edge(&mut v, "cls_rs", "s_rs_cls", "HAS_SCOPE");
+        edge(&mut v, "m_go", "s_rs_fn", "HAS_SCOPE");
+        edge(&mut v, "s_rs_cls", "s_rs_fn", "HAS_SCOPE");
+        named_node(&mut v, "c_rs", "this.go", "CALL", "main.rs");
+        edge(&mut v, "s_rs_fn", "c_rs", "CONTAINS");
 
-        // Prefix negative: not a this-call.
-        named_node(&mut v, "c5", "notthis.save", "CALL", "app.ts");
-
-        // Cross-file negative: METHOD only in b.ts.
-        named_node(&mut v, "m_far", "far", "METHOD", "b.ts");
-        named_node(&mut v, "c6", "this.far", "CALL", "app.ts");
-
-        // DELTA 2 pin: .mts rejected by the resolver's own 6-extension gate.
+        // ── DELTA 4: .mts rejected by the resolver's own 6-extension gate.
+        named_node(&mut v, "cls_mts", "Mts", "CLASS", "app.mts");
         named_node(&mut v, "m_mts", "save", "METHOD", "app.mts");
-        named_node(&mut v, "c7", "this.save", "CALL", "app.mts");
+        edge(&mut v, "cls_mts", "m_mts", "HAS_METHOD");
+        named_node(&mut v, "s_mts_cls", "class", "SCOPE", "app.mts");
+        named_node(&mut v, "s_mts_fn", "function", "SCOPE", "app.mts");
+        edge(&mut v, "cls_mts", "s_mts_cls", "HAS_SCOPE");
+        edge(&mut v, "m_mts", "s_mts_fn", "HAS_SCOPE");
+        edge(&mut v, "s_mts_cls", "s_mts_fn", "HAS_SCOPE");
+        named_node(&mut v, "c_mts", "this.save", "CALL", "app.mts");
+        edge(&mut v, "s_mts_fn", "c_mts", "CONTAINS");
 
         let (eval, specs, _node_specs) = evaluate_with_materialize(
             &v,
@@ -2083,15 +2329,25 @@ mod tests {
         )
         .expect("js_this_method_calls.dl evaluates");
 
+        let via = |pairs: &[(&str, &str)]| -> BTreeSet<(u128, u128, String)> {
+            pairs
+                .iter()
+                .map(|(c, t)| (id_of(c), id_of(t), "js-this-method-calls".to_string()))
+                .collect()
+        };
         assert_eq!(
             triples(&eval, "js_this_method_call"),
-            BTreeSet::from([(
-                id_of("c1"),
-                id_of("m_save"),
-                "js-this-method-calls".to_string()
-            )]),
-            "exactly c1→m_save: ambiguous 'load', multi-dot 'this.a.b', .rs, non-this, \
-             cross-file and .mts (DELTA 2) all derive nothing"
+            via(&[
+                ("c_method", "m_render"),
+                ("c_arrow", "m_tick"),
+                ("c_cons_sl", "m_cons_sl"),
+                ("c_file_sl", "m_file_sl"),
+            ]),
+            "scope-walk: method-body c_method→m_render; arrow-property c_arrow→m_tick \
+             (DELTA 2b, the class-scope path B1 misses); the two same-named shouldLog \
+             calls each bind their OWN class (DELTA 2 precision — no flat ambig skip); \
+             'this.a.b' multi-dot, the class-less c_free, cross-file, .rs and .mts \
+             (DELTA 4) all derive nothing"
         );
 
         let calls_specs: Vec<_> = specs.iter().filter(|s| s.edge_type == "CALLS").collect();
@@ -2100,60 +2356,113 @@ mod tests {
         assert_eq!(calls_specs[0].meta, vec!["resolvedVia".to_string()]);
     }
 
-    /// The bundled rust_calls pack reproduces RustCallResolution.hs:
-    /// - R1 exact (file,name) match, including a receiver-shaped method call (the
-    ///   Wave-0 direct CALL -READS_FROM-> receiver — the resolver never conditioned
-    ///   on it, the bare-name exact arm covers it);
-    /// - R2 '::'-suffix fallback with the segment boundary ("do_y" must NOT match
-    ///   FUNCTION "y") and the exact-beats-suffix preference negation;
+    /// The bundled rust_calls pack resolves same-file CALLs by SCOPE-WALK to the
+    /// nearest enclosing FUNCTION binder (not flat (file,name)):
+    /// - R1 scope-walk exact: a bare-name call resolves to the same-name FUNCTION
+    ///   lexically visible from the call's enclosing FUNCTION — sibling in the same
+    ///   IMPL_BLOCK/MODULE owner, or a file-level free function. Covers the call
+    ///   directly under a FUNCTION, a call nested in a block SCOPE (HAS_SCOPE walk),
+    ///   and a MODULE-level call (no enclosing fn → free-fn arm);
+    /// - R1 PRECISION (the rework, ex-DELTA-1): two `fn process` in two different
+    ///   impl blocks — a call inside `impl A` resolves to ONLY `A::process`, NOT the
+    ///   same-named `B::process` (flat resolution emitted BOTH; the scope-walk drops
+    ///   the out-of-scope twin);
+    /// - R2 '::'-suffix fallback (FLAT by design — a qualified path names its type)
+    ///   with the segment boundary ("do_y" must NOT match FUNCTION "y") and the
+    ///   exact-beats-suffix preference negation;
     /// - cross-file and non-.rs negatives;
-    /// - DELTA 1 PINNED: duplicate (file,name) FUNCTIONs derive an edge per
-    ///   candidate (the resolver's Map kept the last one);
-    /// - DELTA 2 PINNED: a multi-segment FUNCTION name ("b::c") matches via the
+    /// - DELTA 2 PINNED (R2): a multi-segment FUNCTION name ("b::c") matches via the
     ///   suffix arm (the resolver's lastSegment comparison never could).
+    ///
+    /// Scope shape mirrors rust_analyzer.rs: the file is one MODULE; free fns and
+    /// IMPL_BLOCKs are MODULE-CONTAINS children; an IMPL_BLOCK CONTAINS its methods;
+    /// a FUNCTION directly CONTAINS its top-level CALLs (the fn IS its own scope, no
+    /// separate body SCOPE); block bodies are SCOPE nodes the fn HAS_SCOPEs.
     #[test]
-    fn rust_calls_exact_then_suffix_fallback() {
+    fn rust_calls_scope_walk_exact_then_suffix_fallback() {
         let mut v = FixtureStorageView::new(1);
 
-        // R1 exact.
+        // The file MODULE (one per file; inline `mod` is walked inline).
+        named_node(&mut v, "m_lib", "lib", "MODULE", "lib.rs");
+
+        // R1: free fn `helper`, called from a sibling free fn `caller_a`.
         named_node(&mut v, "f_helper", "helper", "FUNCTION", "lib.rs");
+        named_node(&mut v, "f_caller_a", "caller_a", "FUNCTION", "lib.rs");
+        edge(&mut v, "m_lib", "f_helper", "CONTAINS");
+        edge(&mut v, "m_lib", "f_caller_a", "CONTAINS");
         named_node(&mut v, "c1", "helper", "CALL", "lib.rs");
+        edge(&mut v, "f_caller_a", "c1", "CONTAINS"); // call directly under the fn
+
+        // R1 nested-block: a call to `helper` inside an if-block SCOPE of caller_a
+        // resolves through the HAS_SCOPE walk up to caller_a → m_lib → free fn.
+        named_node(&mut v, "s_blk", "block", "SCOPE", "lib.rs");
+        edge(&mut v, "f_caller_a", "s_blk", "HAS_SCOPE");
+        named_node(&mut v, "c1b", "helper", "CALL", "lib.rs");
+        edge(&mut v, "s_blk", "c1b", "CONTAINS");
+
+        // R1 PRECISION: `process` exists in BOTH impl A and impl B. A call inside
+        // a method of impl A must resolve to A's process only.
+        named_node(&mut v, "ib_a", "A", "IMPL_BLOCK", "lib.rs");
+        named_node(&mut v, "ib_b", "B", "IMPL_BLOCK", "lib.rs");
+        edge(&mut v, "m_lib", "ib_a", "CONTAINS");
+        edge(&mut v, "m_lib", "ib_b", "CONTAINS");
+        named_node(&mut v, "f_process_a", "process", "FUNCTION", "lib.rs");
+        named_node(&mut v, "f_process_b", "process", "FUNCTION", "lib.rs");
+        edge(&mut v, "ib_a", "f_process_a", "CONTAINS");
+        edge(&mut v, "ib_b", "f_process_b", "CONTAINS");
+        // method `run` in impl A that calls `process()` (bare name / self.process).
+        named_node(&mut v, "f_run_a", "run", "FUNCTION", "lib.rs");
+        edge(&mut v, "ib_a", "f_run_a", "CONTAINS");
+        named_node(&mut v, "c4", "process", "CALL", "lib.rs");
+        edge(&mut v, "f_run_a", "c4", "CONTAINS");
+
+        // R1 MODULE-level call to a free fn (no enclosing FUNCTION → free-fn arm).
+        named_node(&mut v, "f_init", "init", "FUNCTION", "lib.rs");
+        edge(&mut v, "m_lib", "f_init", "CONTAINS");
+        named_node(&mut v, "c_mod", "init", "CALL", "lib.rs");
+        edge(&mut v, "m_lib", "c_mod", "CONTAINS"); // top-level const-initializer call
 
         // R2 suffix.
         named_node(&mut v, "f_helper2", "helper2", "FUNCTION", "lib.rs");
+        edge(&mut v, "m_lib", "f_helper2", "CONTAINS");
         named_node(&mut v, "c2", "utils::helper2", "CALL", "lib.rs");
+        edge(&mut v, "f_caller_a", "c2", "CONTAINS");
 
-        // Exact beats suffix: both "m::foo" and "foo" exist; only the exact fires.
+        // Exact beats suffix: both "m::foo" and "foo" exist; only the scoped exact
+        // fires for the bare call "m::foo"? No — the call name IS "m::foo" (qualified
+        // path). The bare-name exact arm requires FUNCTION.name == call name, so a
+        // FUNCTION literally named "m::foo" matches R1 (scoped); the "::"-suffix R2
+        // is then suppressed by the has_scoped preference negation.
         named_node(&mut v, "f_qual", "m::foo", "FUNCTION", "lib.rs");
         named_node(&mut v, "f_foo", "foo", "FUNCTION", "lib.rs");
+        edge(&mut v, "m_lib", "f_qual", "CONTAINS");
+        edge(&mut v, "m_lib", "f_foo", "CONTAINS");
         named_node(&mut v, "c3", "m::foo", "CALL", "lib.rs");
+        edge(&mut v, "f_caller_a", "c3", "CONTAINS");
 
-        // Method call with a Wave-0 receiver shape — resolves by bare name (R1).
-        named_node(&mut v, "f_process", "process", "FUNCTION", "lib.rs");
-        named_node(&mut v, "c4", "process", "CALL", "lib.rs");
-        named_node(&mut v, "recv", "w", "REFERENCE", "lib.rs");
-        edge(&mut v, "c4", "recv", "READS_FROM");
-
-        // Cross-file negative.
+        // Cross-file negative: `far` is in other.rs; the call is in lib.rs.
         named_node(&mut v, "f_far", "far", "FUNCTION", "other.rs");
         named_node(&mut v, "c5", "far", "CALL", "lib.rs");
+        edge(&mut v, "f_caller_a", "c5", "CONTAINS");
 
         // File gate negative: same shape in a .ts file.
+        named_node(&mut v, "m_app", "app", "MODULE", "app.ts");
         named_node(&mut v, "f_js", "jsfn", "FUNCTION", "app.ts");
+        edge(&mut v, "m_app", "f_js", "CONTAINS");
         named_node(&mut v, "c6", "jsfn", "CALL", "app.ts");
+        edge(&mut v, "f_js", "c6", "CONTAINS");
 
         // Suffix boundary negative: "do_y" must not match FUNCTION "y".
         named_node(&mut v, "f_y", "y", "FUNCTION", "lib.rs");
+        edge(&mut v, "m_lib", "f_y", "CONTAINS");
         named_node(&mut v, "c7", "do_y", "CALL", "lib.rs");
+        edge(&mut v, "f_caller_a", "c7", "CONTAINS");
 
-        // DELTA 1: two `fn new` in one file — both derive.
-        named_node(&mut v, "f_new1", "new", "FUNCTION", "lib.rs");
-        named_node(&mut v, "f_new2", "new", "FUNCTION", "lib.rs");
-        named_node(&mut v, "c8", "Widget::new", "CALL", "lib.rs");
-
-        // DELTA 2: multi-segment FUNCTION name matches as a suffix.
+        // R2 DELTA 2: multi-segment FUNCTION name matches as a suffix.
         named_node(&mut v, "f_bc", "b::c", "FUNCTION", "lib.rs");
+        edge(&mut v, "m_lib", "f_bc", "CONTAINS");
         named_node(&mut v, "c9", "a::b::c", "CALL", "lib.rs");
+        edge(&mut v, "f_caller_a", "c9", "CONTAINS");
 
         let (eval, specs, _node_specs) = evaluate_with_materialize(
             &v,
@@ -2172,21 +2481,29 @@ mod tests {
         };
         assert_eq!(
             triples(&eval, "rust_call"),
-            via(&[("c1", "f_helper"), ("c3", "f_qual"), ("c4", "f_process")]),
-            "R1: exact matches incl. the qualified name and the receiver-shaped \
-             method call; cross-file/.ts/empty negatives derive nothing"
+            via(&[
+                ("c1", "f_helper"),     // free fn, sibling-of-caller via m_lib
+                ("c1b", "f_helper"),    // nested block SCOPE → HAS_SCOPE walk → free fn
+                ("c4", "f_process_a"),  // PRECISION: impl-A method calling process →
+                                        // ONLY A::process (B::process out of scope)
+                ("c_mod", "f_init"),    // MODULE-level call → free fn
+                ("c3", "f_qual"),       // qualified-name FUNCTION matched bare-exact
+            ]),
+            "R1 scope-walk: free fns resolve via the file MODULE, the nested-block \
+             call walks HAS_SCOPE to its fn, the impl-A `process` call resolves to \
+             A::process ONLY (not B::process — the precision fix), the MODULE-level \
+             call resolves the free fn, and the qualified-name FUNCTION matches the \
+             bare exact arm. Cross-file/.ts negatives derive nothing"
         );
         assert_eq!(
             triples(&eval, "rust_suffix_call"),
             via(&[
                 ("c2", "f_helper2"),
-                ("c8", "f_new1"),
-                ("c8", "f_new2"),
                 ("c9", "f_bc"),
             ]),
-            "R2: suffix fallback — c3 is suppressed by its exact match (preference \
-             negation), 'do_y' misses the '::y' boundary, c8 derives BOTH dup \
-             functions (DELTA 1), c9 matches the multi-segment name (DELTA 2)"
+            "R2: suffix fallback — c3 is suppressed by its scoped exact match \
+             (preference negation), 'do_y' misses the '::y' boundary, c9 matches the \
+             multi-segment name (DELTA 2)"
         );
 
         let calls_specs: Vec<_> = specs.iter().filter(|s| s.edge_type == "CALLS").collect();
@@ -2217,17 +2534,28 @@ mod tests {
     fn rust_calls_macro_invocations_are_excluded() {
         let mut v = FixtureStorageView::new(1);
 
+        // The file MODULE + a calling fn (scope-walk needs an enclosing binder /
+        // file MODULE for R1 to resolve the plain call).
+        named_node(&mut v, "m_lib", "lib", "MODULE", "lib.rs");
+        named_node(&mut v, "f_caller", "caller", "FUNCTION", "lib.rs");
+        edge(&mut v, "m_lib", "f_caller", "CONTAINS");
+
         named_node(&mut v, "f_helper", "helper", "FUNCTION", "lib.rs");
+        edge(&mut v, "m_lib", "f_helper", "CONTAINS");
         // (a) macro invocation `helper!()` — same name, same file.
         named_node(&mut v, "c_mac", "helper", "CALL", "lib.rs");
+        edge(&mut v, "f_caller", "c_mac", "CONTAINS");
         v.put_node_metadata(id_of("c_mac"), r#"{"macro":true,"method":false}"#);
         // (b) plain call `helper()`.
         named_node(&mut v, "c_plain", "helper", "CALL", "lib.rs");
+        edge(&mut v, "f_caller", "c_plain", "CONTAINS");
 
         // (c) macro `paths::mk!()` — would suffix-match fn mk across R2's
         // "::" boundary if not filtered.
         named_node(&mut v, "f_mk", "mk", "FUNCTION", "lib.rs");
+        edge(&mut v, "m_lib", "f_mk", "CONTAINS");
         named_node(&mut v, "c_macq", "paths::mk", "CALL", "lib.rs");
+        edge(&mut v, "f_caller", "c_macq", "CONTAINS");
         v.put_node_metadata(id_of("c_macq"), r#"{"macro":true,"method":false}"#);
 
         let (eval, _specs, _node_specs) = evaluate_with_materialize(
@@ -2699,17 +3027,31 @@ mod tests {
     fn js_class_inheritance_same_file_and_cross_file_arms() {
         let mut v = FixtureStorageView::new(1);
 
+        // A1 now scope-walks CONTAINS to the enclosing MODULE binder (gold idiom),
+        // not a flat (file,name) match — every file-resident CLASS is contained by
+        // its file's MODULE on a real graph, so the fixture wires MODULE -CONTAINS->
+        // CLASS for the A1 classes (a.ts, b.ts, g.ts). has_local still uses the flat
+        // class_in, so the A2-A4 gates are unchanged.
+        named_node(&mut v, "m_a", "a", "MODULE", "a.ts");
+        named_node(&mut v, "m_b", "b", "MODULE", "b.ts");
+        named_node(&mut v, "m_g", "g", "MODULE", "g.ts");
+
         // A1 same-file: Dog extends Animal in a.ts; Plain has no superClass.
         named_node(&mut v, "cls_animal", "Animal", "CLASS", "a.ts");
         named_node(&mut v, "cls_dog", "Dog", "CLASS", "a.ts");
         v.put_node_metadata(id_of("cls_dog"), r#"{"superClass":"Animal"}"#);
         named_node(&mut v, "cls_plain", "Plain", "CLASS", "a.ts");
+        edge(&mut v, "m_a", "cls_animal", "CONTAINS");
+        edge(&mut v, "m_a", "cls_dog", "CONTAINS");
+        edge(&mut v, "m_a", "cls_plain", "CONTAINS");
 
         // Fall-through gate: Cat extends Base — Base exists BOTH same-file and
         // as an import binding; only the same-file edge may derive.
         named_node(&mut v, "cls_base_local", "Base", "CLASS", "b.ts");
         named_node(&mut v, "cls_cat", "Cat", "CLASS", "b.ts");
         v.put_node_metadata(id_of("cls_cat"), r#"{"superClass":"Base"}"#);
+        edge(&mut v, "m_b", "cls_base_local", "CONTAINS");
+        edge(&mut v, "m_b", "cls_cat", "CONTAINS");
         named_node(&mut v, "b_base", "Base", "IMPORT_BINDING", "b.ts");
         named_node(&mut v, "cls_base_remote", "Base", "CLASS", "base.ts");
         edge(&mut v, "b_base", "cls_base_remote", "IMPORTS_FROM");
@@ -2750,6 +3092,27 @@ mod tests {
         v.put_node_metadata(id_of("cls_twin"), r#"{"superClass":"Dup"}"#);
         named_node(&mut v, "cls_dup1", "Dup", "CLASS", "g.ts");
         named_node(&mut v, "cls_dup2", "Dup", "CLASS", "g.ts");
+        edge(&mut v, "m_g", "cls_twin", "CONTAINS");
+        edge(&mut v, "m_g", "cls_dup1", "CONTAINS");
+        edge(&mut v, "m_g", "cls_dup2", "CONTAINS");
+
+        // PRECISION (the rework's only semantic gain): a nested class shadowing a
+        // top-level same-name superclass. In h.ts, Panel extends Widget: there is a
+        // top-level `Widget` (MODULE-contained) AND a nested `Widget` declared
+        // inside a function (CONTAINS parent = a SCOPE, NOT the MODULE). The flat
+        // (file,name) lookup over-resolved to BOTH Widgets; the MODULE scope-walk
+        // binds ONLY the top-level Widget — the nested class is not in the MODULE's
+        // CONTAINS set, so it cannot bind a sibling-module reference.
+        named_node(&mut v, "m_h", "h", "MODULE", "h.ts");
+        named_node(&mut v, "cls_widget_top", "Widget", "CLASS", "h.ts");
+        named_node(&mut v, "cls_panel", "Panel", "CLASS", "h.ts");
+        v.put_node_metadata(id_of("cls_panel"), r#"{"superClass":"Widget"}"#);
+        edge(&mut v, "m_h", "cls_widget_top", "CONTAINS");
+        edge(&mut v, "m_h", "cls_panel", "CONTAINS");
+        // The shadowing nested Widget — contained by a function SCOPE, not the MODULE.
+        named_node(&mut v, "h_fn_scope", "scope", "SCOPE", "h.ts");
+        named_node(&mut v, "cls_widget_nested", "Widget", "CLASS", "h.ts");
+        edge(&mut v, "h_fn_scope", "cls_widget_nested", "CONTAINS");
 
         // File gate: the same shape in a .rs file derives nothing.
         named_node(&mut v, "cls_rs_animal", "RsAnimal", "CLASS", "main.rs");
@@ -2778,9 +3141,13 @@ mod tests {
                 ("cls_cat", "cls_base_local"),
                 ("cls_twin", "cls_dup1"),
                 ("cls_twin", "cls_dup2"),
+                // PRECISION: Panel binds ONLY the MODULE-contained top-level Widget,
+                // NOT the function-nested Widget (the scope-walk's semantic gain).
+                ("cls_panel", "cls_widget_top"),
             ]),
-            "A1: same-file superclass (+ DELTA 1 both duplicates); the self-name \
-             class (neq), the no-superClass class and the .rs file derive nothing"
+            "A1: same-file superclass resolved by MODULE scope-walk (+ DELTA 1 both \
+             duplicates); the self-name class (neq), the no-superClass class and the \
+             .rs file derive nothing; a function-nested same-name class does NOT bind"
         );
         assert_eq!(
             triples(&eval, "ext_cross_file"),
@@ -4838,9 +5205,13 @@ mod tests {
         );
 
         // A1-suppression: a same-file class named Error wins over the builtin.
+        // A1 scope-walks CONTAINS to the enclosing MODULE, so wire d.ts's MODULE.
+        named_node(&mut v, "m_d", "d", "MODULE", "d.ts");
         named_node(&mut v, "cls_localerr", "Error", "CLASS", "d.ts");
         named_node(&mut v, "cls_shadow", "Shadow", "CLASS", "d.ts");
         v.put_node_metadata(id_of("cls_shadow"), r#"{"superClass":"Error"}"#);
+        edge(&mut v, "m_d", "cls_localerr", "CONTAINS");
+        edge(&mut v, "m_d", "cls_shadow", "CONTAINS");
 
         // A2c chain: import { Base } from './barrel' where barrel.ts star
         // re-exports base.ts; the binding has NO legacy IMPORTS_FROM edge.

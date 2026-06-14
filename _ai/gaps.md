@@ -353,3 +353,35 @@ id is identical across generations are not tombstoned by changed-file deletion).
 2. **EXPORT sid collision**: two `export` statements in one file both emit semantic id
    `<file>->EXPORT->named` and merge into ONE node in-graph. Latent producer bug; fix the sid to
    include position/name.
+
+### ✅ RESOLVED at HEAD (2026-06-14) — both bugs + the destructuring-export sibling
+
+Verified at HEAD (branch `claude/vigilant-lamport-ec4898`) via in-process Hspec
+(`packages/js-analyzer/test/Spec.hs`, `cabal test spec`):
+
+1. **Multi-declarator export** — FIXED. `ruleVariableDeclarationBindings`
+   (`Declarations.hs`) is now the single source of truth and returns every binding;
+   `ruleExportNamedDeclaration` iterates it, emitting an EXPORTS edge + export-index entry per
+   binding. Locked by "exports every declarator of a multi-declarator export" (asserts EXPORTS
+   edge to both `a` and `b`).
+2. **EXPORT sid collision** — FIXED. `ruleExportNamedDeclaration` now disambiguates the sid by
+   `spanStart` (`contentHash [("k","named"),("start", …)]`), so each `export` statement owns a
+   distinct EXPORT node. Locked by "emits a distinct EXPORT node per named-export statement"
+   and the star-arm twin.
+3. **Destructuring-export sibling** — FIXED (this run). `export const { a, b } = obj` /
+   `export const [c, d] = arr` previously got export-INDEX entries for every binding (via
+   `handleDestructuringDecl`) but only the FIRST binding got an `EXPORT → CONSTANT` EXPORTS
+   edge: `ruleVariableDeclarationBindings` reported a destructuring declarator as a single
+   empty-name `firstId`. Now `ruleVariableDeclarator`/`handleDestructuringDecl` return one
+   entry per destructured binding (empty name — index ownership stays with
+   `handleDestructuringDecl`, no double-emit — but a real node id), so the export path emits an
+   EXPORTS edge to each. Locked by "emits an EXPORTS edge to every destructured object/array
+   binding" + "handles a mixed simple+destructuring export without double-emitting"
+   (index-count == 1 per name). Scope threading and the `Maybe Text` `ruleVariableDeclaration`
+   contract (Walker.hs consumer) are unchanged.
+
+Remaining (separate, out of scope): destructured bindings have no single importable identifier
+at the var-decl level, so a nested-pattern key vs binding distinction is handled by
+`extractBindingInfo` (exports the VALUE, not the key) but deeper aliasing is untracked. Also:
+`Declarations.hs` is a pre-existing >500-line god-file — the variable-declaration rules are a
+natural extraction candidate (follow-up, not blocking).
