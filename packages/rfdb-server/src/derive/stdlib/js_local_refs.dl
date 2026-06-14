@@ -1,41 +1,73 @@
-% js_local_refs.dl — in-engine replacement for the JsLocalRefs.hs resolver
-% (packages/grafema-resolve/src/JsLocalRefs.hs:91-118 — the #1 edge producer:
-% REFERENCE → same-file declaration READS_FROM, previously paid for over per-file
-% IPC round-trips in the orchestrator's JS resolve wall).
+% js_local_refs.dl — SCOPE-WALK resolver for same-file READS_FROM edges
+% (REFERENCE → its declaration). Supersedes the file-flat JsLocalRefs.hs port
+% (packages/grafema-resolve/src/JsLocalRefs.hs:91-118) — the #1 edge producer.
 %
-% Resolver semantics reproduced EXACTLY (file-flat, deliberately NOT scope-aware —
-% the resolver matches by (file, name) only, JsLocalRefs.hs:111; parity over
-% ambition):
-%   - a REFERENCE resolves to a declaration with the same (file, name) across the
-%     8 declaration types (JsLocalRefs.hs:38-42);
-%   - SKIP names that are import bindings in the same file (handled by
-%     ImportResolution; the IMPORT -CONTAINS-> IMPORT_BINDING shape is 100%
-%     universal per the Wave-0 live-graph check, so the (file, name) skip-set is
-%     solid), JsLocalRefs.hs:104-105;
-%   - SKIP the compiled-in runtime-global names (handled by RuntimeGlobals),
-%     JsLocalRefs.hs:54-84 — reproduced below as 97 ground facts, the EXACT list;
-%   - empty-name declarations and references never match (the resolver's index
-%     excludes them, JsLocalRefs.hs:51 — the neq(N, "") guard).
+% GOAL: SOUND + PRECISE + PROVENANCE. A REFERENCE resolves to the NEAREST
+% enclosing binder reachable by lexical scope walk (CONTAINS to the directly
+% containing SCOPE, then HAS_SCOPE to lexical parents), NOT to EVERY same-(file,
+% name) declaration. Flat (file, name) match is either an arbitrary winner
+% (unsound) or an edge to every same-name binder (imprecise superset, ignoring
+% shadowing). The scope walk fixes both: it resolves to the innermost scope that
+% declares the name, and binds the declaration as a NODE (no name-key collision).
 %
-% READS_FROM is SHARED vocabulary (analyzers and other resolvers also emit it)
+% TWO ARMS, split by whether the declaration is attached to a SCOPE:
+%
+%   ARM A — SCOPE-WALK for VARIABLE / CONSTANT / FUNCTION / PARAMETER.
+%     These are the binder types reachable via <scope> -DECLARES-> binder (verified
+%     live: the DECLARES target set is EXACTLY {VARIABLE, CONSTANT, FUNCTION,
+%     PARAMETER, IMPORT_BINDING}; IMPORT_BINDING is excluded as the import skip-set,
+%     handled by ImportResolution). IMPORTANT — the DECLARES *source* is NOT always
+%     a SCOPE: the live source-type set is {SCOPE, FUNCTION, MODULE, IMPL_BLOCK}.
+%     In particular the JS/TS analyzer does NOT emit a module-kind SCOPE node — the
+%     module scope's scopeId IS the MODULE node itself (Context.hs:59-64,84-89), so
+%     every top-level binder is DECLARES'd by the MODULE node and every top-level
+%     reference is CONTAINS'd by the MODULE node (live: 3897 MODULE-DECLARES-FUNCTION,
+%     2604 MODULE-CONTAINS-REFERENCE on .ts). The MODULE is therefore the TOP scope
+%     of the lexical chain — ref_scope seeds from a MODULE container AND climbs from
+%     the top SCOPE to its MODULE parent (live: 1109 MODULE -HAS_SCOPE-> SCOPE edges).
+%     The walk seeds from the reference's containing scope (SCOPE or MODULE) and
+%     climbs HAS_SCOPE lexical parents (the Wave-0-verified shape shared with
+%     js_same_file_calls B1 / js_property_access_full C1). NEAREST-BINDER:
+%     among all reachable scopes that declare the name, the innermost one wins —
+%     enforced by stratified negation over a strict-inner reachability relation
+%     (`inner_of`), so an outer same-name binder is dropped when a closer scope on
+%     the same chain also declares the name (real shadowing — 405 names on the
+%     live graph have same-name VARIABLE decls in different scopes within one file).
+%
+%   ARM B — FILE-FLAT for CLASS / INTERFACE / ENUM / TYPE_SYNONYM.
+%     Verified live: these node types are NOT attached to any SCOPE (CLASS via
+%     SCOPE-CONTAINS = 0, via SCOPE-DECLARES = 0; CLASS is contained by MODULE
+%     only). They are genuinely module/file-scoped — no intra-file shadowing
+%     exists for them — so a flat (file, name) join over JUST these 4 types is the
+%     CORRECT resolution, not a hack. (If a future analyzer change attaches CLASS
+%     to a SCOPE, this arm would need to move to ARM A; the type fixture guards it.)
+%
+% READS_FROM is SHARED vocabulary (analyzers + other resolvers also emit it)
 % ⇒ mode = "additive" is mandatory: only add missing edges, never tombstone.
+% Provenance: resolvedVia = "js-local-refs" projected as a meta column; the engine
+% additionally stamps _source = <rule hash> + _generation.
 %
-% NUMBERED DELTAS vs the resolver (everything not listed is exact):
-%   DELTA 1 (superset): duplicate (file, name) declarations — the resolver's
-%     Map.fromList keeps ONE arbitrary winner (last in node-stream order,
-%     JsLocalRefs.hs:46-52); set semantics derives an edge to EVERY candidate.
-%     Order-independent; strict superset; mechanically classifiable.
-%   DELTA 2 (metadata): resolvedVia="js-local-refs" is projected as a meta column
-%     (parity for downstream consumers); the engine additionally stamps its own
-%     _source = <rule hash> + _generation provenance instead of nothing.
-%   DELTA 3 (file gate): the resolver never gated by extension itself — its
-%     effective gate was the orchestrator streaming only detect_language ==
-%     JavaScript nodes (8 extensions: js/jsx/ts/tsx/mjs/cjs/mts/cts, config.rs
-%     detect_language). The jsts/1 gate below encodes the same 8 extensions.
+% SKIP-SETS (unchanged from the flat port):
+%   - import bindings in the same file (imported/2, handled by ImportResolution);
+%     ARM A excludes IMPORT_BINDING by the DECLARES type filter — the \+ imported
+%     guard is belt-and-suspenders / also guards ARM B;
+%   - the 97 compiled-in runtime-global names (rt_global/1 ground facts);
+%   - empty-name references and declarations (the neq(N, "") guards).
+%
+% NUMBERED DELTAS vs a purely-flat resolution (everything not listed is exact):
+%   DELTA 1 (precision GAIN, the GOAL): ARM A resolves a reference to the NEAREST
+%     enclosing binder, NOT every same-(file, name) binder. Same-name decls in
+%     OUTER scopes are dropped by the shadowing negation. This intentionally
+%     diverges from the legacy resolver's (file, name) superset toward soundness.
+%   DELTA 2 (superset, accepted): duplicate binders of the same name in the SAME
+%     scope still derive an edge to each (SCOPE nodes carry no line metadata on the
+%     live graph — line=0/endLine=0 — so there is no tie-breaker; same constraint
+%     the gold packs documented). Order-independent, strict superset, rare.
+%   DELTA 3 (file gate): the 8-extension JS/TS gate (js/jsx/ts/tsx/mjs/cjs/mts/cts),
+%     encoded as one ends_with clause per extension (a derived gate cannot BIND a
+%     head var; an extension-facts relation joined via ends_with is a §3 cross-join).
 
-% The resolver's compiled-in runtime-global skip list — the EXACT 97 names of
-% JsLocalRefs.hs:57-84 (runtimeGlobalNames), as ground facts (Wave-0 proved facts
-% survive the full derive pipeline).
+% ── Runtime-global skip list — the EXACT 97 names (JsLocalRefs.hs:57-84) ───────
 rt_global("console").
 rt_global("process").
 rt_global("Buffer").
@@ -134,12 +166,7 @@ rt_global("structuredClone").
 rt_global("atob").
 rt_global("btoa").
 
-% The JS/TS language gate — the orchestrator's detect_language JavaScript set
-% (8 extensions; see DELTA 3), expanded as one clause per extension with a
-% CONSTANT ends_with filter. (A derived jsts(F) gate is planner-infeasible — a
-% filter cannot BIND a head variable — and an extension-facts relation joined
-% via ends_with(F, E) is a §3 cross-join: the fact leg shares no bound variable
-% with the body. Constant-pattern clause expansion is the feasible encoding.)
+% ── The JS/TS language gate — 8 extensions (DELTA 3), one clause per extension ──
 js_ref(R, F, N) :- node(R, "REFERENCE"), attr(R, "file", F), ends_with(F, ".js"), attr(R, "name", N), neq(N, "").
 js_ref(R, F, N) :- node(R, "REFERENCE"), attr(R, "file", F), ends_with(F, ".jsx"), attr(R, "name", N), neq(N, "").
 js_ref(R, F, N) :- node(R, "REFERENCE"), attr(R, "file", F), ends_with(F, ".ts"), attr(R, "name", N), neq(N, "").
@@ -149,27 +176,101 @@ js_ref(R, F, N) :- node(R, "REFERENCE"), attr(R, "file", F), ends_with(F, ".cjs"
 js_ref(R, F, N) :- node(R, "REFERENCE"), attr(R, "file", F), ends_with(F, ".mts"), attr(R, "name", N), neq(N, "").
 js_ref(R, F, N) :- node(R, "REFERENCE"), attr(R, "file", F), ends_with(F, ".cts"), attr(R, "name", N), neq(N, "").
 
-% Imported names per file (the resolver's ImportIndex, ResolveUtil.hs:59-65):
-% any IMPORT_BINDING's (file, name) shadows local resolution.
+% A reference that is eligible for local resolution at all: JS/TS, not an import
+% binding in this file, not a runtime global. Leading with js_ref (the small,
+% bound set) keeps the scope walk from enumerating every scope's contents
+% (planner-filter-before-generator).
+local_ref(R, F, N) :- js_ref(R, F, N), \+ imported(F, N), \+ rt_global(N).
+
+% Imported names per file (JsLocalRefs.hs:104-105) — local resolution skip-set.
 imported(F, N) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), attr(B, "name", N).
 
-% The 8 referenceable declaration types (JsLocalRefs.hs:38-42), keyed (file, name).
-decl(F, N, D) :- node(D, "FUNCTION"), attr(D, "file", F), attr(D, "name", N).
-decl(F, N, D) :- node(D, "VARIABLE"), attr(D, "file", F), attr(D, "name", N).
-decl(F, N, D) :- node(D, "CONSTANT"), attr(D, "file", F), attr(D, "name", N).
-decl(F, N, D) :- node(D, "CLASS"), attr(D, "file", F), attr(D, "name", N).
-decl(F, N, D) :- node(D, "PARAMETER"), attr(D, "file", F), attr(D, "name", N).
-decl(F, N, D) :- node(D, "INTERFACE"), attr(D, "file", F), attr(D, "name", N).
-decl(F, N, D) :- node(D, "ENUM"), attr(D, "file", F), attr(D, "name", N).
-decl(F, N, D) :- node(D, "TYPE_SYNONYM"), attr(D, "file", F), attr(D, "name", N).
+% ── ARM A — SCOPE-WALK: VARIABLE / CONSTANT / FUNCTION / PARAMETER ─────────────
+%
+% The scope directly containing the reference, then its lexical parents. A scope's
+% HAS_SCOPE sources are its owner (FUNCTION/METHOD) AND its lexical parent scope —
+% the node(S2, "SCOPE") filter selects only the lexical-parent edge (the Wave-0
+% owner-vs-lexical nuance). Seeded ONLY from local_ref so the closure does not
+% enumerate every scope in the graph.
+%
+% TOP-SCOPE = MODULE: the JS/TS analyzer emits NO module-kind SCOPE node (the module
+% scope IS the MODULE node, Context.hs:59-64). So (a) a top-level reference is
+% CONTAINS'd directly by the MODULE — seed ref_scope from a MODULE container too;
+% and (b) the outermost in-function SCOPE chains up to the MODULE via HAS_SCOPE —
+% climb from a SCOPE to its MODULE lexical parent. Both put the MODULE into ref_scope
+% so its DECLARES'd top-level binders become candidates (binder/3 does not filter the
+% source type, so a MODULE-sourced DECLARES already matches once the MODULE is here).
+ref_scope(R, S)  :- local_ref(R, F, N), edge(S, R, "CONTAINS"), node(S, "SCOPE").
+ref_scope(R, S)  :- local_ref(R, F, N), edge(S, R, "CONTAINS"), node(S, "MODULE").
+ref_scope(R, S2) :- ref_scope(R, S), edge(S2, S, "HAS_SCOPE"), node(S2, "SCOPE").
+ref_scope(R, S2) :- ref_scope(R, S), edge(S2, S, "HAS_SCOPE"), node(S2, "MODULE").
 
-% The resolution: REFERENCE → same-file declaration, minus the two skip-sets.
-% Both negations are over analyzer-owned state (IMPORT_BINDING nodes) or ground
-% facts — never over a type this (or any) pack materializes: stratifier-clean,
-% no cross-run lag.
+% Binders, by the 4 DECLARES-target types (IMPORT_BINDING is deliberately EXCLUDED —
+% it is the import skip-set, resolved by ImportResolution). binder(S, N, D): the
+% declaring container S (a SCOPE *or* the MODULE top-scope, or any DECLARES source —
+% the rule does NOT filter S's type) declares a binder D named N. S is constrained to
+% R's lexical chain only at the cand/3 join (ref_scope(R, S)), so module-level binders
+% participate exactly when the MODULE is on the reference's chain.
+binder(S, N, D) :- edge(S, D, "DECLARES"), node(D, "VARIABLE"),  attr(D, "name", N), neq(N, "").
+binder(S, N, D) :- edge(S, D, "DECLARES"), node(D, "CONSTANT"),  attr(D, "name", N), neq(N, "").
+binder(S, N, D) :- edge(S, D, "DECLARES"), node(D, "FUNCTION"),  attr(D, "name", N), neq(N, "").
+binder(S, N, D) :- edge(S, D, "DECLARES"), node(D, "PARAMETER"), attr(D, "name", N), neq(N, "").
+
+% A candidate binder for the reference: some scope on R's chain declares the name.
+% (D bound as a NODE through DECLARES — precise; no (file, name) collision.)
+cand(R, S, N, D) :- local_ref(R, F, N), ref_scope(R, S), binder(S, N, D).
+
+% Node-projected candidate (drops the binder node var) — feeds `shadowed` so the
+% negation join is a 3-col relation, not 4-col with a free node leg.
+cand_scope(R, S, N) :- cand(R, S, N, _).
+
+% Strict-inner reachability over R's chain (recursive, same SCC family as
+% ref_scope): inner_of(R, S2, S) ⇔ S2 is on R's chain AND S is a STRICT ancestor
+% of S2 (≥1 HAS_SCOPE hop) that is ALSO on R's chain — i.e. S2 is strictly inside
+% S for this reference. Base = direct lexical parent; transitive = climb further.
+% The ancestor S may be a MODULE (the top scope) too — so an outer MODULE-level
+% binder is correctly shadowed when a strictly-closer SCOPE on the chain declares N.
+inner_of(R, S2, S)  :- ref_scope(R, S2), edge(S, S2, "HAS_SCOPE"), node(S, "SCOPE").
+inner_of(R, S2, S)  :- ref_scope(R, S2), edge(S, S2, "HAS_SCOPE"), node(S, "MODULE").
+inner_of(R, S2, S3) :- inner_of(R, S2, S), edge(S3, S, "HAS_SCOPE"), node(S3, "SCOPE").
+inner_of(R, S2, S3) :- inner_of(R, S2, S), edge(S3, S, "HAS_SCOPE"), node(S3, "MODULE").
+
+% `declares_name(S, N)`: scope/container S declares SOME binder named N — the
+% node-projected form of binder/3 (drops the binder node var). Used by `shadowed`
+% so the negation join does NOT carry a free binder-node leg per candidate (which
+% multiplied the planner's per-rule estimate past max_materialized_facts).
+declares_name(S, N) :- binder(S, N, _).
+
+% `chain_declares(R, S, N)`: on reference R's lexical chain, some scope STRICTLY
+% INSIDE S declares name N. Built by joining inner_of with declares_name FIRST and
+% projecting the inner scope S2 away — so the downstream negation is a plain
+% (R, S, N) ⋈ (R, S, N) join, not a 3-way product that blows the planner estimate.
+chain_declares(R, S, N) :- inner_of(R, S2, S), declares_name(S2, N).
+
+% NEAREST-BINDER negation (stratified — `shadowed` negates inner_of/declares_name via
+% chain_declares, strictly-lower strata, NEVER ref_scope's own SCC). A candidate scope
+% S is shadowed for name N on reference R when a strictly-closer scope on R's chain
+% also declares N — the inner binder wins, the outer is dropped.
+shadowed(R, S, N) :- cand_scope(R, S, N), chain_declares(R, S, N).
+
+% ARM A winner: the candidate binder whose declaring scope is NOT shadowed by any
+% closer scope on the chain = the nearest enclosing binder.
+arm_a(R, D) :- cand(R, S, N, D), \+ shadowed(R, S, N).
+
+% ── ARM B — FILE-FLAT: CLASS / INTERFACE / ENUM / TYPE_SYNONYM ─────────────────
+% Not SCOPE-attached (verified live: 0 SCOPE edges) ⇒ genuinely file/module-scoped
+% ⇒ flat (file, name) is the correct resolution (no intra-file shadowing to honor).
+flat_decl(F, N, D) :- node(D, "CLASS"),        attr(D, "file", F), attr(D, "name", N), neq(N, "").
+flat_decl(F, N, D) :- node(D, "INTERFACE"),    attr(D, "file", F), attr(D, "name", N), neq(N, "").
+flat_decl(F, N, D) :- node(D, "ENUM"),         attr(D, "file", F), attr(D, "name", N), neq(N, "").
+flat_decl(F, N, D) :- node(D, "TYPE_SYNONYM"), attr(D, "file", F), attr(D, "name", N), neq(N, "").
+
+arm_b(R, D) :- local_ref(R, F, N), flat_decl(F, N, D).
+
+% ── EMIT — both arms feed the single additive READS_FROM head ──────────────────
+% @materialize binds by HEAD PREDICATE (materialize.rs collect_materialize_specs:
+% predicate = head().predicate()): ALL js_local_ref facts — ARM A and ARM B — are
+% projected, so the annotation rides the first clause and the second is plain.
 @materialize(edge_type = "READS_FROM", mode = "additive", meta(resolvedVia))
-js_local_ref(R, D, "js-local-refs") :-
-    js_ref(R, F, N),
-    \+ imported(F, N),
-    \+ rt_global(N),
-    decl(F, N, D).
+js_local_ref(R, D, "js-local-refs") :- arm_a(R, D).
+js_local_ref(R, D, "js-local-refs") :- arm_b(R, D).
