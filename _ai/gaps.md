@@ -360,6 +360,21 @@ id is identical across generations are not tombstoned by changed-file deletion).
      `node_attr_metadata_type_read_takes_no_node_materialize_dependency` (`derive/stratify.rs`). Full rfdb
      lib 1403/0, clippy exit 0 (no new warnings).
 4. **O(owned²)**: removed_node_ids is a Vec scanned per node of the type; HashSet one-liner.
+   - **✅ RESOLVED 2026-06-14** (branch `claude/vigilant-lamport-hjnbvg`, verified at HEAD): the
+     owned-node retraction loop in `materialize_writeback_delta`
+     (`packages/rfdb-server/src/graph/engine_v2.rs:1282`) now dedups claimed ids through a
+     `HashSet<u128>` instead of a growing `Vec` probed with `.contains()` per node. The old code
+     iterated `find_nodes_at(type)` = N nodes and probed the up-to-K already-claimed ids linearly
+     → O(N×K) ≈ O(N²) on the hot incremental write-back path; the set makes the probe O(1) → O(N),
+     and `insert` is inherently idempotent. This aligns the node path with the edge-removal path in
+     the SAME function (`prev_keys`/`new_keys`/`additive_types`), which was already `HashSet`-based —
+     the node path (added for item #5) was the sole remaining linear-scan instance. Behavior is
+     identical (the removed set, counts, and tombstones are unchanged; deletion order is irrelevant —
+     `delete_node` records into a tombstone set). Locked by
+     `materialize_node_retraction_tombstones_each_owned_node_exactly_once` (5 owned ISSUEs, a
+     derives-nothing re-run retracts each exactly once → `n_removed == 5`, no double, none dropped).
+     Full rfdb lib **1407/0** (25 ignored); `cargo clippy --profile fast --lib` exit 0, no new
+     warnings. Rust-only in `rfdb-server` — no JS/TS, pnpm gate unaffected.
 5. **Never-rewrite staleness for OWNED nodes**: a re-derived owned node with a CHANGED surface
    (e.g. ISSUE message after method rename on the same CALL) keeps the stale payload forever —
    diverges from the plugin's last-write-wins; rewrite owned-changed nodes or record the delta.
