@@ -450,3 +450,31 @@ at the var-decl level, so a nested-pattern key vs binding distinction is handled
 `extractBindingInfo` (exports the VALUE, not the key) but deeper aliasing is untracked. Also:
 `Declarations.hs` is a pre-existing >500-line god-file — the variable-declaration rules are a
 natural extraction candidate (follow-up, not blocking).
+
+## GAP — guarantee self-join overflows max_intermediate_results for high-cardinality resolvedVia (2026-06-14, W23)
+
+**Query that should work but can't:** the resolution-functionality guarantee
+`reads-from-js-local-refs-resolution-is-a-function`
+```
+violation(X) :-
+  edge(X, Y1, "READS_FROM"), edge_attr(X, Y1, "READS_FROM", "resolvedVia", "js-local-refs"),
+  edge(X, Y2, "READS_FROM"), edge_attr(X, Y2, "READS_FROM", "resolvedVia", "js-local-refs"),
+  neq(Y1, Y2).
+```
+**Expected:** the set of REFERENCE sources that js-local-refs resolved to >1 distinct binding.
+**Happened:** `E-EXEC-001 (stratum 1): intermediate result count 148210 exceeds max_intermediate_results 100000` on Grafema's own graph (503k nodes / 1.07M edges).
+
+**Two compounded causes:**
+1. **Planner does not push the resolvedVia filter into the edge generator.** `edge(X, Y1, "READS_FROM")` enumerates the full 220k-edge READS_FROM relation before `edge_attr(...,"resolvedVia","js-local-refs")` narrows it to 15,323. The narrow leg should drive.
+2. **Per-source quadratic blowup is itself real data.** js-local-refs IS scope-blind: a REFERENCE with N same-named file-wide binders produces N² self-join rows. This is the over-resolution the guarantee is meant to surface — the gate is correct; the engine can't run it whole-graph.
+
+**Assessment:** product limitation (planner) + real resolver bug. The CALLS rule, the
+haskell-local-refs / property-access / runtime-globals rules all evaluate fine (the
+overflow is specific to the one high-cardinality, genuinely-fanned-out via). The js-local-refs
+rule is shipped COMMENTED-OUT in `.grafema/guarantees.yaml` with this rationale.
+
+**Fix path (either unblocks it):**
+- (a) Migrate js-local-refs to the finer-scope `.dl` resolution path (same fix that removed the
+  Haskell 167-fan-out) → the fan-out disappears, the self-join shrinks below the cap, enable the rule.
+- (b) Planner: push a bound-literal `edge_attr` filter into the `edge` generator (filter-before-generator;
+  see memory `planner-filter-before-generator`) so the leading leg is the 15k narrow set, not 220k.

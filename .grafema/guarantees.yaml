@@ -595,3 +595,111 @@ guarantees:
     check: datalog
     rule: 'violation(F) :- node(F, "STATE_FIELD"), edge(_, F, "READS_STATE_TRUTHY"), edge(_, F, "WRITES_STATE_TRUTHY"), \+ edge(_, F, "WRITES_STATE_FALSY"), \+ edge(_, F, "WRITES_STATE_DYNAMIC").'
     severity: warning
+
+  # ============================================================
+  # TIER 4: RESOLUTION IS A FUNCTION (W23)
+  # The product invariant behind every resolver: for a single
+  # REFERENCE/CALL source, a given *deterministic* resolution step
+  # (identified by edge_attr resolvedVia=V) must pick AT MOST ONE
+  # target. Two distinct targets via the SAME (edge-type, V) means
+  # the resolver fanned out — it stopped being a function and became
+  # a name-match enumerator. This is the bug class the Haskell .dl
+  # rewrite chased (a value REFERENCE fanning out to 167 same-named
+  # binders because nothing encoded the function-invariant): the
+  # resolver matched every same-named binding file-wide instead of
+  # the nearest lexical one. The same scope-blind fan-out exists in
+  # JS (a REFERENCE resolving to BOTH a const and a parameter of the
+  # same name in different scopes). These rules gate it MECHANICALLY,
+  # for ALL languages, off the resolvedVia stamp the resolvers already
+  # write — language-agnostic by construction.
+  #
+  # DISPATCH IS NOT RESOLUTION. A dispatch step (dynamic dispatch over
+  # a trait/interface) is INTENTIONALLY one-to-many — its multiplicity
+  # is correct semantics, not over-resolution. Dispatch carries its
+  # own resolvedVia value (e.g. rust-dyn-dispatch) and is excluded
+  # below. The invariant binds only on resolvers that claim to be
+  # functions.
+  #
+  # severity=error: a resolver that is not a function is a correctness
+  # regression in the graph, not a style nit.
+  # ============================================================
+
+  - name: calls-resolution-is-a-function
+    description: >
+      A CALL source must have AT MOST ONE CALLS target per
+      deterministic resolvedVia mechanism. Two distinct targets
+      sharing the same resolvedVia value means the call resolver
+      over-resolved (matched multiple same-named callables instead
+      of the one in scope). Dynamic dispatch (resolvedVia
+      rust-dyn-dispatch) is intentional one-to-many and is excluded.
+    check: datalog
+    rule: >-
+      violation(X) :-
+        edge(X, Y1, "CALLS"), edge_attr(X, Y1, "CALLS", "resolvedVia", V),
+        edge(X, Y2, "CALLS"), edge_attr(X, Y2, "CALLS", "resolvedVia", V),
+        neq(Y1, Y2), neq(V, "rust-dyn-dispatch").
+    severity: error
+
+  - name: reads-from-haskell-resolution-is-a-function
+    description: >
+      A REFERENCE source resolved by the Haskell same-file refs
+      resolver (resolvedVia haskell-local-refs) must have AT MOST ONE
+      READS_FROM target. Two distinct targets means the value
+      reference fanned out across same-named binders — the 167-edge
+      fan-out the finer-scope analyzer + .dl rewrite (W23) eliminated.
+      Split per-resolvedVia (not one whole-edge-type rule) so the
+      self-join stays within the engine's intermediate-result budget.
+    check: datalog
+    rule: >-
+      violation(X) :-
+        edge(X, Y1, "READS_FROM"), edge_attr(X, Y1, "READS_FROM", "resolvedVia", "haskell-local-refs"),
+        edge(X, Y2, "READS_FROM"), edge_attr(X, Y2, "READS_FROM", "resolvedVia", "haskell-local-refs"),
+        neq(Y1, Y2).
+    severity: error
+
+  - name: reads-from-property-access-resolution-is-a-function
+    description: >
+      A PROPERTY_ACCESS source resolved by the property-access
+      resolver (resolvedVia property-access) must have AT MOST ONE
+      READS_FROM target. Two distinct targets means the property
+      resolver bound the same access to multiple declarations.
+    check: datalog
+    rule: >-
+      violation(X) :-
+        edge(X, Y1, "READS_FROM"), edge_attr(X, Y1, "READS_FROM", "resolvedVia", "property-access"),
+        edge(X, Y2, "READS_FROM"), edge_attr(X, Y2, "READS_FROM", "resolvedVia", "property-access"),
+        neq(Y1, Y2).
+    severity: error
+
+  - name: resolves-to-runtime-globals-resolution-is-a-function
+    description: >
+      A source resolved by the runtime-globals resolver (resolvedVia
+      runtime-globals, on RESOLVES_TO) must have AT MOST ONE target.
+      Two distinct global targets means an ambiguous global was bound
+      to more than one definition.
+    check: datalog
+    rule: >-
+      violation(X) :-
+        edge(X, Y1, "RESOLVES_TO"), edge_attr(X, Y1, "RESOLVES_TO", "resolvedVia", "runtime-globals"),
+        edge(X, Y2, "RESOLVES_TO"), edge_attr(X, Y2, "RESOLVES_TO", "resolvedVia", "runtime-globals"),
+        neq(Y1, Y2).
+    severity: error
+
+  # KNOWN ENGINE LIMITATION (do not enable as a guarantee yet):
+  #   reads-from-js-local-refs-resolution-is-a-function
+  #     violation(X) :-
+  #       edge(X, Y1, "READS_FROM"), edge_attr(X, Y1, "READS_FROM", "resolvedVia", "js-local-refs"),
+  #       edge(X, Y2, "READS_FROM"), edge_attr(X, Y2, "READS_FROM", "resolvedVia", "js-local-refs"),
+  #       neq(Y1, Y2).
+  # The js-local-refs READS_FROM self-join overflows the interactive
+  # engine's max_intermediate_results (148210 > 100000) on Grafema's
+  # own graph: the planner enumerates the full READS_FROM relation
+  # before the resolvedVia filter narrows it, and the per-source
+  # quadratic blowup (a REFERENCE with N same-named targets yields N^2
+  # join rows) is itself large. This is BOTH a real resolver bug
+  # (js-local-refs IS scope-blind — see PR body: REFERENCE `nodeId`
+  # binding to a const AND a parameter of the same name) AND an engine
+  # gap. Enable once either (a) the resolver is migrated to the
+  # finer-scope .dl path (mirrors the Haskell fix) so the fan-out is
+  # gone, or (b) the planner pushes the via filter into the edge
+  # generator. Tracked in _ai/gaps.md.
