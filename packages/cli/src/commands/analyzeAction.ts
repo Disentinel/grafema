@@ -34,7 +34,7 @@ import { commanderExtractor } from '@grafema/util/enrichers/extractors/commander
 import { mcpInputSchemaExtractor } from '@grafema/util/enrichers/extractors/mcpInputSchemaExtractor';
 import { vscodeContributesExtractor } from '@grafema/util/enrichers/extractors/vscodeContributesExtractor';
 import { httpRouteExtractor } from '@grafema/util/enrichers/extractors/httpRouteExtractor';
-import type { LogLevel } from '@grafema/util';
+import { getLogLevel, getRustLog } from './logLevel.js';
 import { scanExtensions, generateSmartConfig, writeConfig, updateGitignore, formatDetected } from '../utils/quickstart.js';
 
 export interface NodeEdgeCountBackend {
@@ -51,24 +51,9 @@ export function exitWithCode(code: number, exitFn: (code: number) => void = proc
   exitFn(code);
 }
 
-/**
- * Determine log level from CLI options.
- * Priority: --log-level > --quiet > --verbose > default ('silent')
- *
- * By default, logs are silent to allow clean progress UI.
- * Use --verbose to see detailed logs (disables interactive progress).
- */
-function getLogLevel(options: { quiet?: boolean; verbose?: boolean; logLevel?: string }): LogLevel {
-  if (options.logLevel) {
-    const validLevels: LogLevel[] = ['silent', 'errors', 'warnings', 'info', 'debug'];
-    if (validLevels.includes(options.logLevel as LogLevel)) {
-      return options.logLevel as LogLevel;
-    }
-  }
-  if (options.quiet) return 'silent';
-  if (options.verbose) return 'info';  // --verbose shows logs instead of progress UI
-  return 'silent';  // Default: silent logs, clean progress UI
-}
+// Log-level resolution (getLogLevel / getRustLog) lives in ./logLevel.ts and is
+// shared with resolveAction.ts so the CLI verbosity flags map consistently to
+// both the TS-side logger and the spawned orchestrator's RUST_LOG.
 
 /**
  * Find the grafema.config.yaml config file for the orchestrator.
@@ -396,8 +381,9 @@ export async function analyzeAction(path: string, options: { service?: string; e
         ],
         env: {
           ...process.env,
-          // Pass RUST_LOG for tracing verbosity
-          RUST_LOG: options.debug ? 'debug' : (options.quiet ? 'warn' : 'info'),
+          // Pass RUST_LOG for tracing verbosity. Quiet by default (QA-8):
+          // suppress routine INFO progress, keep warnings/errors visible.
+          RUST_LOG: getRustLog(options),
         },
       });
 

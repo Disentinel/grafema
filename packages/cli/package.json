@@ -25,7 +25,7 @@
     "clean": "rm -rf dist",
     "start": "node dist/cli.js",
     "test": "node --import tsx --test test/*.test.ts",
-    "test:unit": "node --import tsx --test --test-concurrency=1 test/analyze-utils.test.ts test/formatNode.test.ts test/pathutils-resolveprojectroot.test.ts test/progressRenderer.test.ts test/query-raw-predicate-warning.test.ts test/extension-mts-cts-coverage.test.ts test/doctor-server-status.test.ts"
+    "test:unit": "node --import tsx --test --test-concurrency=1 test/analyze-utils.test.ts test/formatNode.test.ts test/logLevel.test.ts test/pathutils-resolveprojectroot.test.ts test/progressRenderer.test.ts test/query-raw-predicate-warning.test.ts test/extension-mts-cts-coverage.test.ts test/doctor-server-status.test.ts"
   },
   "keywords": [
     "grafema",

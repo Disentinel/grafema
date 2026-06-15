@@ -17,24 +17,8 @@ import {
   findAnalyzerBinary,
   ensureBinary,
 } from '@grafema/util';
-import type { LogLevel } from '@grafema/util';
 import { fetchNodeEdgeCounts, exitWithCode } from './analyzeAction.js';
-
-/**
- * Determine log level from CLI options.
- * Priority: --log-level > --quiet > --verbose > default ('silent')
- */
-function getLogLevel(options: { quiet?: boolean; verbose?: boolean; logLevel?: string }): LogLevel {
-  if (options.logLevel) {
-    const validLevels: LogLevel[] = ['silent', 'errors', 'warnings', 'info', 'debug'];
-    if (validLevels.includes(options.logLevel as LogLevel)) {
-      return options.logLevel as LogLevel;
-    }
-  }
-  if (options.quiet) return 'silent';
-  if (options.verbose) return 'info';
-  return 'silent';
-}
+import { getLogLevel, getRustLog } from './logLevel.js';
 
 /**
  * Find the grafema.config.yaml config file for the orchestrator.
@@ -230,7 +214,7 @@ export async function resolveAction(path: string, options: {
         ],
         env: {
           ...process.env,
-          RUST_LOG: options.debug ? 'debug' : (options.quiet ? 'warn' : 'info'),
+          RUST_LOG: getRustLog(options),
         },
       });
 
