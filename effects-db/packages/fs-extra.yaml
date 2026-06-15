@@ -1,7 +1,9 @@
 # fs-extra (v11.x) — Filesystem extras (superset of node:fs)
 # Generated: 2026-06-15
-# Method: Claude inference cross-validated against node:fs (runtimes/node.yaml)
-#         + fs-extra v11 documented API.
+# Method: Claude inference based on node:fs (runtimes/node.yaml) effect values
+#         + fs-extra v11 documented API, with v2 IO:FILE subtypes added per the
+#         subtype principle below (so some re-exported methods intentionally
+#         diverge from node.yaml — see the list below).
 # Taxonomy version: 2
 #   Uses v2 IO:* subtypes (IO:FILE:READ / IO:FILE:WRITE) intentionally — the whole
 #   value of annotating fs-extra is to fill the file-ipc bridge (bridges.yaml:
@@ -11,11 +13,18 @@
 # purl: pkg:npm/fs-extra
 #
 # fs-extra re-exports every node:fs method (callback + sync + promise) and adds
-# convenience methods. Effect values for re-exported methods mirror
-# runtimes/node.yaml node:fs exactly. Subtype principle: IO:FILE:READ /
-# IO:FILE:WRITE are applied to operations that read/write a *file's content*;
-# directory ops, stat/metadata, and deletes use plain IO (+ MUTATION) to match
-# node:fs and avoid false file-ipc bridge matches.
+# convenience methods. Effect values for re-exported methods follow
+# runtimes/node.yaml node:fs, with ONE deliberate divergence: the v2 IO:FILE:READ
+# / IO:FILE:WRITE subtypes (subtype principle below) are applied to every
+# file-content operation, whereas node.yaml currently carries those subtypes only
+# on readFile/writeFile/readFileSync/writeFileSync. Re-exported methods that
+# therefore diverge from node.yaml by ADDING IO:FILE subtypes: appendFile,
+# appendFileSync, copyFile, copyFileSync, createReadStream, createWriteStream.
+# All other re-exported methods match node.yaml exactly (non-IO:FILE effects are
+# identical). Subtype principle: IO:FILE:READ / IO:FILE:WRITE are applied to
+# operations that read/write a *file's content*; directory ops, stat/metadata,
+# and deletes use plain IO (+ MUTATION) like node:fs and avoid false file-ipc
+# bridge matches.
 #
 # Resolution: a named import `import { readJson } from 'fs-extra'` is an
 # IMPORT_BINDING (source='fs-extra', importedName='readJson') resolved by
@@ -99,8 +108,10 @@ fs-extra:
   pathExistsSync: [IO]
 
   # ---------------------------------------------------------------------------
-  # Re-exported node:fs — file-content read/write (mirror node:fs values,
-  # with IO:FILE subtypes applied to file-content ops).
+  # Re-exported node:fs — file-content read/write. Non-IO:FILE effects follow
+  # node:fs; IO:FILE:READ / IO:FILE:WRITE subtypes are added to file-content ops
+  # (appendFile/copyFile/createReadStream/createWriteStream add subtypes not
+  # present in node.yaml — see header).
   # ---------------------------------------------------------------------------
   readFile: [IO, IO:FILE:READ, ASYNC]
   readFileSync: [IO, IO:FILE:READ]
