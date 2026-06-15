@@ -1,0 +1,85 @@
+# node-fetch (v2 CJS / v3 ESM) — A light-weight WHATWG fetch for Node.js
+# Generated: 2026-06-15 (autonomous effects-db fill, IDLE fallback track)
+# Method: Claude inference from node-fetch v2/v3 public API, aligned 1:1 with the
+#         ecma:web `fetch` / `Response` / `Headers` / `Request` annotations in
+#         effects-db/runtimes/node.yaml — node-fetch is a WHATWG-fetch polyfill,
+#         so its surface mirrors the platform fetch exactly.
+# Taxonomy version: 2
+# purl: pkg:npm/node-fetch
+#
+# Why this package matters for Grafema:
+#   effects-db already annotates the HTTP *server* side (express → IO:HTTP:LISTEN).
+#   The `http` bridge (effects-db/bridges.yaml) pairs a sender carrying
+#   IO:HTTP:REQUEST with a receiver carrying IO:HTTP:LISTEN to emit CALLS_REMOTE
+#   edges. node-fetch is one of the most-downloaded HTTP *clients* on npm, so
+#   annotating its default `fetch` export lights up the sender side of that bridge
+#   for every `import fetch from 'node-fetch'` call site.
+#
+# Effect conventions used here:
+#   - `fetch` mirrors the platform fetch EXACTLY: [IO, IO:HTTP:REQUEST, ASYNC]
+#     with `channel.url = arg[0]` so the http bridge can extract the request URL
+#     (identical to the ecma:web `fetch` entry in runtimes/node.yaml).
+#     NOTE — unlike axios (whose default `validateStatus` REJECTS on non-2xx),
+#     WHATWG fetch / node-fetch RESOLVES on any HTTP status and only rejects on a
+#     network-level failure, so THROW is intentionally NOT listed here. This is the
+#     load-bearing behavioural difference from axios — see effects-db/packages/axios.yaml.
+#   - `Headers` / `Request` / `Response` are value-object constructors → PURE
+#     (mirrors ecma:web `Headers: [PURE]`, `Request: [PURE]`). Keyed by the bare
+#     export name so `import { Headers } from 'node-fetch'; new Headers()` resolves
+#     via the IMPORT_BINDING path in queries/traceEffects.ts (lookup(source, name)).
+#   - Response body readers return a Promise that drains the already-received body
+#     → [ASYNC] (matches ecma:web `Response.prototype.json: [ASYNC]`); the network
+#     IO is attributed to the originating `fetch` call, not the body reader.
+#   - `blobFrom` / `fileFrom` (v3) read a file from disk → IO:FILE:READ. The async
+#     variants add ASYNC; the *Sync variants do not (mirrors node:fs read/readSync).
+
+node-fetch:
+  # ---------------------------------------------------------------------------
+  # Default export — the fetch function. THE http-bridge sender.
+  # ---------------------------------------------------------------------------
+  fetch:
+    effects: [IO, IO:HTTP:REQUEST, ASYNC]
+    channel: { url: "arg[0]" }
+
+  # ---------------------------------------------------------------------------
+  # WHATWG value-object constructors — pure (no IO until the request is sent).
+  # Bare keys so named-import `new Headers()` resolves via IMPORT_BINDING lookup.
+  # ---------------------------------------------------------------------------
+  Headers: [PURE]
+  Request: [PURE]
+  Response: [PURE]
+
+  # Error classes — pure constructors.
+  FetchError: [PURE]
+  AbortError: [PURE]
+
+  # Pure helper — predicate over an HTTP status code (v3 named export).
+  isRedirect: [PURE]
+
+  # ---------------------------------------------------------------------------
+  # Response body readers — drain the already-received body; async, no new
+  # network request (mirrors ecma:web Response.prototype.* convention).
+  # ---------------------------------------------------------------------------
+  Response.json: [ASYNC]
+  Response.text: [ASYNC]
+  Response.arrayBuffer: [ASYNC]
+  Response.blob: [ASYNC]
+  Response.buffer: [ASYNC]
+  Response.clone: [PURE]
+
+  # ---------------------------------------------------------------------------
+  # Headers instance methods (mirrors ecma:web Headers.prototype.*).
+  # ---------------------------------------------------------------------------
+  Headers.get: [PURE]
+  Headers.set: [MUTATION]
+  Headers.append: [MUTATION]
+  Headers.delete: [MUTATION]
+  Headers.has: [PURE]
+
+  # ---------------------------------------------------------------------------
+  # File → Blob/File helpers (v3) — read a file from disk.
+  # ---------------------------------------------------------------------------
+  blobFrom: [IO, IO:FILE:READ, ASYNC]
+  blobFromSync: [IO, IO:FILE:READ]
+  fileFrom: [IO, IO:FILE:READ, ASYNC]
+  fileFromSync: [IO, IO:FILE:READ]
