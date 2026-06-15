@@ -14,7 +14,8 @@
 #   languages, but no npm package filled the env-var SENDER side for Node.
 #   dotenv is the canonical one: `config()` reads a `.env` file and assigns the
 #   parsed keys onto `process.env`, so annotating it lights up the sender side
-#   of the env-var bridge — the same way axios lit up the http-bridge sender.
+#   of the env-var bridge. The schema and array effect form follow the merged
+#   package convention on main (effects-db/packages/express.yaml et al.).
 #
 # Effect conventions used here:
 #   - config / configDotenv → [IO, IO:FILE:READ, IO:ENV:SET, MUTATION]:

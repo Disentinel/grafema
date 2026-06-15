@@ -11,7 +11,8 @@
  *   - `dotenv` (~40M weekly downloads) is the canonical env-var sender:
  *     `config()` reads a `.env` file (IO:FILE:READ) and assigns the parsed keys
  *     into `process.env` (IO:ENV:SET). Annotating it lights up the sender side
- *     of the env-var bridge the same way axios lit up the http-bridge sender.
+ *     of the env-var bridge. Test shape follows the merged effects-db package
+ *     tests already on main (e.g. EffectsLookup.load + lookup assertions).
  *   - This test pins the annotations so a future edit cannot silently drop
  *     IO:ENV:SET (which would make dotenv invisible to env-var bridge detection)
  *     or mark the pure `parse` helper as effectful (which would pollute effect
