@@ -1,10 +1,15 @@
 # node-fetch (v2 CJS / v3 ESM) — A light-weight WHATWG fetch for Node.js
 # Generated: 2026-06-15 (autonomous effects-db fill, IDLE fallback track)
-# Method: Claude inference from node-fetch v2/v3 public API, aligned 1:1 with the
-#         ecma:web `fetch` / `Response` / `Headers` / `Request` annotations in
-#         effects-db/runtimes/node.yaml — node-fetch is a WHATWG-fetch polyfill,
-#         so its surface mirrors the platform fetch exactly.
-# Taxonomy version: 2
+# Method: Claude inference from node-fetch v2/v3 public API. Effect VALUES are
+#         taken from the ecma:web `fetch` / `Response` / `Headers` / `Request`
+#         entries in effects-db/runtimes/node.yaml (node-fetch is a WHATWG-fetch
+#         polyfill). Keys follow the package-file `Class.method` convention used by
+#         express.yaml et al. (no `.prototype.`), so this is NOT a literal copy of
+#         the ecma:web `*.prototype.*` keys — only the effect values are shared.
+# Taxonomy version: 2 — this file uses the v2 IO-subtype vocabulary (IO:HTTP:REQUEST,
+#         IO:FILE:READ) defined in effects-db/taxonomy.yaml (version: 2). The older
+#         package files predate those subtypes and are still marked version 1; the
+#         http-bridge sender annotation here requires v2, hence the bump.
 # purl: pkg:npm/node-fetch
 #
 # Why this package matters for Grafema:
@@ -16,13 +21,14 @@
 #   for every `import fetch from 'node-fetch'` call site.
 #
 # Effect conventions used here:
-#   - `fetch` mirrors the platform fetch EXACTLY: [IO, IO:HTTP:REQUEST, ASYNC]
-#     with `channel.url = arg[0]` so the http bridge can extract the request URL
-#     (identical to the ecma:web `fetch` entry in runtimes/node.yaml).
-#     NOTE — unlike axios (whose default `validateStatus` REJECTS on non-2xx),
-#     WHATWG fetch / node-fetch RESOLVES on any HTTP status and only rejects on a
-#     network-level failure, so THROW is intentionally NOT listed here. This is the
-#     load-bearing behavioural difference from axios — see effects-db/packages/axios.yaml.
+#   - `fetch` carries the same effects + channel as the ecma:web `fetch` entry in
+#     runtimes/node.yaml: [IO, IO:HTTP:REQUEST, ASYNC] with `channel.url = arg[0]`
+#     so the http bridge can extract the request URL.
+#     NOTE — WHATWG fetch / node-fetch RESOLVES on any HTTP status and only rejects
+#     on a network-level failure, so THROW is intentionally NOT listed here. HTTP
+#     clients that reject on non-2xx by default — e.g. axios, via its `validateStatus`
+#     option — would instead carry THROW; that distinction is load-bearing for
+#     callers (a node-fetch call is not a throw site, an axios call is).
 #   - `Headers` / `Request` / `Response` are value-object constructors → PURE
 #     (mirrors ecma:web `Headers: [PURE]`, `Request: [PURE]`). Keyed by the bare
 #     export name so `import { Headers } from 'node-fetch'; new Headers()` resolves
