@@ -457,62 +457,11 @@ describe('Orphaned Node Guarantees', () => {
   // =====================================================
 
   describe('Semantic integrity', () => {
-    it('import-has-source: detects IMPORT without IMPORTS_FROM', async () => {
-      await backend.addNode({
-        id: 'test::module',
-        type: 'MODULE',
-        name: 'test.js',
-        file: 'test.js',
-        relativePath: 'test.js',
-        contentHash: 'abc',
-      });
-      await backend.addNode({
-        id: 'test::import',
-        type: 'IMPORT',
-        name: 'foo',
-        file: 'test.js',
-        source: './foo',
-        specifiers: [],
-      });
-      await backend.addEdge({ src: 'test::module', dst: 'test::import', type: 'CONTAINS' });
-
-      const rule = datalogGuarantees.find((g: { name: string }) => g.name === 'import-has-source')?.rule;
-      const violations = await backend.checkGuarantee(rule);
-      assert.strictEqual(violations.length, 1, 'IMPORT without IMPORTS_FROM should violate');
-    });
-
-    it('import-has-source: passes with IMPORTS_FROM', async () => {
-      await backend.addNode({
-        id: 'test::module',
-        type: 'MODULE',
-        name: 'test.js',
-        file: 'test.js',
-        relativePath: 'test.js',
-        contentHash: 'abc',
-      });
-      await backend.addNode({
-        id: 'test::foo-module',
-        type: 'MODULE',
-        name: 'foo.js',
-        file: 'foo.js',
-        relativePath: 'foo.js',
-        contentHash: 'def',
-      });
-      await backend.addNode({
-        id: 'test::import',
-        type: 'IMPORT',
-        name: 'foo',
-        file: 'test.js',
-        source: './foo',
-        specifiers: [],
-      });
-      await backend.addEdge({ src: 'test::module', dst: 'test::import', type: 'CONTAINS' });
-      await backend.addEdge({ src: 'test::import', dst: 'test::foo-module', type: 'IMPORTS_FROM' });
-
-      const rule = datalogGuarantees.find((g: { name: string }) => g.name === 'import-has-source')?.rule;
-      const violations = await backend.checkGuarantee(rule);
-      assert.strictEqual(violations.length, 0);
-    });
+    // NOTE (REG-1166): the disabled `import-has-source` guarantee was retired and
+    // replaced by the relative-scoped `imports-resolve-to-module` guarantee.
+    // Its behaviour is covered by test/unit/imports-resolve-to-module.test.js.
+    // (The old fixtures here set IMPORT.name = 'foo' which never matched the
+    // analyzer, where IMPORT.name = the module specifier — see Declarations.hs.)
 
     it('export-has-target: detects EXPORT without EXPORTS', async () => {
       await backend.addNode({
