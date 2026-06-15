@@ -312,17 +312,37 @@ guarantees:
   # it can't fulfill its purpose without the defining edge.
   # ============================================================
 
-  # DISABLED: External library imports (npm/Hackage/crates.io) intentionally lack
-  # IMPORTS_FROM edges — no MODULE node exists for external packages.
-  # TODO: Create EXTERNAL_MODULE virtual nodes for external deps (REG-XXX)
-  # - name: import-has-source
-  #   description: >
-  #     Every IMPORT node must have an outgoing IMPORTS_FROM edge
-  #     to its source MODULE. Without it, dependency tracing is blind —
-  #     we know something is imported but not from where.
-  #   check: datalog
-  #   rule: 'violation(X) :- node(X, "IMPORT"), \+ edge(X, _, "IMPORTS_FROM").'
-  #   severity: warning
+  - name: imports-resolve-to-module
+    description: >
+      Every project-internal IMPORT (a relative specifier — one whose module
+      string starts with ".", e.g. "./util" or "../shared/db") must have an
+      outgoing IMPORTS_FROM edge to the MODULE it resolves to. A relative import
+      with no IMPORTS_FROM is a broken import: the target file was renamed,
+      moved, or never existed, and any cross-file call/dataflow tracing through
+      it is silently blind. This is the v3 GUARANTEE-system replacement for the
+      deleted BrokenImportValidator (REG-572) and the long-disabled
+      `import-has-source` rule (REG-1166).
+
+      SCOPE — why relative-only: EXTERNAL dependency imports (npm "lodash",
+      Hackage "Data.Map", crates "serde", builtins "node:fs") legitimately lack
+      IMPORTS_FROM today, because no MODULE/EXTERNAL_MODULE leaf node exists for
+      them yet (REG-624, REG-687). A blanket rule would report every external
+      import as a violation. Relative specifiers are always project-internal and
+      MUST resolve, so scoping to `starts_with(name, ".")` yields zero
+      external-dependency false positives with no dependency on REG-624/687.
+      The JS analyzer stamps IMPORT.name = the module specifier
+      (js-analyzer/src/Rules/Declarations.hs: gnName = source); relative
+      specifiers begin with ".". When EXTERNAL_MODULE leaf nodes land, widen
+      this rule (or add a dedicated `external-imports-resolve` guarantee).
+
+      KNOWN CAVEAT: relative imports of non-code assets ("./styles.css",
+      "./data.json") are also "." specifiers but have no MODULE node, so they
+      surface here too — Grafema does not yet model asset modules. Treat such
+      hits as a modeling gap, not necessarily a broken import; hence `warning`,
+      not `error`.
+    check: datalog
+    rule: 'violation(X) :- node(X, "IMPORT"), attr(X, "name", S), starts_with(S, "."), \+ edge(X, _, "IMPORTS_FROM").'
+    severity: warning
 
   - name: export-has-target
     description: >
