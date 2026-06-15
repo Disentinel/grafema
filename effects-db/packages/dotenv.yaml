@@ -1,0 +1,56 @@
+# dotenv (16.x / 17.x) — loads environment variables from a .env file
+# Generated: 2026-06-15 (autonomous effects-db fill, fallback track)
+# Method: Claude inference from dotenv public API docs + source (lib/main.js),
+#         cross-checked against the runtime env conventions
+#         (rust env.set_var / python putenv / elixir put_env, all
+#         [IO, IO:ENV:SET, MUTATION]) and effects-db/bridges.yaml `env-var`.
+# Taxonomy version: 2
+# purl: pkg:npm/dotenv
+#
+# Why this package matters for Grafema:
+#   effects-db/bridges.yaml defines an `env-var` bridge — sender [IO:ENV:SET]
+#   paired to receiver [IO:ENV:READ] — to model "process A sets an env var,
+#   process B reads it". The runtime files annotate the SET side for non-JS
+#   languages, but no npm package filled the env-var SENDER side for Node.
+#   dotenv is the canonical one: `config()` reads a `.env` file and assigns the
+#   parsed keys onto `process.env`, so annotating it lights up the sender side
+#   of the env-var bridge — the same way axios lit up the http-bridge sender.
+#
+# Effect conventions used here:
+#   - config / configDotenv → [IO, IO:FILE:READ, IO:ENV:SET, MUTATION]:
+#       * IO:FILE:READ — both read the `.env` file from disk (fs.readFileSync).
+#       * IO:ENV:SET + MUTATION — both assign parsed keys onto process.env,
+#         mirroring the runtime env-set convention (rust env.set_var etc.).
+#       * NOT ASYNC and NOT THROW — dotenv reads synchronously and, on a missing
+#         or unreadable file, returns `{ error }` rather than throwing.
+#       `config` is the public entry point; `configDotenv` is its exported
+#       underlying implementation (same observable effects).
+#   - parse → [PURE]: parses an in-memory string/Buffer into a plain object;
+#     touches neither disk nor process.env.
+#   - populate → [MUTATION, THROW]: assigns parsed keys into a caller-provided
+#     target object (MUTATION), and throws OBJECT_REQUIRED when the `parsed`
+#     argument is not an object (lib/main.js: `throw err` with code
+#     'OBJECT_REQUIRED'). It is intentionally NOT marked IO:ENV:SET: the target
+#     is an arbitrary arg (only process.env when the caller passes it), so
+#     flagging it as an env-var sender would synthesize false bridge edges for
+#     non-env targets. config/configDotenv are the unambiguous senders.
+
+dotenv:
+  # ---------------------------------------------------------------------------
+  # Loaders — read the .env file from disk and assign onto process.env.
+  # These are the env-var bridge senders (IO:ENV:SET).
+  # ---------------------------------------------------------------------------
+  config: [IO, IO:FILE:READ, IO:ENV:SET, MUTATION]
+  configDotenv: [IO, IO:FILE:READ, IO:ENV:SET, MUTATION]
+
+  # ---------------------------------------------------------------------------
+  # Pure parser — string/Buffer -> object, no disk, no process.env.
+  # ---------------------------------------------------------------------------
+  parse: [PURE]
+
+  # ---------------------------------------------------------------------------
+  # populate(target, source) — mutates the caller-provided target object and
+  # throws OBJECT_REQUIRED when `source` is not an object. NOT an env-var sender:
+  # the target is a caller arg, only process.env when the caller passes it.
+  # ---------------------------------------------------------------------------
+  populate: [MUTATION, THROW]
