@@ -869,7 +869,7 @@ fn walk_enum(e: &syn::ItemEnum, ctx: &mut Ctx) {
         let (vl, vc) = ctx.span_line_col(variant.ident.span());
         let variant_id = semantic_id(&ctx.file, "VARIANT", &vname, Some(&node_id), None);
         ctx.emit_declaration(GraphNode {
-            id: variant_id,
+            id: variant_id.clone(),
             node_type: "VARIANT".to_string(),
             name: vname,
             file: ctx.file.clone(),
@@ -879,6 +879,23 @@ fn walk_enum(e: &syn::ItemEnum, ctx: &mut Ctx) {
             metadata: HashMap::new(),
             extra: HashMap::new(),
         });
+
+        // Explicit discriminant: `Variant = EXPR` (e.g. `Ok = 200`). Walk the
+        // expression so nested nodes (literals, const references, calls) are
+        // recorded, then link the VARIANT to its value source via ASSIGNED_FROM
+        // — mirroring `walk_let`, so backward Value Trace / Hover can resolve a
+        // variant's explicit value instead of dead-ending on the VARIANT node.
+        if let Some((_eq, disc_expr)) = &variant.discriminant {
+            walk_expr(disc_expr, ctx);
+            if let Some(disc_node_id) = expr_node_id(disc_expr, ctx) {
+                ctx.emit_edge(GraphEdge {
+                    src: variant_id,
+                    dst: disc_node_id,
+                    edge_type: "ASSIGNED_FROM".to_string(),
+                    metadata: HashMap::new(),
+                });
+            }
+        }
     }
 }
 
@@ -2436,6 +2453,59 @@ mod tests {
         assert!(has_node(&fa, "VARIANT", "Red"));
         assert!(has_node(&fa, "VARIANT", "Green"));
         assert!(has_node(&fa, "VARIANT", "Blue"));
+    }
+
+    #[test]
+    fn test_enum_explicit_discriminant() {
+        // `enum Status { Ok = 200, NotFound = 404 }` — the explicit
+        // discriminant `= 200` must not be dropped. Each discriminant
+        // expression is walked (so its LITERAL node is emitted) and the
+        // VARIANT links to that value source via ASSIGNED_FROM, mirroring
+        // `let x = 200;`. This lets backward Value Trace / Hover resolve a
+        // variant's explicit value instead of dead-ending on the VARIANT.
+        let fa = parse_and_analyze("enum Status { Ok = 200, NotFound = 404 }");
+        assert!(has_node(&fa, "VARIANT", "Ok"));
+        assert!(has_node(&fa, "VARIANT", "NotFound"));
+        assert!(has_node(&fa, "LITERAL", "200"), "discriminant literal 200 emitted");
+        assert!(has_node(&fa, "LITERAL", "404"), "discriminant literal 404 emitted");
+        assert!(
+            has_edge(&fa, "ASSIGNED_FROM", "VARIANT", "LITERAL"),
+            "VARIANT should link to its discriminant value via ASSIGNED_FROM"
+        );
+        // Exactly one ASSIGNED_FROM per explicitly-valued variant (2 here).
+        let assigned: Vec<_> = fa
+            .edges
+            .iter()
+            .filter(|e| e.edge_type == "ASSIGNED_FROM" && e.src.contains("VARIANT"))
+            .collect();
+        assert_eq!(assigned.len(), 2, "one ASSIGNED_FROM per valued variant");
+    }
+
+    #[test]
+    fn test_enum_discriminant_const_reference() {
+        // `enum E { A = BASE }` — a discriminant that references a named const
+        // resolves to a REFERENCE node, and the VARIANT links to it via
+        // ASSIGNED_FROM so backward Value Trace can hop variant → const.
+        let fa = parse_and_analyze("const BASE: isize = 10; enum E { A = BASE }");
+        assert!(has_node(&fa, "REFERENCE", "BASE"), "discriminant reference emitted");
+        assert!(
+            has_edge(&fa, "ASSIGNED_FROM", "VARIANT", "REFERENCE"),
+            "VARIANT should link to its const-reference discriminant"
+        );
+    }
+
+    #[test]
+    fn test_enum_variant_without_discriminant_has_no_assigned_from() {
+        // Plain variants (`Red`) carry no value source — no ASSIGNED_FROM,
+        // no spurious LITERAL. Guards against over-emitting for the common
+        // C-like enum without explicit discriminants.
+        let fa = parse_and_analyze("enum Color { Red, Green }");
+        let assigned: Vec<_> = fa
+            .edges
+            .iter()
+            .filter(|e| e.edge_type == "ASSIGNED_FROM" && e.src.contains("VARIANT"))
+            .collect();
+        assert!(assigned.is_empty(), "no ASSIGNED_FROM for discriminant-less variants");
     }
 
     #[test]
