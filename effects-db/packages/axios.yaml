@@ -8,9 +8,17 @@
 # Why this package matters for Grafema:
 #   The effects-db already annotates the HTTP *server* side (express →
 #   IO:HTTP:LISTEN). The `http` bridge pattern (effects-db/bridges.yaml) pairs a
-#   sender with `IO:HTTP:REQUEST` to a receiver with `IO:HTTP:LISTEN` to emit
-#   CALLS_REMOTE edges. axios is the most-used HTTP *client* on npm, so annotating
-#   its request surface lights up the sender side of that bridge.
+#   sender with `IO:HTTP:REQUEST` to a receiver with `IO:HTTP:LISTEN`. axios is the
+#   most-used HTTP *client* on npm, so annotating its request surface supplies the
+#   sender-side effect — `IO:HTTP:REQUEST` previously lived only in the node.yaml
+#   runtime (http.request / fetch), in zero packages.
+#
+# How these annotations are consumed (verified):
+#   `traceEffects` (packages/util/src/queries/traceEffects.ts) — the engine behind
+#   the MCP `trace-effects` handler and behaviorEnricher — resolves an unresolved
+#   `axios.get`-style call through `EffectsLookup.lookup('axios', 'get')` and
+#   propagates the returned effects transitively. test/unit/effectsDbAxios.test.js
+#   exercises exactly this path on a fixture graph.
 #
 # Effect conventions used here:
 #   - Request methods emit [IO, IO:HTTP:REQUEST, ASYNC, THROW]:
@@ -18,24 +26,25 @@
 #         http.request / fetch, which list parent IO alongside the subtype).
 #       * ASYNC — returns a Promise.
 #       * THROW — unlike fetch, axios's default `validateStatus` REJECTS on a
-#         non-2xx response, so awaiting a 4xx/5xx throws. This is the key
-#         behavioural difference from fetch and is load-bearing for callers that
-#         must be marked as possibly-throwing.
-#   - `create` is a PURE factory; its return is annotated `AxiosInstance` so calls
-#     on the configured instance (`const c = axios.create(); c.get(...)`) resolve
-#     back to axios via the receiver-tracing logic in libraryCallbackEnricher —
-#     the same mechanism express uses for `express()` → Application.
+#         non-2xx response, so awaiting a 4xx/5xx throws.
 #   - Data/helper utilities that touch neither the network nor shared state are
-#     PURE. No arg roles are declared: the `http` bridge extracts the URL from
-#     arg[0] directly (see bridges.yaml), and effects-db arg roles are only read
-#     for callback/route/command/tool-schema fan-out, none of which apply here.
+#     PURE (so callers aren't conservatively marked UNKNOWN).
+#   - No arg roles or `returns.type` are declared: the only consumer of structured
+#     entries (args[N].role / returns.type / channel) is the GENERATED registry
+#     effects_callable_facts.dl, whose generator (scripts/generate-effects-
+#     callable-facts.mjs) INCLUDES an entry only if it carries a role-annotated
+#     arg or a channel map — returns-only entries are excluded ("no pack consumes
+#     bare returns yet"). Declaring `axios.create → AxiosInstance` would therefore
+#     be inert: there is no receiver-type tracing that maps a `const c =
+#     axios.create(); c.get()` instance call back to axios today. That gap
+#     (instance-method effect resolution for factory-returned objects) is real but
+#     out of scope for a data-only effects-db entry — see PR follow-ups.
 
 axios:
-  # ---------------------------------------------------------------------------
-  # Default-export request methods. The bare callable form `axios(config)` and
-  # `axios(url, config)` share these effects but is not keyed here because the
-  # call-target parser needs a `module.method` shape.
-  # ---------------------------------------------------------------------------
+  # Default-export request methods. The bare callable form `axios(config)` /
+  # `axios(url, config)` shares these effects but is not keyed here because the
+  # call-target parser (EffectsLookup.parseCallTarget) needs a `module.method`
+  # shape.
   request: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
   get: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
   delete: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
@@ -48,17 +57,7 @@ axios:
   putForm: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
   patchForm: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
 
-  # ---------------------------------------------------------------------------
-  # Factory — returns a configured AxiosInstance (no IO of its own).
-  # ---------------------------------------------------------------------------
-  create:
-    effects: [PURE]
-    returns:
-      type: AxiosInstance
-
-  # ---------------------------------------------------------------------------
   # Aggregator / helpers — pure or async-only, never network IO themselves.
-  # ---------------------------------------------------------------------------
   all: [ASYNC]            # Promise.all wrapper (deprecated); no direct IO
   spread: [PURE]          # returns a function that spreads an array of results
   isAxiosError: [PURE]    # type guard
@@ -66,22 +65,3 @@ axios:
   getUri: [PURE]          # builds a request URI string from config; no network
   toFormData: [PURE]      # serialize object → FormData
   formToJSON: [PURE]      # deserialize FormData/HTMLForm → object
-
-  # ---------------------------------------------------------------------------
-  # AxiosInstance — the object returned by axios.create(). Same request surface
-  # as the default export, keyed as `AxiosInstance.<method>` so receiver tracing
-  # resolves `const c = axios.create(); c.get(...)` back to axios (mirrors
-  # express's Application.* / Router.* convention).
-  # ---------------------------------------------------------------------------
-  AxiosInstance.request: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
-  AxiosInstance.get: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
-  AxiosInstance.delete: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
-  AxiosInstance.head: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
-  AxiosInstance.options: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
-  AxiosInstance.post: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
-  AxiosInstance.put: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
-  AxiosInstance.patch: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
-  AxiosInstance.postForm: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
-  AxiosInstance.putForm: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
-  AxiosInstance.patchForm: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
-  AxiosInstance.getUri: [PURE]
