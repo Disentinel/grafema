@@ -605,3 +605,60 @@ describe('REG-1144 — advertised tools all have dispatch handlers', () => {
     );
   });
 });
+
+// ============================================================================
+// REG-1191 — no advertised-but-ignored parameters on analyze_project
+//
+// REG-1144 guards "every advertised TOOL has a dispatch handler". A finer
+// trust hole (the QA-7 `include_edges` class) is "an advertised PARAMETER the
+// handler silently ignores": the schema promises a knob, the agent sets it,
+// and the handler drops it on the floor — wasting budget or eroding trust in
+// the whole surface.
+//
+// analyze_project advertised `index_only` ("Fast mode — create MODULE nodes
+// only, skip detailed analysis") while handleAnalyzeProject only ever read
+// `{ service, force }` and the orchestrator has no index-only mode. This test
+// pins the invariant: every parameter advertised by analyze_project must be
+// referenced (read) by handleAnalyzeProject's body.
+// ============================================================================
+
+describe('REG-1191 — analyze_project advertises no parameter its handler ignores', () => {
+  it('every advertised analyze_project param is read by handleAnalyzeProject', () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+
+    // Advertised parameters, straight from the live tool schema.
+    const tool = TOOLS.find((t) => t.name === 'analyze_project');
+    assert.ok(tool, 'analyze_project tool must exist in TOOLS');
+    const advertised = Object.keys(
+      (tool!.inputSchema as { properties?: Record<string, unknown> }).properties ?? {},
+    );
+    assert.ok(advertised.length > 0, 'analyze_project should advertise at least one param');
+
+    // Isolate the handler body so we only credit reads inside handleAnalyzeProject,
+    // not some unrelated handler that happens to mention the same identifier.
+    const handlersSrc = readFileSync(
+      join(here, '..', 'src', 'handlers', 'analysis-handlers.ts'),
+      'utf8',
+    );
+    const startIdx = handlersSrc.indexOf('export async function handleAnalyzeProject');
+    assert.ok(startIdx >= 0, 'handleAnalyzeProject must be defined');
+    const afterStart = handlersSrc.indexOf('export async function ', startIdx + 1);
+    const body = handlersSrc.slice(startIdx, afterStart === -1 ? undefined : afterStart);
+
+    // A param is honored if its snake_case key OR its camelCase identifier
+    // appears in the handler body (handlers destructure args by either name).
+    const toCamel = (s: string) => s.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
+    const ignored = advertised.filter((p) => {
+      const camel = toCamel(p);
+      const snakeRe = new RegExp(`\\b${p}\\b`);
+      const camelRe = new RegExp(`\\b${camel}\\b`);
+      return !snakeRe.test(body) && !camelRe.test(body);
+    });
+
+    assert.deepStrictEqual(
+      ignored,
+      [],
+      `analyze_project advertises parameter(s) the handler never reads (advertised-but-dead): ${ignored.join(', ')}`,
+    );
+  });
+});

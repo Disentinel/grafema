@@ -153,7 +153,6 @@ export interface FindSharedBehaviorsArgs {
 export interface AnalyzeProjectArgs {
   service?: string;
   force?: boolean;
-  index_only?: boolean;
 }
 
 export interface GetCoverageArgs {

@@ -37,7 +37,6 @@ REQUIRED before using query tools. Without analysis, the graph is empty.
 Options:
 - service: Analyze only one service (faster for multi-service projects)
 - force: Re-analyze even if graph exists (use after code changes)
-- index_only: Fast mode — create MODULE nodes only, skip detailed analysis
 
 Phases: Discovery → Indexing → Analysis → Enrichment → Validation
 Returns: Analysis summary with node/edge counts and timing.
@@ -53,10 +52,6 @@ Tip: Use get_stats after analysis to verify graph was built successfully.`,
         force: {
           type: 'boolean',
           description: 'Force re-analysis even if already analyzed',
-        },
-        index_only: {
-          type: 'boolean',
-          description: 'Only index modules, skip full analysis',
         },
       },
     },
