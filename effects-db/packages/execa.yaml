@@ -15,9 +15,8 @@
 #
 # THROW rationale: execa rejects (async) / throws (sync) when the child exits with
 # a non-zero code, unless the caller passes `{ reject: false }`. The default is to
-# throw, so the static annotation records THROW (same reasoning as axios's default
-# validateStatus reject). This mirrors node:child_process.exec/spawn which are also
-# annotated THROW.
+# throw, so the static annotation records THROW. This mirrors node:child_process
+# exec/spawn/execSync in runtimes/node.yaml, which are likewise annotated THROW.
 #
 # ASYNC applies only to the promise-returning forms; the *Sync forms block and
 # therefore carry no ASYNC (mirrors execSync vs exec in node.yaml).
