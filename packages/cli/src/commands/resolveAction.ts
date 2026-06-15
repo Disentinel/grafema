@@ -230,7 +230,7 @@ export async function resolveAction(path: string, options: {
         ],
         env: {
           ...process.env,
-          RUST_LOG: options.debug ? 'debug' : (options.quiet ? 'warn' : 'info'),
+          RUST_LOG: options.debug ? 'debug' : options.verbose ? 'info' : 'warn',
         },
       });
 

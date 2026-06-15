@@ -396,8 +396,8 @@ export async function analyzeAction(path: string, options: { service?: string; e
         ],
         env: {
           ...process.env,
-          // Pass RUST_LOG for tracing verbosity
-          RUST_LOG: options.debug ? 'debug' : (options.quiet ? 'warn' : 'info'),
+          // Pass RUST_LOG for tracing verbosity; default=warn to avoid INFO noise
+          RUST_LOG: options.debug ? 'debug' : options.verbose ? 'info' : 'warn',
         },
       });
 
