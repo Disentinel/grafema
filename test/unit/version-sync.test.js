@@ -99,6 +99,49 @@ function discoverExactGrafemaPins() {
   return pins;
 }
 
+/**
+ * Discover every version string `pnpm-lock.yaml` references for the platform-binary
+ * packages (`@grafema/grafema-{linux,darwin}-{x64,arm64}`), across both the
+ * `importers:` blocks (`specifier:`/`version:` lines) and the resolved `packages:`
+ * section keys (`@grafema/grafema-…@<version>:`).
+ *
+ * Why this is a separate guard from the package.json check: CI installs with
+ * `pnpm install --no-frozen-lockfile`, which silently REGENERATES the lockfile, so a
+ * committed lockfile that contradicts a package.json bump is never surfaced by the
+ * install step. The package.json connascence check alone would stay green while
+ * `pnpm-lock.yaml` keeps a stale pin (exactly the gap a half-done bump leaves — a
+ * manifest updated to the new version, the lockfile importer block left behind).
+ * This scan is the only thing that catches a stale binary pin inside the committed
+ * lockfile.
+ *
+ * Returns an array of `{ where, version }` records.
+ */
+function discoverLockfileBinaryVersions() {
+  const lockPath = join(ROOT, 'pnpm-lock.yaml');
+  if (!existsSync(lockPath)) return [];
+  const lines = readFileSync(lockPath, 'utf-8').split('\n');
+  const refs = [];
+  const importerKey = /^\s*'@grafema\/grafema-(?:darwin|linux)-(?:x64|arm64)':\s*$/;
+  const packageKey = /^\s*'@grafema\/grafema-(?:darwin|linux)-(?:x64|arm64)@([^']+)':/;
+  const valueLine = /^\s*(specifier|version):\s*'?([^'\s]+)'?\s*$/;
+  for (let i = 0; i < lines.length; i++) {
+    const pk = lines[i].match(packageKey);
+    if (pk) {
+      refs.push({ where: `packages: ${lines[i].trim()}`, version: pk[1] });
+      continue;
+    }
+    if (importerKey.test(lines[i])) {
+      // The `specifier:`/`version:` pair lives on the next 1-2 indented lines.
+      for (let j = i + 1; j < Math.min(i + 3, lines.length); j++) {
+        const v = lines[j].match(valueLine);
+        if (!v) break;
+        refs.push({ where: `importer ${lines[i].trim()} ${v[1]}`, version: v[2] });
+      }
+    }
+  }
+  return refs;
+}
+
 describe('version-sync', () => {
   const rootVersion = readPackageVersion('.');
 
@@ -150,5 +193,30 @@ describe('version-sync', () => {
         );
       });
     }
+  });
+
+  describe('pnpm-lock.yaml @grafema/* platform-binary versions match root version', () => {
+    const refs = discoverLockfileBinaryVersions();
+
+    it('at least one lockfile binary version is discovered (guards the scanner)', () => {
+      assert.ok(
+        refs.length > 0,
+        'No @grafema/grafema-* binary versions found in pnpm-lock.yaml — the scanner is ' +
+        'likely broken or the lockfile format changed.'
+      );
+    });
+
+    it('no @grafema/* platform-binary pin in pnpm-lock.yaml is stale', () => {
+      const stale = refs.filter((r) => r.version !== rootVersion);
+      assert.deepStrictEqual(
+        stale,
+        [],
+        `pnpm-lock.yaml references @grafema/grafema-* binaries at a version other than the ` +
+        `root "${rootVersion}" — stale lockfile pin (RFD-75). CI installs with ` +
+        `--no-frozen-lockfile, so this is not caught at install time; a half-done bump (manifest ` +
+        `updated, lockfile not) lands here. Regenerate with \`pnpm install --lockfile-only\`. ` +
+        `Offenders: ${JSON.stringify(stale, null, 2)}`
+      );
+    });
   });
 });
