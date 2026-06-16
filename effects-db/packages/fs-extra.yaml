@@ -121,6 +121,8 @@ fs-extra:
   appendFileSync: [IO, IO:FILE:WRITE, MUTATION]
   createReadStream: [IO, IO:FILE:READ]
   createWriteStream: [IO, IO:FILE:WRITE, MUTATION]
+  copyFile: [IO, IO:FILE:READ, IO:FILE:WRITE, ASYNC, MUTATION]
+  copyFileSync: [IO, IO:FILE:READ, IO:FILE:WRITE, MUTATION]
 
   # ---------------------------------------------------------------------------
   # Re-exported node:fs — directory / metadata / link ops (plain IO, matches
@@ -144,8 +146,6 @@ fs-extra:
   unlinkSync: [IO, MUTATION]
   rename: [IO, ASYNC, MUTATION]
   renameSync: [IO, MUTATION]
-  copyFile: [IO, IO:FILE:READ, IO:FILE:WRITE, ASYNC, MUTATION]
-  copyFileSync: [IO, IO:FILE:READ, IO:FILE:WRITE, MUTATION]
   chmod: [IO, ASYNC, MUTATION]
   chmodSync: [IO, MUTATION]
   chown: [IO, ASYNC, MUTATION]

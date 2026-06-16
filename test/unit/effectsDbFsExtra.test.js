@@ -68,6 +68,13 @@ describe('effects-db: fs-extra', () => {
     assert.ok(effects.includes('ASYNC'), `Expected ASYNC, got: ${effects}`);
   });
 
+  it('copyFile (re-exported node:fs) reads source AND writes dest: both subtypes', () => {
+    const effects = lookup.lookup('fs-extra', 'copyFile');
+    assert.ok(effects, 'Expected effects-db entry for fs-extra copyFile');
+    assert.ok(effects.includes('IO:FILE:READ'), `Expected IO:FILE:READ, got: ${effects}`);
+    assert.ok(effects.includes('IO:FILE:WRITE'), `Expected IO:FILE:WRITE, got: ${effects}`);
+  });
+
   it('ensureDir creates directories: IO + MUTATION, no file-content subtype', () => {
     const effects = lookup.lookup('fs-extra', 'ensureDir');
     assert.ok(effects, 'Expected effects-db entry for fs-extra ensureDir');
