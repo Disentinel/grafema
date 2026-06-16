@@ -141,6 +141,15 @@ pub struct MaterializeSpec {
     /// `2 + i` into the written edge's metadata (module docs). Empty when the rule has no
     /// `meta(...)` group — the legacy binary-head contract, byte-identical metadata.
     pub meta: Vec<String>,
+    /// `single_target = "true"`: assert this rule resolves each source endpoint to AT MOST
+    /// ONE distinct target — a materialize-time fan-out tripwire for resolve packs
+    /// (READS_FROM / CALLS). A pack head that yields two distinct dsts for one src aborts
+    /// the run (`E-MAT-013`) BEFORE any commit, catching a resolver fan-out at its producer
+    /// rather than after it has polluted the graph. This is an OPTIONAL early signal scoped
+    /// to ONE pack's own output; the AUTHORITATIVE resolution-is-a-function gate is the
+    /// orchestrator's post-analyze whole-graph check, which sees every producer (packs +
+    /// native resolvers + orchestrator-derived edges). Default `false`.
+    pub single_target: bool,
 }
 
 /// Extract every `@materialize(edge_type="T")` directive from a parsed program, paired
@@ -184,12 +193,31 @@ pub fn collect_materialize_specs(
                     })
                 }
             };
+            let single_target = match pairs
+                .iter()
+                .find(|kv| kv.key == "single_target")
+                .map(|kv| kv.value.as_str())
+            {
+                None => false,
+                Some("true") => true,
+                Some(other) => {
+                    return Err(MaterializeError {
+                        code: "E-MAT-012",
+                        detail: format!(
+                            "@materialize on predicate '{}' has invalid single_target '{}' (expected \"true\", or omit the key)",
+                            item.rule.head().predicate(),
+                            other
+                        ),
+                    })
+                }
+            };
             out.push(MaterializeSpec {
                 predicate: item.rule.head().predicate().to_string(),
                 edge_type,
                 rule_ast_hash: rule_ast_hash(&item.rule),
                 additive,
                 meta: meta.clone(),
+                single_target,
             });
         }
     }
@@ -403,6 +431,9 @@ pub fn plan_writeback(
         // it is per-fact (the projected columns differ), built below.
         let provenance = provenance_metadata(&spec.rule_ast_hash, generation);
         let expected_arity = 2 + spec.meta.len();
+        // single_target tripwire: the first distinct target each source resolved to. A
+        // second, different target for the same source is a resolution fan-out (E-MAT-013).
+        let mut single_target_seen: HashMap<u128, u128> = HashMap::new();
         for fact in evaluation.facts(&spec.predicate) {
             if fact.len() != expected_arity {
                 return Err(MaterializeError {
@@ -432,6 +463,26 @@ pub fn plan_writeback(
                     spec.predicate, fact[1]
                 ),
             })?;
+            if spec.single_target {
+                match single_target_seen.get(&src) {
+                    Some(&prev) if prev != dst => {
+                        return Err(MaterializeError {
+                            code: "E-MAT-013",
+                            detail: format!(
+                                "@materialize(edge_type=\"{}\", single_target=\"true\") on '{}' \
+                                 resolved source {} to MULTIPLE targets ({} and {}): a resolution \
+                                 fan-out. A single_target resolve pack must yield at most one \
+                                 target per source",
+                                spec.edge_type, spec.predicate, src, prev, dst
+                            ),
+                        })
+                    }
+                    Some(_) => {} // same (src, dst) seen again — a duplicate fact, not a fan-out
+                    None => {
+                        single_target_seen.insert(src, dst);
+                    }
+                }
+            }
             let metadata = if spec.meta.is_empty() {
                 provenance.clone()
             } else {
@@ -660,6 +711,7 @@ mod tests {
             rule_ast_hash: "abc123".to_string(),
             additive: false,
             meta: Vec::new(),
+            single_target: false,
         }];
         let edges = plan_writeback(&specs, &eval, 7).expect("plan");
         assert_eq!(edges.len(), 2);
@@ -683,9 +735,82 @@ mod tests {
             rule_ast_hash: "h".to_string(),
             additive: false,
             meta: Vec::new(),
+            single_target: false,
         }];
         let err = plan_writeback(&specs, &eval, 1).expect_err("unary head must be rejected");
         assert_eq!(err.code, "E-MAT-002");
+    }
+
+    // ── single_target tripwire ──────────────────────────────────────
+
+    #[test]
+    fn collect_specs_reads_single_target_and_rejects_bad_value() {
+        let ok = r#"@materialize(edge_type = "CALLS", single_target = "true")
+                    resolved(C, M) :- edge(C, M, "X")."#;
+        let prog = parse_ext_program(ok).expect("parse");
+        let specs = collect_materialize_specs(&prog).expect("specs");
+        assert!(specs[0].single_target, "single_target = \"true\" sets the flag");
+
+        // Omitting the key defaults to false (byte-identical to the pre-feature contract).
+        let bare = r#"@materialize(edge_type = "CALLS") resolved(C, M) :- edge(C, M, "X")."#;
+        let prog = parse_ext_program(bare).expect("parse");
+        assert!(!collect_materialize_specs(&prog).expect("specs")[0].single_target);
+
+        // Any value other than "true" is a coded rejection — never silently ignored (I5).
+        let bad = r#"@materialize(edge_type = "CALLS", single_target = "yes")
+                     resolved(C, M) :- edge(C, M, "X")."#;
+        let prog = parse_ext_program(bad).expect("parse");
+        let err = collect_materialize_specs(&prog).expect_err("bad single_target rejected");
+        assert_eq!(err.code, "E-MAT-012");
+    }
+
+    #[test]
+    fn plan_writeback_single_target_rejects_fanout() {
+        // One source (10) resolving to two distinct targets (20, 30) is a resolution fan-out.
+        let mut eval = Evaluation::default();
+        eval.relations.insert(
+            "resolved".to_string(),
+            vec![
+                vec![Value::Id(10), Value::Id(20)].into_boxed_slice(),
+                vec![Value::Id(10), Value::Id(30)].into_boxed_slice(),
+            ],
+        );
+        let specs = vec![MaterializeSpec {
+            predicate: "resolved".to_string(),
+            edge_type: "CALLS".to_string(),
+            rule_ast_hash: "h".to_string(),
+            additive: true,
+            meta: Vec::new(),
+            single_target: true,
+        }];
+        let err = plan_writeback(&specs, &eval, 1).expect_err("fan-out must abort the run");
+        assert_eq!(err.code, "E-MAT-013");
+    }
+
+    #[test]
+    fn plan_writeback_single_target_allows_one_target_per_source_and_dups() {
+        // Distinct sources each with one target — and a duplicate (10→20) fact — are fine.
+        let mut eval = Evaluation::default();
+        eval.relations.insert(
+            "resolved".to_string(),
+            vec![
+                vec![Value::Id(10), Value::Id(20)].into_boxed_slice(),
+                vec![Value::Id(10), Value::Id(20)].into_boxed_slice(), // duplicate, not a fan-out
+                vec![Value::Id(11), Value::Id(21)].into_boxed_slice(),
+            ],
+        );
+        let specs = vec![MaterializeSpec {
+            predicate: "resolved".to_string(),
+            edge_type: "READS_FROM".to_string(),
+            rule_ast_hash: "h".to_string(),
+            additive: true,
+            meta: Vec::new(),
+            single_target: true,
+        }];
+        let edges = plan_writeback(&specs, &eval, 1).expect("single-target-per-source is valid");
+        // Both (10,20) facts produce the same edge (dedup is downstream on (src,dst,type)).
+        assert_eq!(edges.len(), 3);
+        assert!(edges.iter().all(|e| e.edge_type == "READS_FROM"));
     }
 
     // ── meta(...) projection ────────────────────────────────────────
@@ -723,6 +848,7 @@ mod tests {
             rule_ast_hash: "h1".to_string(),
             additive: true,
             meta: vec!["method".to_string(), "line".to_string()],
+            single_target: false,
         }];
         let edges = plan_writeback(&specs, &eval, 9).expect("plan");
         assert_eq!(edges.len(), 1);
@@ -935,6 +1061,7 @@ mod tests {
             rule_ast_hash: "h".to_string(),
             additive: false,
             meta: vec!["method".to_string()],
+            single_target: false,
         }];
         let err = plan_writeback(&specs, &eval, 1).expect_err("arity 2 ≠ 2 + 1 meta");
         assert_eq!(err.code, "E-MAT-002");
@@ -951,6 +1078,7 @@ mod tests {
             rule_ast_hash: "h".to_string(),
             additive: false,
             meta: Vec::new(),
+            single_target: false,
         }];
         let err = plan_writeback(&bare, &eval3, 1).expect_err("arity 3 without meta");
         assert_eq!(err.code, "E-MAT-002");
