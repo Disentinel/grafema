@@ -1,0 +1,156 @@
+# fs-extra (v11.x) — Filesystem extras (superset of node:fs)
+# Generated: 2026-06-15
+# Method: Claude inference based on node:fs (runtimes/node.yaml) effect values
+#         + fs-extra v11 documented API, with v2 IO:FILE subtypes added per the
+#         subtype principle below (so some re-exported methods intentionally
+#         diverge from node.yaml — see the list below).
+# Taxonomy version: 2
+#   Uses v2 IO:* subtypes (IO:FILE:READ / IO:FILE:WRITE) intentionally — the whole
+#   value of annotating fs-extra is to fill the file-ipc bridge (bridges.yaml:
+#   sender IO:FILE:WRITE -> receiver IO:FILE:READ), which had ZERO npm package
+#   coverage before this file (only the node:fs runtime). Older package files say
+#   "version: 1" and use plain IO; this file deliberately uses v2 vocabulary.
+# purl: pkg:npm/fs-extra
+#
+# fs-extra re-exports every node:fs method (callback + sync + promise) and adds
+# convenience methods. Effect values for re-exported methods follow
+# runtimes/node.yaml node:fs, with ONE deliberate divergence: the v2 IO:FILE:READ
+# / IO:FILE:WRITE subtypes (subtype principle below) are applied to every
+# file-content operation, whereas node.yaml currently carries those subtypes only
+# on readFile/writeFile/readFileSync/writeFileSync. Re-exported methods that
+# therefore diverge from node.yaml by ADDING IO:FILE subtypes: appendFile,
+# appendFileSync, copyFile, copyFileSync, createReadStream, createWriteStream.
+# All other re-exported methods match node.yaml exactly (non-IO:FILE effects are
+# identical). Subtype principle: IO:FILE:READ / IO:FILE:WRITE are applied to
+# operations that read/write a *file's content*; directory ops, stat/metadata,
+# and deletes use plain IO (+ MUTATION) like node:fs and avoid false file-ipc
+# bridge matches.
+#
+# Resolution: a named import `import { readJson } from 'fs-extra'` is an
+# IMPORT_BINDING (source='fs-extra', importedName='readJson') resolved by
+# traceEffects.ts via lookup('fs-extra', 'readJson') — hence bare method keys
+# (same convention as minimatch.yaml). Default-import member calls
+# (`fse.readJson()`) and live file-ipc bridge detection need a live graph and
+# were not validated here.
+
+fs-extra:
+  # ---------------------------------------------------------------------------
+  # JSON helpers (unique to fs-extra)
+  # readJson/readJsonSync run JSON.parse → THROW on invalid JSON (default opts).
+  # writeJson/outputJson run JSON.stringify → THROW on circular refs / BigInt.
+  # ---------------------------------------------------------------------------
+  readJson: [IO, IO:FILE:READ, ASYNC, THROW]
+  readJsonSync: [IO, IO:FILE:READ, THROW]
+  readJSON: [IO, IO:FILE:READ, ASYNC, THROW]          # uppercase alias
+  readJSONSync: [IO, IO:FILE:READ, THROW]              # uppercase alias
+  writeJson: [IO, IO:FILE:WRITE, ASYNC, MUTATION, THROW]
+  writeJsonSync: [IO, IO:FILE:WRITE, MUTATION, THROW]
+  writeJSON: [IO, IO:FILE:WRITE, ASYNC, MUTATION, THROW]   # uppercase alias
+  writeJSONSync: [IO, IO:FILE:WRITE, MUTATION, THROW]      # uppercase alias
+
+  # ---------------------------------------------------------------------------
+  # output* — ensureDir(parent) then write (unique to fs-extra)
+  # ---------------------------------------------------------------------------
+  outputFile: [IO, IO:FILE:WRITE, ASYNC, MUTATION]
+  outputFileSync: [IO, IO:FILE:WRITE, MUTATION]
+  outputJson: [IO, IO:FILE:WRITE, ASYNC, MUTATION, THROW]
+  outputJsonSync: [IO, IO:FILE:WRITE, MUTATION, THROW]
+  outputJSON: [IO, IO:FILE:WRITE, ASYNC, MUTATION, THROW]  # uppercase alias
+  outputJSONSync: [IO, IO:FILE:WRITE, MUTATION, THROW]     # uppercase alias
+
+  # ---------------------------------------------------------------------------
+  # copy / move — read source content AND write destination content
+  # (both file-content subtypes → can act as either side of the file-ipc bridge)
+  # ---------------------------------------------------------------------------
+  copy: [IO, IO:FILE:READ, IO:FILE:WRITE, ASYNC, MUTATION]
+  copySync: [IO, IO:FILE:READ, IO:FILE:WRITE, MUTATION]
+  move: [IO, IO:FILE:READ, IO:FILE:WRITE, ASYNC, MUTATION]
+  moveSync: [IO, IO:FILE:READ, IO:FILE:WRITE, MUTATION]
+
+  # ---------------------------------------------------------------------------
+  # ensure* — create a file/dir/link if missing (unique to fs-extra)
+  # ensureFile writes an (empty) file → IO:FILE:WRITE; dir/link creation is
+  # filesystem mutation but not file-content write → plain IO + MUTATION.
+  # ---------------------------------------------------------------------------
+  ensureFile: [IO, IO:FILE:WRITE, ASYNC, MUTATION]
+  ensureFileSync: [IO, IO:FILE:WRITE, MUTATION]
+  createFile: [IO, IO:FILE:WRITE, ASYNC, MUTATION]       # alias of ensureFile
+  createFileSync: [IO, IO:FILE:WRITE, MUTATION]          # alias of ensureFileSync
+  ensureDir: [IO, ASYNC, MUTATION]
+  ensureDirSync: [IO, MUTATION]
+  mkdirp: [IO, ASYNC, MUTATION]                          # alias of ensureDir
+  mkdirpSync: [IO, MUTATION]
+  mkdirs: [IO, ASYNC, MUTATION]                          # alias of ensureDir
+  mkdirsSync: [IO, MUTATION]
+  ensureLink: [IO, ASYNC, MUTATION]
+  ensureLinkSync: [IO, MUTATION]
+  createLink: [IO, ASYNC, MUTATION]                      # alias of ensureLink
+  createLinkSync: [IO, MUTATION]
+  ensureSymlink: [IO, ASYNC, MUTATION]
+  ensureSymlinkSync: [IO, MUTATION]
+  createSymlink: [IO, ASYNC, MUTATION]                   # alias of ensureSymlink
+  createSymlinkSync: [IO, MUTATION]
+
+  # ---------------------------------------------------------------------------
+  # remove / emptyDir — delete (filesystem mutation, not file-content write)
+  # ---------------------------------------------------------------------------
+  remove: [IO, ASYNC, MUTATION]
+  removeSync: [IO, MUTATION]
+  emptyDir: [IO, ASYNC, MUTATION]
+  emptyDirSync: [IO, MUTATION]
+  emptydir: [IO, ASYNC, MUTATION]                        # lowercase alias
+  emptydirSync: [IO, MUTATION]
+
+  # ---------------------------------------------------------------------------
+  # pathExists — read-only existence probe (unique to fs-extra)
+  # ---------------------------------------------------------------------------
+  pathExists: [IO, ASYNC]
+  pathExistsSync: [IO]
+
+  # ---------------------------------------------------------------------------
+  # Re-exported node:fs — file-content read/write. Non-IO:FILE effects follow
+  # node:fs; IO:FILE:READ / IO:FILE:WRITE subtypes are added to file-content ops
+  # (appendFile/copyFile/createReadStream/createWriteStream add subtypes not
+  # present in node.yaml — see header).
+  # ---------------------------------------------------------------------------
+  readFile: [IO, IO:FILE:READ, ASYNC]
+  readFileSync: [IO, IO:FILE:READ]
+  writeFile: [IO, IO:FILE:WRITE, ASYNC, MUTATION]
+  writeFileSync: [IO, IO:FILE:WRITE, MUTATION]
+  appendFile: [IO, IO:FILE:WRITE, ASYNC, MUTATION]
+  appendFileSync: [IO, IO:FILE:WRITE, MUTATION]
+  createReadStream: [IO, IO:FILE:READ]
+  createWriteStream: [IO, IO:FILE:WRITE, MUTATION]
+  copyFile: [IO, IO:FILE:READ, IO:FILE:WRITE, ASYNC, MUTATION]
+  copyFileSync: [IO, IO:FILE:READ, IO:FILE:WRITE, MUTATION]
+
+  # ---------------------------------------------------------------------------
+  # Re-exported node:fs — directory / metadata / link ops (plain IO, matches
+  # node:fs; not file-content, so no IO:FILE subtype).
+  # ---------------------------------------------------------------------------
+  readdir: [IO, ASYNC]
+  readdirSync: [IO]
+  mkdir: [IO, ASYNC, MUTATION]
+  mkdirSync: [IO, MUTATION]
+  rmdir: [IO, ASYNC, MUTATION]
+  rmdirSync: [IO, MUTATION]
+  rm: [IO, ASYNC, MUTATION]
+  rmSync: [IO, MUTATION]
+  stat: [IO, ASYNC]
+  statSync: [IO]
+  lstat: [IO, ASYNC]
+  lstatSync: [IO]
+  access: [IO, ASYNC]
+  accessSync: [IO]
+  unlink: [IO, ASYNC, MUTATION]
+  unlinkSync: [IO, MUTATION]
+  rename: [IO, ASYNC, MUTATION]
+  renameSync: [IO, MUTATION]
+  chmod: [IO, ASYNC, MUTATION]
+  chmodSync: [IO, MUTATION]
+  chown: [IO, ASYNC, MUTATION]
+  chownSync: [IO, MUTATION]
+  realpath: [IO, ASYNC]
+  realpathSync: [IO]
+  exists: [IO, ASYNC]
+  existsSync: [IO]
