@@ -1,0 +1,110 @@
+# ws (8.x) — WebSocket client + server
+# Generated: 2026-06-16
+# Method: REAL API probe of ws@8.21.0 (Object.keys + behaviour probes), not memory.
+# Taxonomy version: 2
+# purl: pkg:npm/ws
+#
+# ws is the first FULL-DUPLEX NETWORK SOCKET package in effects-db: a client
+# (WebSocket) AND a server (WebSocketServer / its Server alias). It is both a
+# socket-bridge sender and receiver per bridges.yaml unix-socket pattern
+#   sender   [IO:SOCKET:WRITE, IO:SOCKET:CONNECT]
+#   receiver [IO:SOCKET:LISTEN, IO:SOCKET:READ]
+# The client connects (IO:SOCKET:CONNECT) and writes frames (IO:SOCKET:WRITE);
+# the server binds and listens (IO:SOCKET:LISTEN). These mirror node:net
+# Socket.connect / Socket.write / Socket.end / Server.listen (node.yaml:294-308)
+# and net.createServer (node.yaml:284, IO:SOCKET:LISTEN). The default CJS export
+# IS the WebSocket class (`require('ws') === require('ws').WebSocket`), so client
+# methods are keyed under `WebSocket.*`.
+#
+# THROW SPLITS (all verified live, the non-obvious ones):
+#   * `new WebSocket(url)` parses the URL synchronously and sync-THROWs on a
+#     missing/invalid URL (SyntaxError "Invalid URL"); the network handshake is
+#     ASYNC, so a connection failure is an async 'error' event, NOT a sync throw
+#     → [IO, IO:SOCKET:CONNECT, ASYNC, THROW] (CONNECT + ASYNC mirror node:net
+#     Socket.connect; THROW for the sync URL validation).
+#   * `send()/ping()/pong()` sync-THROW when the socket is not OPEN ("WebSocket
+#     is not open: readyState 0 (CONNECTING)") — verified this throws EVEN when a
+#     completion callback is supplied. When OPEN they write the socket and the
+#     callback fires on flush → [IO, IO:SOCKET:WRITE, ASYNC, THROW]
+#     (mirror node Socket.write, plus the not-open sync throw).
+#   * `close(code, reason)` validates the close code synchronously and sync-THROWs
+#     on an invalid code (TypeError), then sends a close frame and runs the ASYNC
+#     closing handshake → [IO, IO:SOCKET:WRITE, ASYNC, THROW] (mirror Socket.end).
+#   * `new WebSocketServer(opts)` sync-THROWs when none of port/server/noServer is
+#     given (TypeError); with `{port}` it binds an http server and listens
+#     → [IO, IO:SOCKET:LISTEN, ASYNC, THROW] (mirror net.createServer().listen,
+#     plus the sync options-validation throw). `Server` is the same class.
+#
+# NON-IO / structural:
+#   * `terminate/pause/resume` are thin passthroughs to the underlying socket —
+#     mirror node Socket.destroy/pause/resume (node.yaml:299-301) → [IO, MUTATION].
+#   * Listener registration (`on/once/off/addEventListener/removeEventListener`,
+#     and `emit`) mirrors node EventEmitter.on (node.yaml:465) → [MUTATION];
+#     the READ effect of an incoming frame is NOT attributed to `.on` itself,
+#     exactly as node:net's `socket.on('data')` carries no IO on the registration.
+#   * `WebSocketServer.shouldHandle(req)` returns a boolean and never throws → PURE.
+#   * `WebSocketServer.address()` reads the bound address → [IO] (mirror
+#     node Socket.address, node.yaml:305).
+#   * `WebSocketServer.handleUpgrade(req, socket, head, cb)` writes the HTTP 101
+#     handshake response over the existing socket and calls back with the new
+#     WebSocket → [IO, IO:SOCKET:WRITE, ASYNC].
+#   * `createWebSocketStream(ws[, opts])` builds a Duplex bound to `ws`: it
+#     attaches listeners to the passed socket (MUTATION) and sync-THROWs on a bad
+#     arg (reads `.on` of undefined). It performs NO socket IO at call time — the
+#     read/write IO happens on the returned Duplex, not on this factory call
+#     → [MUTATION, THROW].
+#   * Construction does no IO for `new WebSocket(null)` (server-side internal form)
+#     but the documented client form `new WebSocket(url)` always opens a
+#     connection, so WebSocket.new carries the CONNECT effect (above).
+#
+# Not annotated: the low-level `Sender`/`Receiver`/`PerMessageDeflate` frame
+# codec classes and the numeric readyState constants (CONNECTING/OPEN/CLOSING/
+# CLOSED) — internal/advanced surface, not the documented call API.
+
+ws:
+  # ── WebSocket client: connect + frame writes over the socket ──
+  # `new WebSocket(url)` opens an async connection; sync-throws on a bad URL.
+  WebSocket.new: [IO, IO:SOCKET:CONNECT, ASYNC, THROW]
+  # send/ping/pong write the socket (ASYNC callback) and sync-throw when not OPEN.
+  WebSocket.send: [IO, IO:SOCKET:WRITE, ASYNC, THROW]
+  WebSocket.ping: [IO, IO:SOCKET:WRITE, ASYNC, THROW]
+  WebSocket.pong: [IO, IO:SOCKET:WRITE, ASYNC, THROW]
+  # close sends a close frame (ASYNC handshake) and sync-throws on an invalid code.
+  WebSocket.close: [IO, IO:SOCKET:WRITE, ASYNC, THROW]
+
+  # ── WebSocket socket-state passthroughs (mirror node Socket.*) ──
+  WebSocket.terminate: [IO, MUTATION]
+  WebSocket.pause: [IO, MUTATION]
+  WebSocket.resume: [IO, MUTATION]
+
+  # ── WebSocket listener registration (EventEmitter; the READ is not on `.on`) ──
+  WebSocket.on: [MUTATION]
+  WebSocket.once: [MUTATION]
+  WebSocket.off: [MUTATION]
+  WebSocket.addListener: [MUTATION]
+  WebSocket.removeListener: [MUTATION]
+  WebSocket.addEventListener: [MUTATION]
+  WebSocket.removeEventListener: [MUTATION]
+  WebSocket.emit: [MUTATION]
+
+  # ── WebSocketServer: bind/listen + handshake IO (Server is the same class) ──
+  WebSocketServer.new: [IO, IO:SOCKET:LISTEN, ASYNC, THROW]
+  Server.new: [IO, IO:SOCKET:LISTEN, ASYNC, THROW]
+  WebSocketServer.close: [IO, ASYNC]
+  Server.close: [IO, ASYNC]
+  WebSocketServer.handleUpgrade: [IO, IO:SOCKET:WRITE, ASYNC]
+  Server.handleUpgrade: [IO, IO:SOCKET:WRITE, ASYNC]
+  WebSocketServer.address: [IO]
+  Server.address: [IO]
+  WebSocketServer.shouldHandle: [PURE]
+  Server.shouldHandle: [PURE]
+  # Server listener registration (EventEmitter)
+  WebSocketServer.on: [MUTATION]
+  WebSocketServer.once: [MUTATION]
+  WebSocketServer.off: [MUTATION]
+  Server.on: [MUTATION]
+  Server.once: [MUTATION]
+  Server.off: [MUTATION]
+
+  # ── createWebSocketStream: wires a live socket into a Duplex (no IO at call) ──
+  createWebSocketStream: [MUTATION, THROW]
