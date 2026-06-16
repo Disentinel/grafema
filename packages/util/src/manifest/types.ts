@@ -19,11 +19,20 @@ export type EffectType =
   | 'ASYNC'
   | 'NONDETERMINISTIC'
   | 'UNKNOWN'
+  | 'SPAWN'
+  | 'MESSAGE_PASSING'
   | `IO:${string}`;
 
-/** Valid top-level effect names from taxonomy.yaml */
+/**
+ * Valid top-level effect names from taxonomy.yaml (v2 + REG-1097 additions).
+ * SPAWN and MESSAGE_PASSING were added to the taxonomy and the elixir/erlang
+ * runtimes by REG-1097; they MUST be listed here or `isValidEffect` rejects them
+ * and `traceEffects` silently drops them from propagation (e.g. an Elixir `send` /
+ * `GenServer.cast`, or a Redis `publish`, would otherwise trace as PURE).
+ */
 export const VALID_EFFECTS: ReadonlySet<string> = new Set([
   'PURE', 'MUTATION', 'IO', 'THROW', 'ASYNC', 'NONDETERMINISTIC', 'UNKNOWN',
+  'SPAWN', 'MESSAGE_PASSING',
 ]);
 
 /** Check if a string is a valid effect (top-level or IO subtype) */

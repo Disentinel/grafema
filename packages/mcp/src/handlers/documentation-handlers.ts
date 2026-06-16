@@ -242,6 +242,8 @@ Contents:
 - THROW — may throw exceptions
 - ASYNC — returns Promise, accepts callbacks
 - NONDETERMINISTIC — output varies (internal randomness, timestamps)
+- SPAWN — creates a new concurrent context (process, fiber, worker)
+- MESSAGE_PASSING — sends/coordinates messages between contexts (pub/sub, GenServer.call/cast, send)
 - UNKNOWN — analysis could not determine (FFI, eval, dynamic require)
 
 Propagation: A calls B → A inherits all of B's effects. UNKNOWN propagates transitively.
