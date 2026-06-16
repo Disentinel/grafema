@@ -1,0 +1,71 @@
+# axios (1.x) — Promise-based HTTP client
+# Generated: 2026-06-15 (autonomous effects-db fill, fallback track)
+# Method: Claude inference from axios v1.x public API docs, cross-checked against
+#         the node.yaml HTTP convention and effects-db/bridges.yaml `http` pattern.
+# Taxonomy version: 2
+# purl: pkg:npm/axios
+#
+# Why this package matters for Grafema:
+#   The effects-db already annotates the HTTP *server* (receiver) side —
+#   `IO:HTTP:LISTEN` lives on the node.yaml runtime (http.createServer /
+#   Server.listen / https.createServer). (Note: express.yaml's own
+#   `Application.listen` is only `[IO, ASYNC]`, not refined to IO:HTTP:LISTEN —
+#   an express-side subtype gap, tracked separately.) The `http` bridge pattern
+#   (effects-db/bridges.yaml) pairs a sender carrying `IO:HTTP:REQUEST` with a
+#   receiver carrying `IO:HTTP:LISTEN`. axios is the most-used HTTP *client* on
+#   npm, so annotating its request surface supplies the sender-side effect —
+#   `IO:HTTP:REQUEST` previously lived only in the node.yaml runtime
+#   (http.request / fetch), in zero packages.
+#
+# How these annotations are consumed (verified):
+#   `traceEffects` (packages/util/src/queries/traceEffects.ts) — the engine behind
+#   the MCP `trace-effects` handler and behaviorEnricher — resolves an unresolved
+#   `axios.get`-style call through `EffectsLookup.lookup('axios', 'get')` and
+#   propagates the returned effects transitively. test/unit/effectsDbAxios.test.js
+#   exercises exactly this path on a fixture graph.
+#
+# Effect conventions used here:
+#   - Request methods emit [IO, IO:HTTP:REQUEST, ASYNC, THROW]:
+#       * IO + IO:HTTP:REQUEST — outgoing HTTP request (mirrors node.yaml's
+#         http.request / fetch, which list parent IO alongside the subtype).
+#       * ASYNC — returns a Promise.
+#       * THROW — unlike fetch, axios's default `validateStatus` REJECTS on a
+#         non-2xx response, so awaiting a 4xx/5xx throws.
+#   - Data/helper utilities that touch neither the network nor shared state are
+#     PURE (so callers aren't conservatively marked UNKNOWN).
+#   - No arg roles or `returns.type` are declared: the only consumer of structured
+#     entries (args[N].role / returns.type / channel) is the GENERATED registry
+#     effects_callable_facts.dl, whose generator (scripts/generate-effects-
+#     callable-facts.mjs) INCLUDES an entry only if it carries a role-annotated
+#     arg or a channel map — returns-only entries are excluded ("no pack consumes
+#     bare returns yet"). Declaring `axios.create → AxiosInstance` would therefore
+#     be inert: there is no receiver-type tracing that maps a `const c =
+#     axios.create(); c.get()` instance call back to axios today. That gap
+#     (instance-method effect resolution for factory-returned objects) is real but
+#     out of scope for a data-only effects-db entry — see PR follow-ups.
+
+axios:
+  # Default-export request methods. The bare callable form `axios(config)` /
+  # `axios(url, config)` shares these effects but is not keyed here because the
+  # call-target parser (EffectsLookup.parseCallTarget) needs a `module.method`
+  # shape.
+  request: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
+  get: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
+  delete: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
+  head: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
+  options: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
+  post: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
+  put: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
+  patch: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
+  postForm: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
+  putForm: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
+  patchForm: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
+
+  # Aggregator / helpers — pure or async-only, never network IO themselves.
+  all: [ASYNC]            # Promise.all wrapper (deprecated); no direct IO
+  spread: [PURE]          # returns a function that spreads an array of results
+  isAxiosError: [PURE]    # type guard
+  isCancel: [PURE]        # type guard
+  getUri: [PURE]          # builds a request URI string from config; no network
+  toFormData: [PURE]      # serialize object → FormData
+  formToJSON: [PURE]      # deserialize FormData/HTMLForm → object

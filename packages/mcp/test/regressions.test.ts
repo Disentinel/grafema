@@ -750,3 +750,53 @@ describe('remember honors advertised parameters', () => {
     );
   });
 });
+
+// ============================================================================
+// check_invariant must honor every advertised parameter
+//
+// check_invariant advertised `description`, `limit` and `offset`, but
+// handleCheckInvariant read `args.name` (a key the schema never advertised) and
+// hardcoded `.slice(0, 20)` — `description` was dropped, `limit`/`offset` ignored.
+// Same advertised-but-ignored trust hole as REG-1192 (save_document.doc_type) and
+// get_coverage.depth, all under the REG-1144 class.
+//
+// The capability is cheap and the params are now honored (not delisted): like the
+// get_coverage guard, handleCheckInvariant destructures its params, so a param
+// counts as honored if referenced as `args.<param>` OR as a destructured
+// word-boundary identifier in the handler body.
+// ============================================================================
+
+describe('check_invariant honors advertised parameters', () => {
+  it('every advertised check_invariant param is read by handleCheckInvariant', () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+
+    const tool = TOOLS.find((t) => t.name === 'check_invariant');
+    assert.ok(tool, 'check_invariant tool must be advertised in TOOLS');
+
+    const schema = tool.inputSchema as { properties?: Record<string, unknown> };
+    const advertised = Object.keys(schema.properties ?? {});
+    assert.ok(advertised.length > 0, 'check_invariant must advertise parameters');
+
+    // Isolate the handleCheckInvariant function body so unrelated handlers in the
+    // same file can't satisfy the invariant by accident.
+    const src = readFileSync(
+      join(here, '..', 'src', 'handlers', 'dataflow-handlers.ts'),
+      'utf8',
+    );
+    const start = src.indexOf('export async function handleCheckInvariant');
+    assert.ok(start >= 0, 'handleCheckInvariant must exist');
+    const after = src.indexOf('\nexport ', start + 1);
+    const body = after >= 0 ? src.slice(start, after) : src.slice(start);
+
+    const ignored = advertised.filter((param) => {
+      if (body.includes(`args.${param}`)) return false;
+      // Allow destructured reads like `const { rule, description } = args`.
+      return !new RegExp(`\\b${param}\\b`).test(body);
+    });
+    assert.deepStrictEqual(
+      ignored,
+      [],
+      `check_invariant advertises params its handler never reads: ${ignored.join(', ')}`,
+    );
+  });
+});

@@ -341,6 +341,23 @@ id is identical across generations are not tombstoned by changed-file deletion).
    maybe_auto_flush which publishes WITHOUT the run's pending tombstones — a mid-delta flush
    shows adds before retractions (self-heals at the explicit flush). Suppress auto-flush during
    materialize write-back or weaken the one-flush docstring.
+   - **✅ RESOLVED 2026-06-14 (suppress, not document)**: the design fork resolved by evidence —
+     `materialize_writeback_delta` documents "ONE flush commits node+edge adds + tombstones"
+     (engine_v2.rs) and the MVCC design elsewhere asserts "nothing observes a torn state"
+     (`clear_durable` docs), so weakening the docstring would concede a torn read in a
+     transactional write-back. Fix: a `suppress_auto_flush` engine flag set only for the
+     write-back's apply phase via `with_auto_flush_suppressed` (restores the PRIOR value →
+     re-entrancy safe); `maybe_auto_flush`/`maybe_auto_flush_edges` early-return when set.
+     The closing explicit `flush()` runs outside the suppressed scope → durability + the single
+     atomic publish preserved; every other write path keeps its OOM-safeguard auto-flush.
+     Class check: the only piecewise delete+add+`flush()` write-back is this one —
+     `commit_batch_ext`/`commit_batch_concurrent` use the store-level atomic commit
+     (`store.commit_batch_ext`, single manifest flip), so no sibling tear. Locked by
+     `materialize_writeback_is_atomic_under_buffer_pressure` (engine_v2.rs): forces the
+     node-count auto-flush (`write_buffer_node_limit=1`) during a writeback that adds one ISSUE
+     + retracts one owned-stale ISSUE, asserts the version advances EXACTLY ONCE. Red before the
+     fix: advanced twice (the intra-add flip is the torn intermediate). Full rfdb lib suite
+     1401/0, clippy clean. Items #4/#6 of this W4 list remain open (#7 is STALE per PR #426).
 3. **attr(X,"type",T) bypasses the node-feedback stratifier dependency** (edge axis has no such
    bypass — edge_attr can't read the edge type). Track attr-type-const in node_type_arg or fix docs.
    - **✅ RESOLVED 2026-06-14** (verified at HEAD): tracked the read (not just docs) — it was a real
@@ -360,6 +377,21 @@ id is identical across generations are not tombstoned by changed-file deletion).
      `node_attr_metadata_type_read_takes_no_node_materialize_dependency` (`derive/stratify.rs`). Full rfdb
      lib 1403/0, clippy exit 0 (no new warnings).
 4. **O(owned²)**: removed_node_ids is a Vec scanned per node of the type; HashSet one-liner.
+   - **✅ RESOLVED 2026-06-14** (branch `claude/vigilant-lamport-hjnbvg`, verified at HEAD): the
+     owned-node retraction loop in `materialize_writeback_delta`
+     (`packages/rfdb-server/src/graph/engine_v2.rs:1282`) now dedups claimed ids through a
+     `HashSet<u128>` instead of a growing `Vec` probed with `.contains()` per node. The old code
+     iterated `find_nodes_at(type)` = N nodes and probed the up-to-K already-claimed ids linearly
+     → O(N×K) ≈ O(N²) on the hot incremental write-back path; the set makes the probe O(1) → O(N),
+     and `insert` is inherently idempotent. This aligns the node path with the edge-removal path in
+     the SAME function (`prev_keys`/`new_keys`/`additive_types`), which was already `HashSet`-based —
+     the node path (added for item #5) was the sole remaining linear-scan instance. Behavior is
+     identical (the removed set, counts, and tombstones are unchanged; deletion order is irrelevant —
+     `delete_node` records into a tombstone set). Locked by
+     `materialize_node_retraction_tombstones_each_owned_node_exactly_once` (5 owned ISSUEs, a
+     derives-nothing re-run retracts each exactly once → `n_removed == 5`, no double, none dropped).
+     Full rfdb lib **1407/0** (25 ignored); `cargo clippy --profile fast --lib` exit 0, no new
+     warnings. Rust-only in `rfdb-server` — no JS/TS, pnpm gate unaffected.
 5. **Never-rewrite staleness for OWNED nodes**: a re-derived owned node with a CHANGED surface
    (e.g. ISSUE message after method rename on the same CALL) keeps the stale payload forever —
    diverges from the plugin's last-write-wins; rewrite owned-changed nodes or record the delta.

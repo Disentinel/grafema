@@ -12,6 +12,7 @@ import {
   serializeBigInt,
   textResult,
   errorResult,
+  normalizeLimit,
 } from '../utils.js';
 import { isGrafemaUri, toCompactSemanticId } from '@grafema/util';
 import type {
@@ -324,11 +325,19 @@ Do NOT repeat the raw graph data — synthesize it into a human-readable explana
   return textResult(sections.join('\n\n'));
 }
 
-// === CHECK INVARIANT (unchanged) ===
+// === CHECK INVARIANT ===
 
+/**
+ * Run a one-off Datalog invariant and report violating nodes. Honors every
+ * advertised `check_invariant` param (REG-1144 class): `description` (label in
+ * result text — was read under the unadvertised `args.name`), `limit` (max
+ * violations, default DEFAULT_LIMIT — was hardcoded 20) and `offset` (pagination).
+ */
 export async function handleCheckInvariant(args: CheckInvariantArgs): Promise<ToolResult> {
   const db = await ensureAnalyzed();
-  const { rule, name: description } = args;
+  const { rule, description } = args;
+  const limit = normalizeLimit(args.limit);
+  const offset = Math.max(0, Math.floor(args.offset ?? 0));
 
   if (!('checkGuarantee' in db)) {
     return errorResult('Backend does not support Datalog queries');
@@ -343,8 +352,9 @@ export async function handleCheckInvariant(args: CheckInvariantArgs): Promise<To
       return textResult(`Invariant holds: ${description || 'No violations found'}`);
     }
 
+    const page = violations.slice(offset, offset + limit);
     const enrichedViolations: unknown[] = [];
-    for (const v of violations.slice(0, 20)) {
+    for (const v of page) {
       const xBinding = v.bindings?.find((b: { name: string; value: string }) => b.name === 'X');
       if (xBinding) {
         const node = await db.getNode(xBinding.value);
@@ -366,12 +376,18 @@ export async function handleCheckInvariant(args: CheckInvariantArgs): Promise<To
       }
     }
 
+    const shownEnd = offset + page.length;
+    const hasMore = shownEnd < total;
+    const label = description ? `${description} — ` : '';
+    const offsetNote = offset > 0 ? ` (from offset ${offset})` : '';
+    const moreNote = hasMore ? `\n\n... and ${total - shownEnd} more (use offset=${shownEnd})` : '';
+
     return textResult(
-      `${total} violation(s) found:\n\n${JSON.stringify(
+      `${label}${total} violation(s) found${offsetNote}:\n\n${JSON.stringify(
         serializeBigInt(enrichedViolations),
         null,
         2
-      )}${total > 20 ? `\n\n... and ${total - 20} more` : ''}`
+      )}${moreNote}`
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

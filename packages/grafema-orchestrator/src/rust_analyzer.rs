@@ -672,11 +672,16 @@ fn walk_const(c: &syn::ItemConst, ctx: &mut Ctx) {
 
     if is_exported {
         ctx.exports.push(ExportInfo {
-            name: ident, node_id, kind: "variable".to_string(), source: None,
+            name: ident, node_id: node_id.clone(), kind: "variable".to_string(), source: None,
         });
     }
 
     walk_expr(&c.expr, ctx);
+
+    // ASSIGNED_FROM edge: the constant ← its initializer expression. Mirrors
+    // `walk_let` so backward Value Trace / Hover can find the value origin of a
+    // top-level `const` instead of dead-ending on the declaration (REG-686).
+    emit_assigned_from(ctx, node_id, &c.expr);
 }
 
 fn walk_static(s: &syn::ItemStatic, ctx: &mut Ctx) {
@@ -704,11 +709,14 @@ fn walk_static(s: &syn::ItemStatic, ctx: &mut Ctx) {
 
     if is_exported {
         ctx.exports.push(ExportInfo {
-            name: ident, node_id, kind: "variable".to_string(), source: None,
+            name: ident, node_id: node_id.clone(), kind: "variable".to_string(), source: None,
         });
     }
 
     walk_expr(&s.expr, ctx);
+
+    // ASSIGNED_FROM edge: `static NAME = INIT` shares const value-source semantics.
+    emit_assigned_from(ctx, node_id, &s.expr);
 }
 
 // ---------------------------------------------------------------------------
@@ -869,7 +877,7 @@ fn walk_enum(e: &syn::ItemEnum, ctx: &mut Ctx) {
         let (vl, vc) = ctx.span_line_col(variant.ident.span());
         let variant_id = semantic_id(&ctx.file, "VARIANT", &vname, Some(&node_id), None);
         ctx.emit_declaration(GraphNode {
-            id: variant_id,
+            id: variant_id.clone(),
             node_type: "VARIANT".to_string(),
             name: vname,
             file: ctx.file.clone(),
@@ -879,6 +887,23 @@ fn walk_enum(e: &syn::ItemEnum, ctx: &mut Ctx) {
             metadata: HashMap::new(),
             extra: HashMap::new(),
         });
+
+        // Explicit discriminant: `Variant = EXPR` (e.g. `Ok = 200`). Walk the
+        // expression so nested nodes (literals, const references, calls) are
+        // recorded, then link the VARIANT to its value source via ASSIGNED_FROM
+        // — mirroring `walk_let`, so backward Value Trace / Hover can resolve a
+        // variant's explicit value instead of dead-ending on the VARIANT node.
+        if let Some((_eq, disc_expr)) = &variant.discriminant {
+            walk_expr(disc_expr, ctx);
+            if let Some(disc_node_id) = expr_node_id(disc_expr, ctx) {
+                ctx.emit_edge(GraphEdge {
+                    src: variant_id,
+                    dst: disc_node_id,
+                    edge_type: "ASSIGNED_FROM".to_string(),
+                    metadata: HashMap::new(),
+                });
+            }
+        }
     }
 }
 
@@ -975,10 +1000,12 @@ fn walk_impl_item(item: &syn::ImplItem, ctx: &mut Ctx) {
             ctx.enclosing_fn = prev_fn;
         }
         syn::ImplItem::Const(c) => {
-            emit_assoc_const(&c.ident, Some(&c.vis), ctx);
+            let const_id = emit_assoc_const(&c.ident, Some(&c.vis), ctx);
             // Walk the initializer so the constant's value expression (calls,
             // references, literals) participates in the graph like a free const.
             walk_expr(&c.expr, ctx);
+            // ASSIGNED_FROM edge: associated const ← its initializer (REG-686).
+            emit_assigned_from(ctx, const_id, &c.expr);
         }
         syn::ImplItem::Type(t) => {
             emit_assoc_type(&t.ident, Some(&t.vis), ctx);
@@ -1037,10 +1064,12 @@ fn walk_trait(t: &syn::ItemTrait, ctx: &mut Ctx) {
             // Trait items have no visibility (they are part of the trait's public
             // contract), hence `None`.
             syn::TraitItem::Const(c) => {
-                emit_assoc_const(&c.ident, None, ctx);
+                let const_id = emit_assoc_const(&c.ident, None, ctx);
                 // A trait const may carry a default value: `const N: u32 = 0;`.
                 if let Some((_, expr)) = &c.default {
                     walk_expr(expr, ctx);
+                    // ASSIGNED_FROM edge: trait const ← its default value (REG-686).
+                    emit_assigned_from(ctx, const_id, expr);
                 }
             }
             syn::TraitItem::Type(ty) => {
@@ -1059,7 +1088,10 @@ fn walk_trait(t: &syn::ItemTrait, ctx: &mut Ctx) {
 /// edges (emit_declaration) and tagged `associated: true` so queries can tell
 /// `Self::NAME` constants apart from free constants. `vis` is `Some` for impl
 /// items (which carry visibility) and `None` for trait items (which do not).
-fn emit_assoc_const(ident: &syn::Ident, vis: Option<&syn::Visibility>, ctx: &mut Ctx) {
+///
+/// Returns the emitted node id so callers can attach an `ASSIGNED_FROM` edge to
+/// the constant's initializer expression.
+fn emit_assoc_const(ident: &syn::Ident, vis: Option<&syn::Visibility>, ctx: &mut Ctx) -> String {
     let name = ident.to_string();
     let (line, col) = ctx.span_line_col(ident.span());
     let parent = ctx.scope_id().to_string();
@@ -1076,7 +1108,7 @@ fn emit_assoc_const(ident: &syn::Ident, vis: Option<&syn::Visibility>, ctx: &mut
     }
 
     ctx.emit_declaration(GraphNode {
-        id: node_id,
+        id: node_id.clone(),
         node_type: "VARIABLE".to_string(),
         name,
         file: ctx.file.clone(),
@@ -1086,6 +1118,8 @@ fn emit_assoc_const(ident: &syn::Ident, vis: Option<&syn::Visibility>, ctx: &mut
         metadata,
         extra: HashMap::new(),
     });
+
+    node_id
 }
 
 /// Emit a TYPE_ALIAS node for an associated type (`type NAME [= ...];`) declared
@@ -1386,6 +1420,23 @@ fn walk_stmt(stmt: &syn::Stmt, ctx: &mut Ctx) {
     }
 }
 
+/// Emit an `ASSIGNED_FROM` edge from a declaration node (`src_id`) to the node
+/// representing its initializer expression, when that expression maps to a
+/// single value node (literal / call / reference / …). No-op for compound
+/// initializers that `expr_node_id` cannot reduce to one node — matching the
+/// existing `let`-binding behaviour. Shared by `let`, free `const`/`static`,
+/// and associated-const declarations so value-source modelling stays uniform.
+fn emit_assigned_from(ctx: &mut Ctx, src_id: String, init: &syn::Expr) {
+    if let Some(init_node_id) = expr_node_id(init, ctx) {
+        ctx.emit_edge(GraphEdge {
+            src: src_id,
+            dst: init_node_id,
+            edge_type: "ASSIGNED_FROM".to_string(),
+            metadata: HashMap::new(),
+        });
+    }
+}
+
 fn walk_let(local: &syn::Local, ctx: &mut Ctx) {
     // Collect binding IDs before walking init (for ASSIGNED_FROM)
     let binding_ids = collect_pat_binding_ids(&local.pat, "let", ctx);
@@ -1407,16 +1458,8 @@ fn walk_let(local: &syn::Local, ctx: &mut Ctx) {
         }
 
         // ASSIGNED_FROM edges: each binding ← init expression
-        // For simple expressions (path, lit), emit direct edge
-        if let Some(init_node_id) = expr_node_id(&init.expr, ctx) {
-            for var_id in &binding_ids {
-                ctx.emit_edge(GraphEdge {
-                    src: var_id.clone(),
-                    dst: init_node_id.clone(),
-                    edge_type: "ASSIGNED_FROM".to_string(),
-                    metadata: HashMap::new(),
-                });
-            }
+        for var_id in &binding_ids {
+            emit_assigned_from(ctx, var_id.clone(), &init.expr);
         }
     }
 }
@@ -2439,6 +2482,59 @@ mod tests {
     }
 
     #[test]
+    fn test_enum_explicit_discriminant() {
+        // `enum Status { Ok = 200, NotFound = 404 }` — the explicit
+        // discriminant `= 200` must not be dropped. Each discriminant
+        // expression is walked (so its LITERAL node is emitted) and the
+        // VARIANT links to that value source via ASSIGNED_FROM, mirroring
+        // `let x = 200;`. This lets backward Value Trace / Hover resolve a
+        // variant's explicit value instead of dead-ending on the VARIANT.
+        let fa = parse_and_analyze("enum Status { Ok = 200, NotFound = 404 }");
+        assert!(has_node(&fa, "VARIANT", "Ok"));
+        assert!(has_node(&fa, "VARIANT", "NotFound"));
+        assert!(has_node(&fa, "LITERAL", "200"), "discriminant literal 200 emitted");
+        assert!(has_node(&fa, "LITERAL", "404"), "discriminant literal 404 emitted");
+        assert!(
+            has_edge(&fa, "ASSIGNED_FROM", "VARIANT", "LITERAL"),
+            "VARIANT should link to its discriminant value via ASSIGNED_FROM"
+        );
+        // Exactly one ASSIGNED_FROM per explicitly-valued variant (2 here).
+        let assigned: Vec<_> = fa
+            .edges
+            .iter()
+            .filter(|e| e.edge_type == "ASSIGNED_FROM" && e.src.contains("VARIANT"))
+            .collect();
+        assert_eq!(assigned.len(), 2, "one ASSIGNED_FROM per valued variant");
+    }
+
+    #[test]
+    fn test_enum_discriminant_const_reference() {
+        // `enum E { A = BASE }` — a discriminant that references a named const
+        // resolves to a REFERENCE node, and the VARIANT links to it via
+        // ASSIGNED_FROM so backward Value Trace can hop variant → const.
+        let fa = parse_and_analyze("const BASE: isize = 10; enum E { A = BASE }");
+        assert!(has_node(&fa, "REFERENCE", "BASE"), "discriminant reference emitted");
+        assert!(
+            has_edge(&fa, "ASSIGNED_FROM", "VARIANT", "REFERENCE"),
+            "VARIANT should link to its const-reference discriminant"
+        );
+    }
+
+    #[test]
+    fn test_enum_variant_without_discriminant_has_no_assigned_from() {
+        // Plain variants (`Red`) carry no value source — no ASSIGNED_FROM,
+        // no spurious LITERAL. Guards against over-emitting for the common
+        // C-like enum without explicit discriminants.
+        let fa = parse_and_analyze("enum Color { Red, Green }");
+        let assigned: Vec<_> = fa
+            .edges
+            .iter()
+            .filter(|e| e.edge_type == "ASSIGNED_FROM" && e.src.contains("VARIANT"))
+            .collect();
+        assert!(assigned.is_empty(), "no ASSIGNED_FROM for discriminant-less variants");
+    }
+
+    #[test]
     fn test_use_import() {
         let fa = parse_and_analyze("use std::collections::HashMap;");
         assert!(has_node(&fa, "IMPORT", "std::collections::HashMap"));
@@ -2636,6 +2732,75 @@ mod tests {
             .filter(|e| e.edge_type == "ASSIGNED_FROM")
             .collect();
         assert!(!assigned.is_empty(), "should have ASSIGNED_FROM edges");
+    }
+
+    #[test]
+    fn test_const_item_assigned_from_literal() {
+        // Top-level `const NAME: T = <init>;` must link the declaration to its
+        // initializer via ASSIGNED_FROM, mirroring `let` bindings — otherwise
+        // backward Value Trace / Hover dead-ends on the constant (REG-686).
+        let fa = parse_and_analyze("const MAX: u32 = 42;");
+        let assigned: Vec<_> = fa.edges.iter()
+            .filter(|e| e.edge_type == "ASSIGNED_FROM"
+                && e.src.contains("VARIABLE") && e.src.contains("MAX"))
+            .collect();
+        assert!(!assigned.is_empty(),
+            "const MAX should have ASSIGNED_FROM, got edges: {:?}",
+            fa.edges.iter().map(|e| e.edge_type.clone()).collect::<Vec<_>>());
+        assert!(assigned[0].dst.contains("LITERAL"),
+            "const MAX ASSIGNED_FROM should point to LITERAL, got: {}", assigned[0].dst);
+    }
+
+    #[test]
+    fn test_static_item_assigned_from_literal() {
+        // `static NAME: T = <init>;` shares const value-source semantics.
+        let fa = parse_and_analyze("static GREETING: &str = \"hi\";");
+        let assigned: Vec<_> = fa.edges.iter()
+            .filter(|e| e.edge_type == "ASSIGNED_FROM"
+                && e.src.contains("VARIABLE") && e.src.contains("GREETING"))
+            .collect();
+        assert!(!assigned.is_empty(), "static GREETING should have ASSIGNED_FROM");
+        assert!(assigned[0].dst.contains("LITERAL"),
+            "static GREETING ASSIGNED_FROM should point to LITERAL, got: {}", assigned[0].dst);
+    }
+
+    #[test]
+    fn test_const_assigned_from_call() {
+        // Non-literal initializers (calls) must still link via ASSIGNED_FROM.
+        let fa = parse_and_analyze("const N: usize = compute();");
+        let assigned: Vec<_> = fa.edges.iter()
+            .filter(|e| e.edge_type == "ASSIGNED_FROM"
+                && e.src.contains("VARIABLE") && e.src.contains("N"))
+            .collect();
+        assert!(!assigned.is_empty(), "const N = compute() should have ASSIGNED_FROM");
+        assert!(assigned[0].dst.contains("CALL"),
+            "const N ASSIGNED_FROM should point to CALL, got: {}", assigned[0].dst);
+    }
+
+    #[test]
+    fn test_assoc_const_assigned_from_literal() {
+        // Associated constants inside an `impl` block must link to their value too.
+        let fa = parse_and_analyze("struct Foo; impl Foo { const LIMIT: u32 = 100; }");
+        let assigned: Vec<_> = fa.edges.iter()
+            .filter(|e| e.edge_type == "ASSIGNED_FROM"
+                && e.src.contains("VARIABLE") && e.src.contains("LIMIT"))
+            .collect();
+        assert!(!assigned.is_empty(), "assoc const LIMIT should have ASSIGNED_FROM");
+        assert!(assigned[0].dst.contains("LITERAL"),
+            "assoc const LIMIT ASSIGNED_FROM should point to LITERAL, got: {}", assigned[0].dst);
+    }
+
+    #[test]
+    fn test_trait_const_default_assigned_from_literal() {
+        // A trait const with a default value carries a value source as well.
+        let fa = parse_and_analyze("trait T { const CAP: u32 = 8; }");
+        let assigned: Vec<_> = fa.edges.iter()
+            .filter(|e| e.edge_type == "ASSIGNED_FROM"
+                && e.src.contains("VARIABLE") && e.src.contains("CAP"))
+            .collect();
+        assert!(!assigned.is_empty(), "trait const CAP default should have ASSIGNED_FROM");
+        assert!(assigned[0].dst.contains("LITERAL"),
+            "trait const CAP ASSIGNED_FROM should point to LITERAL, got: {}", assigned[0].dst);
     }
 
     #[test]

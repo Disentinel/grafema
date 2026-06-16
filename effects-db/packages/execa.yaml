@@ -1,0 +1,58 @@
+# execa (v5.x CJS / v6.x–v9.x ESM) — Process execution
+# Generated: 2026-06-15
+# Method: Claude inference based on execa docs, mirrored against the
+#   node:child_process annotations in runtimes/node.yaml (same effect profile,
+#   same `channel: { binary: arg[0] }` extraction used by the subprocess bridges).
+# Taxonomy version: 2
+# purl: pkg:npm/execa
+#
+# execa is the dominant wrapper around node:child_process (~90M weekly downloads).
+# Every entry point spawns a child process, so each carries IO + IO:PROCESS:SPAWN.
+# This is the SENDER side of the `subprocess-stdio` and `subprocess-cli` bridge
+# patterns (bridges.yaml): sender [IO:PROCESS:SPAWN], channel_match: binary_name.
+# Before this entry, only the node:child_process runtime emitted IO:PROCESS:SPAWN —
+# code that spawns via execa was an invisible bridge sender.
+#
+# THROW rationale: execa rejects (async) / throws (sync) when the child exits with
+# a non-zero code, unless the caller passes `{ reject: false }`. The default is to
+# throw, so the static annotation records THROW. This mirrors node:child_process
+# exec/spawn/execSync in runtimes/node.yaml, which are likewise annotated THROW.
+#
+# ASYNC applies only to the promise-returning forms; the *Sync forms block and
+# therefore carry no ASYNC (mirrors execSync vs exec in node.yaml).
+#
+# channel.binary = arg[0]: the first argument is the file/command to run, which the
+# subprocess bridge traces to a binary name. For execaCommand* the whole command
+# string is arg[0]; the bridge extracts the binary from its leading token.
+
+execa:
+  # ---------------------------------------------------------------------------
+  # Promise-returning spawners (named exports across v6+; default export in v5)
+  # ---------------------------------------------------------------------------
+  execa:
+    effects: [IO, IO:PROCESS:SPAWN, ASYNC, THROW]
+    channel: { binary: "arg[0]" }
+  execaNode:
+    effects: [IO, IO:PROCESS:SPAWN, ASYNC, THROW]
+    channel: { binary: "arg[0]" }
+  execaCommand:
+    effects: [IO, IO:PROCESS:SPAWN, ASYNC, THROW]
+    channel: { binary: "arg[0]" }
+
+  # ---------------------------------------------------------------------------
+  # Synchronous spawners — block the event loop, no ASYNC
+  # ---------------------------------------------------------------------------
+  execaSync:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
+  execaCommandSync:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
+
+  # ---------------------------------------------------------------------------
+  # Script-style template tag (`$`), execa v7+. `$`command`` spawns a child.
+  # No channel: arg[0] is the TemplateStringsArray, not a plain binary string,
+  # so the binary cannot be statically extracted from arg[0] alone.
+  # ---------------------------------------------------------------------------
+  $:
+    effects: [IO, IO:PROCESS:SPAWN, ASYNC, THROW]

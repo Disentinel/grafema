@@ -123,7 +123,9 @@ export interface GetShapeArgs {
 
 export interface CheckInvariantArgs {
   rule: string;
-  name?: string;
+  description?: string;
+  limit?: number;
+  offset?: number;
 }
 
 export interface GetSchemaArgs {

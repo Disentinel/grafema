@@ -1,0 +1,97 @@
+# node-fetch (v2 CJS / v3 ESM) — A light-weight WHATWG fetch for Node.js
+# Generated: 2026-06-15 (autonomous effects-db fill, IDLE fallback track)
+# Method: Claude inference from node-fetch v2/v3 public API. Effect VALUES are
+#         taken from the ecma:web `fetch` / `Response` / `Headers` / `Request`
+#         entries in effects-db/runtimes/node.yaml (node-fetch is a WHATWG-fetch
+#         polyfill). Keys follow the package-file `Class.method` convention used by
+#         express.yaml et al. (no `.prototype.`), so this is NOT a literal copy of
+#         the ecma:web `*.prototype.*` keys — only the effect values are shared.
+# Taxonomy version: 2 — this file uses the v2 IO-subtype vocabulary (IO:HTTP:REQUEST,
+#         IO:FILE:READ) defined in effects-db/taxonomy.yaml (version: 2). The older
+#         package files predate those subtypes and are still marked version 1; the
+#         http-bridge sender annotation here requires v2, hence the bump.
+# purl: pkg:npm/node-fetch
+#
+# Why this package matters for Grafema:
+#   The `http` bridge (effects-db/bridges.yaml:22-29) pairs a SENDER carrying
+#   IO:HTTP:REQUEST with a RECEIVER carrying IO:HTTP:LISTEN to emit CALLS_REMOTE
+#   edges. The receiver side already exists at the runtime level: node's built-in
+#   HTTP/HTTPS server carries IO:HTTP:LISTEN (`node:http`/`node:https`
+#   `createServer` + `Server.listen`, runtimes/node.yaml:319,338,347). What was
+#   missing was a popular userland HTTP *client* on the SENDER side — node-fetch is
+#   one of the most-downloaded on npm, so annotating its default `fetch` export
+#   (IO:HTTP:REQUEST) lights up that sender side for every
+#   `import fetch from 'node-fetch'` call site.
+#   (NB: framework server `.listen` methods — express/fastify/koa — are annotated
+#   [IO, ASYNC] at the package level, NOT the IO:HTTP:LISTEN subtype; the subtype
+#   is only on the node runtime server they delegate to.)
+#
+# Effect conventions used here:
+#   - `fetch` carries the same effects + channel as the ecma:web `fetch` entry in
+#     runtimes/node.yaml: [IO, IO:HTTP:REQUEST, ASYNC] with `channel.url = arg[0]`
+#     so the http bridge can extract the request URL.
+#     NOTE — WHATWG fetch / node-fetch RESOLVES on any HTTP status and only rejects
+#     on a network-level failure, so THROW is intentionally NOT listed here. HTTP
+#     clients that reject on non-2xx by default — e.g. axios, via its `validateStatus`
+#     option — would instead carry THROW; that distinction is load-bearing for
+#     callers (a node-fetch call is not a throw site, an axios call is).
+#   - `Headers` / `Request` / `Response` are value-object constructors → PURE
+#     (mirrors ecma:web `Headers: [PURE]`, `Request: [PURE]`). Keyed by the bare
+#     export name so `import { Headers } from 'node-fetch'; new Headers()` resolves
+#     via the IMPORT_BINDING path in queries/traceEffects.ts (lookup(source, name)).
+#   - Response body readers return a Promise that drains the already-received body
+#     → [ASYNC] (matches ecma:web `Response.prototype.json: [ASYNC]`); the network
+#     IO is attributed to the originating `fetch` call, not the body reader.
+#   - `blobFrom` / `fileFrom` (v3) read a file from disk → IO:FILE:READ. The async
+#     variants add ASYNC; the *Sync variants do not (mirrors node:fs read/readSync).
+
+node-fetch:
+  # ---------------------------------------------------------------------------
+  # Default export — the fetch function. THE http-bridge sender.
+  # ---------------------------------------------------------------------------
+  fetch:
+    effects: [IO, IO:HTTP:REQUEST, ASYNC]
+    channel: { url: "arg[0]" }
+
+  # ---------------------------------------------------------------------------
+  # WHATWG value-object constructors — pure (no IO until the request is sent).
+  # Bare keys so named-import `new Headers()` resolves via IMPORT_BINDING lookup.
+  # ---------------------------------------------------------------------------
+  Headers: [PURE]
+  Request: [PURE]
+  Response: [PURE]
+
+  # Error classes — pure constructors.
+  FetchError: [PURE]
+  AbortError: [PURE]
+
+  # Pure helper — predicate over an HTTP status code (v3 named export).
+  isRedirect: [PURE]
+
+  # ---------------------------------------------------------------------------
+  # Response body readers — drain the already-received body; async, no new
+  # network request (mirrors ecma:web Response.prototype.* convention).
+  # ---------------------------------------------------------------------------
+  Response.json: [ASYNC]
+  Response.text: [ASYNC]
+  Response.arrayBuffer: [ASYNC]
+  Response.blob: [ASYNC]
+  Response.buffer: [ASYNC]
+  Response.clone: [PURE]
+
+  # ---------------------------------------------------------------------------
+  # Headers instance methods (mirrors ecma:web Headers.prototype.*).
+  # ---------------------------------------------------------------------------
+  Headers.get: [PURE]
+  Headers.set: [MUTATION]
+  Headers.append: [MUTATION]
+  Headers.delete: [MUTATION]
+  Headers.has: [PURE]
+
+  # ---------------------------------------------------------------------------
+  # File → Blob/File helpers (v3) — read a file from disk.
+  # ---------------------------------------------------------------------------
+  blobFrom: [IO, IO:FILE:READ, ASYNC]
+  blobFromSync: [IO, IO:FILE:READ]
+  fileFrom: [IO, IO:FILE:READ, ASYNC]
+  fileFromSync: [IO, IO:FILE:READ]
