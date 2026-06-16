@@ -266,7 +266,7 @@ Use this when you need to:
 - "What crosses module boundaries?" → boundary_crossings shows file-to-file effect flow
 
 Effect types: PURE, MUTATION, IO (with subtypes like IO:FILE:READ, IO:HTTP:REQUEST),
-THROW, ASYNC, NONDETERMINISTIC, UNKNOWN.
+THROW, ASYNC, NONDETERMINISTIC, SPAWN, MESSAGE_PASSING, UNKNOWN.
 
 UNKNOWN means: unresolved call, external package not in effects-db, or depth limit reached.
 

@@ -1,0 +1,115 @@
+# ioredis (5.x) — robust, performance-focused Redis client for Node.js
+# Generated: 2026-06-16 (autonomous effects-db fill, IDLE fallback track)
+# Method: Claude probe of the REAL installed ioredis@5.11.1 (no Redis server),
+#         cross-checked against effects-db/taxonomy.yaml v2 and the
+#         effects-db/bridges.yaml `unix-socket` pattern.
+# Taxonomy version: 2
+# purl: pkg:npm/ioredis
+#
+# Why this package matters for Grafema:
+#   The `unix-socket` bridge pattern (effects-db/bridges.yaml) pairs a SENDER
+#   carrying `IO:SOCKET:WRITE` / `IO:SOCKET:CONNECT` with a RECEIVER carrying
+#   `IO:SOCKET:LISTEN` / `IO:SOCKET:READ`. The receiver side exists on the
+#   node.yaml runtime (net.createServer / Server.listen); the sender side existed
+#   only on the node.yaml runtime primitives (net.connect / socket.write) — no
+#   userland npm package on `main` supplied it. ioredis is one of the most-used
+#   socket clients on npm (~5M weekly downloads), so annotating its connection +
+#   command surface lights up the socket-bridge SENDER for every
+#   `new Redis(); redis.get(...)` / `redis.publish(...)` call site.
+#
+#   ioredis is also the first npm package here to carry `MESSAGE_PASSING`: Redis
+#   pub/sub (`publish` / `subscribe`) is genuine inter-service message passing
+#   (until now MESSAGE_PASSING lived only on the elixir/erlang runtimes). This is
+#   exactly the channel-shaped sender/receiver signal that cross-service /
+#   cross-repo contract MATCHING consumes (REG-1145). Plain data commands
+#   (get/set/del) are socket writes but NOT message passing — that distinction is
+#   pinned by test/unit/effectsDbIoredis.test.js so a future edit can't blur it.
+#
+# How these annotations are consumed (verified):
+#   `traceEffects` (packages/util/src/queries/traceEffects.ts) — the engine behind
+#   the MCP `trace-effects` handler and behaviorEnricher — resolves an unresolved
+#   `redis.publish`-style call through `EffectsLookup.lookup('ioredis', ...)` and
+#   propagates the returned effects transitively. test/unit/effectsDbIoredis.test.js
+#   exercises exactly this path on a fixture graph (red→green).
+#
+# Effect conventions used here (all from a live probe of ioredis@5.11.1):
+#   - The default export IS the `Redis` class (module.exports === Redis === Redis.Redis).
+#     Instance methods are keyed `Redis.<method>` (the ClassName.method convention
+#     shared with the pg/mysql2 socket-client entries): a call `const r = new Redis();
+#     r.publish(...)` is resolved by the analyzer to leaf `ioredis.Redis.publish`,
+#     and `EffectsLookup.parseCallTarget` splits on the FIRST dot → module `ioredis`,
+#     fn `Redis.publish`. The constructor `new Redis()` keys the bare `Redis`.
+#   - new Redis() / new Redis.Cluster() connect EAGERLY: a probe against a dead port
+#     emitted an async `error` (ECONNREFUSED) WITHOUT a sync throw → constructors are
+#     [IO, IO:SOCKET:CONNECT, ASYNC], NO THROW. (Distinct from pg's lazy `new Client()`
+#     = PURE; ioredis matches mysql2.createConnection's eager-connect shape.)
+#   - Command methods (get/set/publish/subscribe/call/sendCommand/...) are added to
+#     the prototype chain by the Commander mixin (@ioredis/commands), not declared
+#     statically. They QUEUE the command and return a Promise; failures reject
+#     ASYNCHRONOUSLY. So every command is [IO, IO:SOCKET:WRITE, ASYNC] with NO THROW
+#     (an async rejection is not a sync THROW — same stance as node Socket.write / pg).
+#   - Pub/sub (publish / subscribe / psubscribe / unsubscribe / punsubscribe) add
+#     MESSAGE_PASSING on top of the socket write. The literal message RECEIPT happens
+#     via `redis.on('message', cb)` (an event handler, not a method call) and is not
+#     keyed here.
+#   - pipeline() / multi() return a `Pipeline` builder SYNCHRONOUSLY and perform no IO
+#     until `.exec()` → PURE. disconnect() returns void (a synchronous socket close) →
+#     [IO] (no ASYNC). quit() sends the QUIT command and returns a Promise →
+#     [IO, IO:SOCKET:WRITE, ASYNC]. duplicate() builds a new client (eager connect) →
+#     [IO, IO:SOCKET:CONNECT, ASYNC].
+#   - No structured `channel`/`args`/`returns` entries are declared: the only consumer
+#     of those is the GENERATED registry effects_callable_facts.dl, and no current
+#     bridge pattern matches a Redis pub/sub channel (the `unix-socket` bridge matches
+#     on socket_path from the connection args, not the publish arg). A dedicated
+#     redis-pubsub bridge pattern + channel.name extraction is a future follow-up;
+#     declaring it now would be inert. Plain effect arrays are what `traceEffects`
+#     consumes and what this PR's test verifies.
+#
+# Scope (honest): the data-command set below is REPRESENTATIVE of the ~200 Redis
+# commands (all routed through the same Commander/sendCommand mechanism, which is
+# itself annotated), not exhaustive — mirroring the pg/mysql2 precedent of keying
+# the connection lifecycle + the underlying transport + a representative command
+# slice rather than every generated command method. Cluster shares the same command
+# API as Redis; only its constructor is keyed here.
+
+ioredis:
+  # ── Constructors (eager connect) ──────────────────────────────────────────
+  Redis: [IO, IO:SOCKET:CONNECT, ASYNC]    # new Redis() — connects eagerly
+  Cluster: [IO, IO:SOCKET:CONNECT, ASYNC]  # new Redis.Cluster() — connects eagerly
+
+  # ── Connection lifecycle ──────────────────────────────────────────────────
+  Redis.connect: [IO, IO:SOCKET:CONNECT, ASYNC]    # explicit connect (lazyConnect:true); returns Promise
+  Redis.duplicate: [IO, IO:SOCKET:CONNECT, ASYNC]  # builds a new client; connects per its options
+  Redis.quit: [IO, IO:SOCKET:WRITE, ASYNC]         # sends QUIT then closes; returns Promise
+  Redis.disconnect: [IO]                           # synchronous socket close; returns void
+  Redis.sendCommand: [IO, IO:SOCKET:WRITE, ASYNC]  # the underlying transport for every command
+
+  # ── Pub/sub — socket writes that are ALSO message passing (REG-1145) ───────
+  Redis.publish: [IO, IO:SOCKET:WRITE, MESSAGE_PASSING, ASYNC]
+  Redis.subscribe: [IO, IO:SOCKET:WRITE, MESSAGE_PASSING, ASYNC]
+  Redis.psubscribe: [IO, IO:SOCKET:WRITE, MESSAGE_PASSING, ASYNC]
+  Redis.unsubscribe: [IO, IO:SOCKET:WRITE, MESSAGE_PASSING, ASYNC]
+  Redis.punsubscribe: [IO, IO:SOCKET:WRITE, MESSAGE_PASSING, ASYNC]
+
+  # ── Representative data commands — socket writes, NOT message passing ──────
+  Redis.call: [IO, IO:SOCKET:WRITE, ASYNC]    # generic command runner (alias of sendCommand surface)
+  Redis.get: [IO, IO:SOCKET:WRITE, ASYNC]
+  Redis.set: [IO, IO:SOCKET:WRITE, ASYNC]
+  Redis.del: [IO, IO:SOCKET:WRITE, ASYNC]
+  Redis.hget: [IO, IO:SOCKET:WRITE, ASYNC]
+  Redis.hset: [IO, IO:SOCKET:WRITE, ASYNC]
+  Redis.incr: [IO, IO:SOCKET:WRITE, ASYNC]
+  Redis.expire: [IO, IO:SOCKET:WRITE, ASYNC]
+  Redis.exists: [IO, IO:SOCKET:WRITE, ASYNC]
+  Redis.ttl: [IO, IO:SOCKET:WRITE, ASYNC]
+  Redis.keys: [IO, IO:SOCKET:WRITE, ASYNC]
+  Redis.scan: [IO, IO:SOCKET:WRITE, ASYNC]
+  Redis.eval: [IO, IO:SOCKET:WRITE, ASYNC]    # server-side Lua; socket round-trip
+  Redis.evalsha: [IO, IO:SOCKET:WRITE, ASYNC]
+  Redis.scanStream: [IO, IO:SOCKET:WRITE, ASYNC]  # Readable stream issuing SCAN over the socket
+
+  # ── Builders & value/helper exports ───────────────────────────────────────
+  Redis.pipeline: [PURE]   # returns a Pipeline builder; no IO until .exec()
+  Redis.multi: [PURE]      # returns a Pipeline (transaction) builder; no IO until .exec()
+  ReplyError: [PURE]       # Error subclass constructor (value type)
+  print: [IO, IO:CONSOLE:WRITE]  # callback helper that console.logs the reply/err
