@@ -2,11 +2,13 @@
  * Effects-db coverage guard for the `axios` HTTP client.
  *
  * Why this exists:
- *   - The effects-db had an HTTP *server* (express → IO:HTTP:LISTEN) but no
- *     popular HTTP *client*. The `http` bridge pattern (effects-db/bridges.yaml)
- *     pairs a sender carrying `IO:HTTP:REQUEST` with a receiver carrying
- *     `IO:HTTP:LISTEN`. Without an annotated client, the sender-side effect was
- *     absent from every package for the ~50M-weekly-download axios.
+ *   - The effects-db annotated the HTTP *server* (receiver) side —
+ *     `IO:HTTP:LISTEN` on the node.yaml runtime (http.createServer /
+ *     Server.listen) — but no popular HTTP *client*. The `http` bridge pattern
+ *     (effects-db/bridges.yaml) pairs a sender carrying `IO:HTTP:REQUEST` with a
+ *     receiver carrying `IO:HTTP:LISTEN`. Without an annotated client, the
+ *     sender-side effect was absent from every package for the
+ *     ~50M-weekly-download axios.
  *
  * What this guards:
  *   1. STRUCTURE — the request methods carry IO:HTTP:REQUEST and the pure helpers

@@ -6,12 +6,16 @@
 # purl: pkg:npm/axios
 #
 # Why this package matters for Grafema:
-#   The effects-db already annotates the HTTP *server* side (express →
-#   IO:HTTP:LISTEN). The `http` bridge pattern (effects-db/bridges.yaml) pairs a
-#   sender with `IO:HTTP:REQUEST` to a receiver with `IO:HTTP:LISTEN`. axios is the
-#   most-used HTTP *client* on npm, so annotating its request surface supplies the
-#   sender-side effect — `IO:HTTP:REQUEST` previously lived only in the node.yaml
-#   runtime (http.request / fetch), in zero packages.
+#   The effects-db already annotates the HTTP *server* (receiver) side —
+#   `IO:HTTP:LISTEN` lives on the node.yaml runtime (http.createServer /
+#   Server.listen / https.createServer). (Note: express.yaml's own
+#   `Application.listen` is only `[IO, ASYNC]`, not refined to IO:HTTP:LISTEN —
+#   an express-side subtype gap, tracked separately.) The `http` bridge pattern
+#   (effects-db/bridges.yaml) pairs a sender carrying `IO:HTTP:REQUEST` with a
+#   receiver carrying `IO:HTTP:LISTEN`. axios is the most-used HTTP *client* on
+#   npm, so annotating its request surface supplies the sender-side effect —
+#   `IO:HTTP:REQUEST` previously lived only in the node.yaml runtime
+#   (http.request / fetch), in zero packages.
 #
 # How these annotations are consumed (verified):
 #   `traceEffects` (packages/util/src/queries/traceEffects.ts) — the engine behind
