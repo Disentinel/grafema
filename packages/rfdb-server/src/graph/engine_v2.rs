@@ -1282,7 +1282,17 @@ impl GraphEngineV2 {
                 Some(stored) => owned_node_surface_changed(n, &stored),
             })
             .collect();
-        let mut removed_node_ids: Vec<u128> = Vec::new();
+        // Membership SET, not a Vec: the old `removed_node_ids.contains(&n.id)` dedup
+        // guard scanned a growing Vec for EVERY node of the spec's type, so a write-back
+        // over a type with K owned nodes did O(K²) comparisons on the hot incremental
+        // path (`find_nodes_at` yields all N nodes of the type; each probes the up-to-K
+        // already-claimed ids). A `HashSet` makes the probe O(1) → O(N) overall, and its
+        // `insert` is inherently idempotent. This mirrors the edge-removal path above,
+        // which already dedups via `HashSet`s (`prev_keys`/`new_keys`/`additive_types`);
+        // the node path is the only one that had regressed to a linear-scan Vec.
+        // Tombstone order is irrelevant — `delete_node` records into a tombstone SET — so
+        // dropping insertion order costs nothing.
+        let mut removed_node_ids: HashSet<u128> = HashSet::new();
         for spec in node_specs {
             if spec.additive {
                 continue; // additive: never delete (the whole point of the mode)
@@ -1302,7 +1312,7 @@ impl GraphEngineV2 {
                     .and_then(|m| m.get("_source").and_then(|s| s.as_str().map(String::from)))
                     .is_some_and(|s| s == spec.rule_ast_hash);
                 if owned {
-                    removed_node_ids.push(n.id);
+                    removed_node_ids.insert(n.id);
                 }
             }
         }
@@ -4709,6 +4719,70 @@ mod tests {
             .expect("idempotent re-run");
         assert_eq!((a3, r3), (0, 0), "unchanged surface is a true no-op");
         assert_eq!(engine.snapshot().version, v_before, "a no-op run commits nothing");
+    }
+
+    /// W4 review follow-up #4 (`_ai/gaps.md`): the owned-node retraction loop in
+    /// `materialize_writeback_delta` dedups claimed ids through a SET, so a write-back
+    /// over a `node_type` with K owned nodes tombstones each exactly once in O(N) — not
+    /// O(N×K) by re-scanning a growing `Vec`. This characterizes the removal-COUNT
+    /// invariant the set must preserve (behavior is identical to the prior Vec; the swap
+    /// is a perf refactor): with several owned nodes, a run that derives NOTHING retracts
+    /// every one of them exactly once (`n_removed == count`, never doubled, never dropped).
+    #[test]
+    fn materialize_node_retraction_tombstones_each_owned_node_exactly_once() {
+        const PROG: &str = r#"@materialize_node(node_type = "ISSUE", mode = "exclusive")
+            issue(Sid, Name, File) :- node(X, "FUNCTION"), attr(X, "name", Name),
+                                      attr(X, "file", File), concat("issue::", X, Sid)."#;
+
+        let mut engine = GraphEngineV2::create_ephemeral();
+        // Several FUNCTION nodes of the SAME materialized type → several owned ISSUEs.
+        let fns: Vec<NodeRecordV2> = (0..5)
+            .map(|i| {
+                make_v2_node(&format!("a.js->FUNCTION->f{i}"), "FUNCTION", &format!("f{i}"), "a.js")
+            })
+            .collect();
+        let fn_ids: Vec<u128> = fns.iter().map(|n| n.id).collect();
+        engine
+            .commit_batch_ext(fns, Vec::new(), &["a.js".to_string()], HashMap::new(), &[])
+            .expect("base commit");
+
+        // Run 1: derive one owned ISSUE per FUNCTION.
+        let (a1, r1) = engine
+            .eval_derive_materialize_incremental(PROG, crate::datalog::EvalLimits::none())
+            .expect("first derivation");
+        assert_eq!((a1, r1), (5, 0), "one ISSUE per FUNCTION derived, nothing removed");
+
+        // Remove every deriving FUNCTION → the program now derives ZERO ISSUEs, so every
+        // owned ISSUE must retract. This drives the changed retraction loop with K=5 owned
+        // nodes of the type.
+        for id in &fn_ids {
+            engine.delete_node(*id);
+        }
+        engine.flush().expect("flush deletions");
+
+        // Run 2: nothing derived; each of the 5 owned ISSUEs is tombstoned EXACTLY once.
+        let (a2, r2) = engine
+            .eval_derive_materialize_incremental(PROG, crate::datalog::EvalLimits::none())
+            .expect("retraction run");
+        assert_eq!(
+            (a2, r2),
+            (0, 5),
+            "all 5 owned ISSUEs retract, each counted once (no double-tombstone, none dropped)"
+        );
+        let snap = engine.snapshot();
+        for id in &fn_ids {
+            let issue_id = crate::graph::string_id_to_u128(&format!("issue::{id}"));
+            assert!(
+                !engine.store.node_exists_at(&snap, issue_id),
+                "owned ISSUE retracted"
+            );
+        }
+
+        // Run 3: idempotent no-op (nothing left to add or remove).
+        let (a3, r3) = engine
+            .eval_derive_materialize_incremental(PROG, crate::datalog::EvalLimits::none())
+            .expect("idempotent re-run");
+        assert_eq!((a3, r3), (0, 0), "nothing left to retract");
     }
 
     /// A `@materialize_node` head whose arity is not `3 + len(meta)` aborts the run with
