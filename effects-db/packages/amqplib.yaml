@@ -1,0 +1,89 @@
+# amqplib (v2.x) — AMQP 0-9-1 client (RabbitMQ)
+# Generated: 2026-06-16
+# Method: live probe of amqplib@2.0.1 (source read + functional behaviour), cross-validated
+# Taxonomy version: 2
+# purl: pkg:npm/amqplib
+#
+# FIRST npm package in effects-db to carry MESSAGE_PASSING (taxonomy v2 — until
+# now only the elixir/erlang runtimes used it) and the first on `main` to use
+# the IO:SOCKET:* subtypes. A message-broker client is a bridge SENDER
+# (publish / sendToQueue) and RECEIVER (consume / get) — feeds cross-service
+# contract matching (REG-1145).
+#
+# Evidence (amqplib@2.0.1):
+#   - connect(): channel_api.js — promisify(raw_connect) → Promise; rejects
+#     async with ECONNREFUSED when the broker is unreachable (functional probe).
+#   - Channel.publish / sendToQueue: channel_model.js — return this.sendMessage(...)
+#     which calls connection.sendMessage(); connection.js:481 throws
+#     `TypeError('content is not a buffer')` SYNCHRONOUSLY and otherwise returns
+#     a boolean from buffer.write(). So: synchronous send, no ASYNC, THROW.
+#   - Channel.consume: channel_model.js — _rpc(BasicConsume) then registerConsumer;
+#     returns a Promise (subscribe + receive callback) → receiver side.
+#   - Channel.get: channel_model.js — sendOrEnqueue(BasicGet) → Promise pulling a
+#     single message → receiver side.
+#   - Channel.assertQueue/…: channel_model.js — `return this.rpc(...)` → broker RPC
+#     Promise (control plane, NOT an application message → no MESSAGE_PASSING).
+#   - Channel.ack/nack/reject: channel_model.js — sendImmediately() → synchronous
+#     control frame (no input validation, no Promise) → plain socket write.
+#   - credentials.plain/amqplain/external: lib/credentials.js — pure factories
+#     returning {mechanism, response, …} (functional probe).
+
+amqplib:
+  # ── Connection establishment (bridge: socket CONNECT) ──
+  connect: [IO, IO:SOCKET:CONNECT, ASYNC, THROW]   # promisify(raw_connect); rejects on connect failure
+
+  # ── Credential factories (pure) ──
+  credentials.plain: [PURE]
+  credentials.amqplain: [PURE]
+  credentials.external: [PURE]
+  IllegalOperationError.new: [PURE]                # error constructor
+
+  # ── ChannelModel (the connection wrapper returned by connect()) ──
+  ChannelModel.createChannel: [IO, IO:SOCKET:WRITE, ASYNC, THROW]        # await channel.open() → Channel.Open RPC
+  ChannelModel.createConfirmChannel: [IO, IO:SOCKET:WRITE, ASYNC, THROW] # + ConfirmSelect RPC
+  ChannelModel.close: [IO, IO:SOCKET:WRITE, ASYNC]                       # Connection.Close frame
+  ChannelModel.updateSecret: [IO, IO:SOCKET:WRITE, ASYNC]
+
+  # ── Channel: queue / exchange topology (async broker RPCs, control plane) ──
+  Channel.open: [IO, IO:SOCKET:WRITE, ASYNC, THROW]
+  Channel.close: [IO, IO:SOCKET:WRITE, ASYNC]
+  Channel.rpc: [IO, IO:SOCKET:WRITE, ASYNC, THROW]                       # low-level method RPC
+  Channel.assertQueue: [IO, IO:SOCKET:WRITE, ASYNC, THROW]
+  Channel.checkQueue: [IO, IO:SOCKET:WRITE, ASYNC, THROW]
+  Channel.deleteQueue: [IO, IO:SOCKET:WRITE, ASYNC, THROW]
+  Channel.purgeQueue: [IO, IO:SOCKET:WRITE, ASYNC, THROW]
+  Channel.bindQueue: [IO, IO:SOCKET:WRITE, ASYNC, THROW]
+  Channel.unbindQueue: [IO, IO:SOCKET:WRITE, ASYNC, THROW]
+  Channel.assertExchange: [IO, IO:SOCKET:WRITE, ASYNC, THROW]
+  Channel.checkExchange: [IO, IO:SOCKET:WRITE, ASYNC, THROW]
+  Channel.deleteExchange: [IO, IO:SOCKET:WRITE, ASYNC, THROW]
+  Channel.bindExchange: [IO, IO:SOCKET:WRITE, ASYNC, THROW]
+  Channel.unbindExchange: [IO, IO:SOCKET:WRITE, ASYNC, THROW]
+
+  # ── Channel: message SEND side (bridge sender, MESSAGE_PASSING) ──
+  # Synchronous: sendMessage writes to the socket buffer and returns a boolean.
+  # Throws TypeError synchronously if content is not a Buffer (connection.js:481).
+  Channel.publish: [IO, IO:SOCKET:WRITE, MESSAGE_PASSING, THROW]
+  Channel.sendToQueue: [IO, IO:SOCKET:WRITE, MESSAGE_PASSING, THROW]
+
+  # ── Channel: message RECEIVE side (bridge receiver, MESSAGE_PASSING) ──
+  Channel.consume: [IO, IO:SOCKET:READ, MESSAGE_PASSING, ASYNC, THROW]   # subscribe + deliver via callback
+  Channel.get: [IO, IO:SOCKET:READ, MESSAGE_PASSING, ASYNC, THROW]       # pull one message (resolves false if empty; rejects on error)
+  Channel.cancel: [IO, IO:SOCKET:WRITE, ASYNC, THROW]                    # Basic.Cancel RPC
+
+  # ── Channel: acknowledgements (synchronous control frames, not message sends) ──
+  Channel.ack: [IO, IO:SOCKET:WRITE]
+  Channel.ackAll: [IO, IO:SOCKET:WRITE]
+  Channel.nack: [IO, IO:SOCKET:WRITE]
+  Channel.nackAll: [IO, IO:SOCKET:WRITE]
+  Channel.reject: [IO, IO:SOCKET:WRITE]
+
+  # ── Channel: flow control / recovery (async broker RPCs) ──
+  Channel.recover: [IO, IO:SOCKET:WRITE, ASYNC, THROW]
+  Channel.qos: [IO, IO:SOCKET:WRITE, ASYNC, THROW]
+  Channel.prefetch: [IO, IO:SOCKET:WRITE, ASYNC, THROW]                  # alias of qos (Channel.prototype.prefetch = qos)
+
+  # ── ConfirmChannel (publisher confirms): send side identical to Channel ──
+  ConfirmChannel.publish: [IO, IO:SOCKET:WRITE, MESSAGE_PASSING, THROW]
+  ConfirmChannel.sendToQueue: [IO, IO:SOCKET:WRITE, MESSAGE_PASSING, THROW]
+  ConfirmChannel.waitForConfirms: [IO, ASYNC, THROW]                     # awaits broker acks; rejects on nack
