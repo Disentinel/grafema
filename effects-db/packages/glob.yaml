@@ -1,0 +1,61 @@
+# glob (v13.x) — Filesystem glob matching
+# Generated: 2026-06-16
+# Method: Real API probe of glob@13.0.6 (Object.keys + behaviour probes) + Claude inference
+# Taxonomy version: 2
+# purl: pkg:npm/glob
+#
+# glob is minimatch (pattern matching, already covered as pure) PLUS the actual
+# filesystem walk. Every match-returning entry point reads the directory tree, so
+# the primary effect is IO:FILE:READ (taxonomy lists fs.readdir under IO:FILE:READ).
+#
+# API-probe findings (glob@13.0.6):
+#   - Exports: glob, globSync, globStream, globStreamSync, globIterate,
+#     globIterateSync, sync/stream/streamSync/iterate/iterateSync (aliases),
+#     hasMagic, escape, unescape, Glob (class), Ignore (class).
+#   - sync===globSync, iterate===globIterate, stream===globStream,
+#     streamSync===globStreamSync, iterateSync===globIterateSync (identical refs).
+#   - Every entry point validates the pattern via the Glob constructor and throws
+#     TypeError on a non-string pattern → THROW (verified: globSync(123),
+#     globStream(123), globIterateSync(123).next(), new Glob([]) all probed).
+#   - The Glob constructor is LAZY: it builds matchers but does not read the FS
+#     (walking happens in walk/walkSync/stream/streamSync/iterate/iterateSync) →
+#     Glob.new carries THROW only, the walk methods carry the IO.
+#   - escape('a*b?')='a\*b\?', unescape('a\*b')='a*b' — pure string transforms.
+#   - hasMagic('a/*.js')=true, hasMagic('a/b.js')=false — deterministic; throws
+#     TypeError on non-string input.
+
+glob:
+  # ── Match-returning entry points (read the filesystem) ──────────────
+  glob: [IO, IO:FILE:READ, ASYNC, THROW]            # async, returns Promise<string[]>
+  globSync: [IO, IO:FILE:READ, THROW]               # sync, returns string[]
+  sync: [IO, IO:FILE:READ, THROW]                   # alias of globSync (legacy glob.sync)
+
+  globStream: [IO, IO:FILE:READ, THROW]             # returns a Minipass stream
+  globStreamSync: [IO, IO:FILE:READ, THROW]
+  stream: [IO, IO:FILE:READ, THROW]                 # alias of globStream
+  streamSync: [IO, IO:FILE:READ, THROW]             # alias of globStreamSync
+
+  globIterate: [IO, IO:FILE:READ, ASYNC, THROW]     # async iterator of matches
+  globIterateSync: [IO, IO:FILE:READ, THROW]        # sync iterator of matches
+  iterate: [IO, IO:FILE:READ, ASYNC, THROW]         # alias of globIterate
+  iterateSync: [IO, IO:FILE:READ, THROW]            # alias of globIterateSync
+
+  # ── Pure pattern helpers (no filesystem) ───────────────────────────
+  hasMagic: [THROW]                                 # deterministic; throws on non-string pattern
+  escape: [PURE]                                    # escape glob special chars
+  unescape: [PURE]                                  # reverse of escape
+
+  # ── Glob class ─────────────────────────────────────────────────────
+  Glob.new: [THROW]                                 # lazy: validates pattern/options, no FS walk
+  Glob.walk: [IO, IO:FILE:READ, ASYNC]              # async filesystem walk → string[]
+  Glob.walkSync: [IO, IO:FILE:READ]                 # sync filesystem walk → string[]
+  Glob.stream: [IO, IO:FILE:READ]                   # streaming filesystem walk
+  Glob.streamSync: [IO, IO:FILE:READ]
+  Glob.iterate: [IO, IO:FILE:READ, ASYNC]           # async iterator over FS matches
+  Glob.iterateSync: [IO, IO:FILE:READ]              # sync iterator over FS matches
+
+  # ── Ignore class (ignore-pattern matcher; no filesystem) ───────────
+  Ignore.new: [THROW]                               # builds minimatch matchers, throws on bad input
+  Ignore.add: [MUTATION]                            # mutates the instance's pattern lists
+  Ignore.ignored: [PURE]                            # path → boolean, pure match
+  Ignore.childrenIgnored: [PURE]                    # path → boolean, pure match
