@@ -123,12 +123,20 @@ const STDLIB_RULE_PACKS: &[&str] = &[
     // CLASS metadata stamps — consumes analyzer EDB only, precedes the
     // negators below.
     "@stdlib/kotlin_inheritance",
-    // Haskell wave: haskell_local_calls PRODUCES CALLS (same-file flat
-    // (file,name) value-binding resolution, single-target via the FUNCTION >
-    // VARIABLE > CONSTANT > CONSTRUCTOR > RECORD_FIELD namespace-priority ladder)
-    // — strictly before the CALLS negators method_calls / shape_verifier
-    // (shape_verifier negates edge(C,_,"CALLS") with NO file gate). Consumes
-    // analyzer EDB only, so no inter-pack EDB seam.
+    // Haskell same-file wave (haskell-resolve migration): haskell_local_refs_nodes
+    // MINTS the HASKELL_GLOBAL::<name> EXTERNAL_FUNCTION prelude endpoints that
+    // haskell_local_refs joins as committed EDB (strict nodes→edges order — the
+    // js_runtime_globals two-pack split). haskell_local_refs PRODUCES READS_FROM
+    // (same-file REFERENCE→binder, nearest-binder scope-walk + single-target flat
+    // fallback). Native haskell-local-refs resolve step RETIRED in favour of these.
+    "@stdlib/haskell_local_refs_nodes",
+    "@stdlib/haskell_local_refs",
+    // haskell_local_calls PRODUCES CALLS (same-file flat (file,name) value-binding
+    // resolution, single-target via the FUNCTION > VARIABLE > CONSTANT >
+    // CONSTRUCTOR > RECORD_FIELD namespace-priority ladder) — strictly before the
+    // CALLS negators method_calls / shape_verifier (shape_verifier negates
+    // edge(C,_,"CALLS") with NO file gate). Consumes analyzer EDB only, so no
+    // inter-pack EDB seam.
     "@stdlib/haskell_local_calls",
     // Go wave: go_imports / go_imports_nomod PRODUCE IMPORTS_FROM — strictly
     // before depends (verdict C4). The nomod entry is the orchestrator-selected
@@ -604,6 +612,8 @@ fn pack_owned_slice(pack: &str) -> &'static str {
         "@stdlib/java_calls" => "java INSTANTIATES + CALLS (ctor/same-class/static/super-this)",
         "@stdlib/java_annotations" => "java ANNOTATION_RESOLVES_TO",
         "@stdlib/kotlin_inheritance" => "kotlin EXTENDS + IMPLEMENTS",
+        "@stdlib/haskell_local_refs_nodes" => "haskell prelude EXTERNAL_FUNCTION nodes (HASKELL_GLOBAL::<name>)",
+        "@stdlib/haskell_local_refs" => "haskell same-file READS_FROM (REFERENCE→binder)",
         "@stdlib/go_imports" => "go same-module IMPORT→MODULE IMPORTS_FROM",
         "@stdlib/go_imports_nomod" => "go no-go.mod suffix-fallback IMPORTS_FROM",
         "@stdlib/go_calls" => "go CALLS (package-qualified / same-package / method)",
@@ -1615,7 +1625,14 @@ async fn main() -> Result<()> {
                         let results = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::Haskell],
-                            &[("haskell-imports", &[]), ("haskell-local-refs", &[]), ("haskell-cross-module-calls", &[]), ("haskell-globals", &[])],
+                            // haskell-local-refs / haskell-local-calls RETIRED:
+                            // same-file READS_FROM/CALLS resolution now runs
+                            // in-engine via the @stdlib/haskell_local_refs* +
+                            // haskell_local_calls .dl packs (rfdb-server
+                            // derive/stdlib). Dropping them here avoids
+                            // double-emit. The three KEPT arms are cross-file /
+                            // stdlib and the packs do NOT replace them.
+                            &[("haskell-imports", &[]), ("haskell-cross-module-calls", &[]), ("haskell-globals", &[])],
                             &hs_pool,
                         ).await?;
                         for (cmd, mut output) in results {
@@ -2584,7 +2601,14 @@ async fn main() -> Result<()> {
                         let results = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::Haskell],
-                            &[("haskell-imports", &[]), ("haskell-local-refs", &[]), ("haskell-cross-module-calls", &[]), ("haskell-globals", &[])],
+                            // haskell-local-refs / haskell-local-calls RETIRED:
+                            // same-file READS_FROM/CALLS resolution now runs
+                            // in-engine via the @stdlib/haskell_local_refs* +
+                            // haskell_local_calls .dl packs (rfdb-server
+                            // derive/stdlib). Dropping them here avoids
+                            // double-emit. The three KEPT arms are cross-file /
+                            // stdlib and the packs do NOT replace them.
+                            &[("haskell-imports", &[]), ("haskell-cross-module-calls", &[]), ("haskell-globals", &[])],
                             &pool,
                         ).await?;
                         for (cmd, mut output) in results {
