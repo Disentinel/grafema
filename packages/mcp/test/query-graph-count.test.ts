@@ -392,7 +392,7 @@ describe('query_graph count parameter (REG-507)', () => {
 
         const result = await handleCheckInvariant({
           rule: 'violation(S) :- node(X, "IMPORT"), attr(X, "source", S).',
-          name: 'test invariant',
+          description: 'test invariant',
         });
 
         assert.ok(!result.isError);
@@ -417,7 +417,7 @@ describe('query_graph count parameter (REG-507)', () => {
 
         const result = await handleCheckInvariant({
           rule: 'violation(X) :- node(X, "FUNCTION").',
-          name: 'mixed test',
+          description: 'mixed test',
         });
 
         assert.ok(!result.isError);
