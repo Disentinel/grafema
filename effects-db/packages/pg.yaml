@@ -1,0 +1,57 @@
+# pg (node-postgres, 8.x) — PostgreSQL client
+# Generated: 2026-06-16
+# Method: REAL API probe of pg@8.21.0 (Object.keys + behaviour probes), not memory.
+# Taxonomy version: 2
+# purl: pkg:npm/pg
+#
+# pg is the first DATABASE client in effects-db. A query is network IO over the
+# DB connection's socket, so pg is a SOCKET-bridge sender per bridges.yaml:
+#   sender [IO:SOCKET:WRITE, IO:SOCKET:CONNECT] ↔ receiver [IO:SOCKET:LISTEN,
+#   IO:SOCKET:READ]. connect() opens the socket (IO:SOCKET:CONNECT); query()/
+#   end() write to it (IO:SOCKET:WRITE) — mirroring node:net Socket.connect /
+#   Socket.write / Socket.end (node.yaml:294-298).
+#
+# CLIENT-vs-POOL THROW DIVERGENCE (verified live, the one non-obvious split):
+#   `new Client().query()` with no argument THROWS synchronously (TypeError from
+#   the query-config builder) → Client.query carries THROW. `new Pool().query()`
+#   with no argument does NOT throw synchronously — Pool.query forwards the bad
+#   call to a pooled client asynchronously, so the failure is a Promise
+#   rejection, not a synchronous throw → Pool.query has NO THROW. Async
+#   rejection is not THROW (THROW = synchronous throw; the same stance node.yaml
+#   takes — Socket.connect/write reject but are not tagged THROW).
+#
+# escapeIdentifier/escapeLiteral COERCE their argument (escapeLiteral(undefined)
+# === "''", escapeLiteral(123) === "''") and never throw → PURE. They exist both
+# as top-level exports (`pg.escapeLiteral`) and as Client.prototype methods.
+# Construction (`new Client(config)` / `new Pool(config)`) does NO IO until
+# connect()/query() is called → PURE.
+
+pg:
+  # ── Construction: no IO at construct time ──
+  Client.new: [PURE]
+  Pool.new: [PURE]
+
+  # ── Client lifecycle: opens / writes / closes the DB socket ──
+  Client.connect: [IO, IO:SOCKET:CONNECT, ASYNC]
+  # query writes SQL over the socket (ASYNC result) AND sync-throws on bad arg.
+  Client.query:
+    effects: [IO, IO:SOCKET:WRITE, ASYNC, THROW]
+  Client.end: [IO, IO:SOCKET:WRITE, ASYNC]
+  # ref/unref are thin passthroughs to the underlying socket (node Socket.ref).
+  Client.ref: [MUTATION]
+  Client.unref: [MUTATION]
+
+  # ── Pool lifecycle: pooled connections; query has NO sync-throw (see header) ──
+  Pool.connect: [IO, IO:SOCKET:CONNECT, ASYNC]
+  Pool.query: [IO, IO:SOCKET:WRITE, ASYNC]
+  Pool.end: [IO, ASYNC]
+
+  # ── Type-parser configuration ──
+  Client.setTypeParser: [MUTATION]
+  Client.getTypeParser: [PURE]
+
+  # ── SQL identifier / literal escaping: pure string transforms ──
+  escapeIdentifier: [PURE]
+  escapeLiteral: [PURE]
+  Client.escapeIdentifier: [PURE]
+  Client.escapeLiteral: [PURE]
