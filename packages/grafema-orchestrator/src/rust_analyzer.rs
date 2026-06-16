@@ -1437,6 +1437,50 @@ fn emit_assigned_from(ctx: &mut Ctx, src_id: String, init: &syn::Expr) {
     }
 }
 
+/// Emit a `WRITES_TO` edge from an assignment target (LHS) to the assigned
+/// value (RHS) when both sides reduce to a single node. Models *reassignment*
+/// — `x = expr`, `self.f = expr`, and compound `x += expr` — as a value flow
+/// into an existing place, distinct from `ASSIGNED_FROM` which is reserved for
+/// declarations-with-initializers (`let`/`const`/`static`/enum discriminants).
+///
+/// Mirrors the JS analyzer's `ruleAssignmentExpression`
+/// (`left --WRITES_TO--> right`) so the edge shape is language-uniform and is
+/// picked up by the deep value-trace consumer in `traceDataflow.ts` (it walks
+/// the reference's outgoing `WRITES_TO` to recover the written value). No-op
+/// for compound LHS/RHS that `expr_node_id` cannot reduce to one node —
+/// matching the defensive behaviour of `emit_assigned_from`.
+fn emit_writes_to(ctx: &mut Ctx, lhs: &syn::Expr, rhs: &syn::Expr) {
+    if let (Some(lhs_id), Some(rhs_id)) = (expr_node_id(lhs, ctx), expr_node_id(rhs, ctx)) {
+        ctx.emit_edge(GraphEdge {
+            src: lhs_id,
+            dst: rhs_id,
+            edge_type: "WRITES_TO".to_string(),
+            metadata: HashMap::new(),
+        });
+    }
+}
+
+/// True for compound-assignment operators (`+=`, `-=`, `*=`, `/=`, `%=`, `^=`,
+/// `&=`, `|=`, `<<=`, `>>=`), which write a new value to their LHS place just
+/// like plain `=`. Plain arithmetic/logical/comparison operators return false,
+/// so ordinary `a + b` does not emit a spurious `WRITES_TO`.
+fn is_compound_assign(op: &syn::BinOp) -> bool {
+    use syn::BinOp::*;
+    matches!(
+        op,
+        AddAssign(_)
+            | SubAssign(_)
+            | MulAssign(_)
+            | DivAssign(_)
+            | RemAssign(_)
+            | BitXorAssign(_)
+            | BitAndAssign(_)
+            | BitOrAssign(_)
+            | ShlAssign(_)
+            | ShrAssign(_)
+    )
+}
+
 fn walk_let(local: &syn::Local, ctx: &mut Ctx) {
     // Collect binding IDs before walking init (for ASSIGNED_FROM)
     let binding_ids = collect_pat_binding_ids(&local.pat, "let", ctx);
@@ -2004,13 +2048,28 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
         }
 
         // ── Transparent: walk children ──────────────────────────────
-        syn::Expr::Binary(e) => { walk_expr(&e.left, ctx); walk_expr(&e.right, ctx); }
+        syn::Expr::Binary(e) => {
+            walk_expr(&e.left, ctx);
+            walk_expr(&e.right, ctx);
+            // Compound assignment (`x += y`, `x |= y`, …) is a reassignment:
+            // emit WRITES_TO like plain `=`. Pure binary ops (`a + b`) do not.
+            if is_compound_assign(&e.op) {
+                emit_writes_to(ctx, &e.left, &e.right);
+            }
+        }
         syn::Expr::Unary(e) => walk_expr(&e.expr, ctx),
         syn::Expr::Block(e) => walk_block(&e.block, ctx),
         syn::Expr::Paren(e) => walk_expr(&e.expr, ctx),
         syn::Expr::Reference(e) => walk_expr(&e.expr, ctx),
         syn::Expr::Await(e) => walk_expr(&e.base, ctx),
-        syn::Expr::Assign(e) => { walk_expr(&e.left, ctx); walk_expr(&e.right, ctx); }
+        syn::Expr::Assign(e) => {
+            walk_expr(&e.left, ctx);
+            walk_expr(&e.right, ctx);
+            // Reassignment `x = expr` / `self.f = expr` writes a new value into
+            // an existing place — emit WRITES_TO so backward Value Trace can
+            // recover it (mirrors the JS analyzer; consumed by traceDataflow).
+            emit_writes_to(ctx, &e.left, &e.right);
+        }
         syn::Expr::Index(e) => { walk_expr(&e.expr, ctx); walk_expr(&e.index, ctx); }
         syn::Expr::Tuple(e) => { for elem in &e.elems { walk_expr(elem, ctx); } }
         syn::Expr::Array(e) => { for elem in &e.elems { walk_expr(elem, ctx); } }
@@ -2864,6 +2923,99 @@ mod tests {
         // The ASSIGNED_FROM dst should be the CALL foo (not the Try node)
         let dst = &assigned[0].dst;
         assert!(dst.contains("CALL"), "ASSIGNED_FROM should point to CALL, got: {}", dst);
+    }
+
+    #[test]
+    fn test_reassignment_writes_to() {
+        // `x = foo()` is a reassignment: a new value flows into the existing
+        // binding `x`. Mirror the JS analyzer's AssignmentExpression rule —
+        // emit WRITES_TO from the LHS reference to the RHS value so backward
+        // Value Trace (traceDataflow.ts) can recover the written value instead
+        // of dead-ending. ASSIGNED_FROM is reserved for declarations-with-
+        // initializers; reassignment uses WRITES_TO (REG-686 / REG-1146).
+        let fa = parse_and_analyze(
+            "fn foo() -> i32 { 1 } fn main() { let mut x = 0; x = foo(); }"
+        );
+        let writes: Vec<_> = fa.edges.iter()
+            .filter(|e| e.edge_type == "WRITES_TO" && e.src.contains("REFERENCE") && e.src.contains("x"))
+            .collect();
+        assert!(!writes.is_empty(), "reassignment x = foo() should emit WRITES_TO, got edges: {:?}",
+            fa.edges.iter().map(|e| e.edge_type.clone()).collect::<Vec<_>>());
+        assert!(writes[0].dst.contains("CALL"),
+            "WRITES_TO should point to the RHS CALL foo, got: {}", writes[0].dst);
+    }
+
+    #[test]
+    fn test_self_field_reassignment_writes_to() {
+        // `self.count = 0` writes to a field place (PROPERTY_ACCESS), not a
+        // declaration — WRITES_TO from the field access to the literal value.
+        let fa = parse_and_analyze(
+            "struct S { count: i32 } impl S { fn reset(&mut self) { self.count = 0; } }"
+        );
+        let writes: Vec<_> = fa.edges.iter()
+            .filter(|e| e.edge_type == "WRITES_TO" && e.src.contains("PROPERTY_ACCESS") && e.src.contains("count"))
+            .collect();
+        assert!(!writes.is_empty(), "self.count = 0 should emit WRITES_TO from PROPERTY_ACCESS");
+        assert!(writes[0].dst.contains("LITERAL"),
+            "WRITES_TO should point to LITERAL 0, got: {}", writes[0].dst);
+    }
+
+    #[test]
+    fn test_compound_assignment_writes_to() {
+        // Compound assignment `total += amount()` is also a reassignment and
+        // must emit WRITES_TO like plain `=`. (syn models `+=` as Expr::Binary
+        // with a compound-assign BinOp, distinct from the Expr::Assign node.)
+        let fa = parse_and_analyze(
+            "fn amount() -> i32 { 1 } fn main() { let mut total = 0; total += amount(); }"
+        );
+        let writes: Vec<_> = fa.edges.iter()
+            .filter(|e| e.edge_type == "WRITES_TO" && e.src.contains("REFERENCE") && e.src.contains("total"))
+            .collect();
+        assert!(!writes.is_empty(), "compound assignment total += amount() should emit WRITES_TO");
+        assert!(writes[0].dst.contains("CALL"),
+            "WRITES_TO should point to RHS CALL amount, got: {}", writes[0].dst);
+    }
+
+    #[test]
+    fn test_assignment_edge_cases_no_panic() {
+        // Compound/irreducible LHS or RHS must degrade gracefully (no panic,
+        // no bogus edge), matching emit_assigned_from's defensive contract:
+        //  * chained `x = y = z` — the outer RHS is itself an assignment that
+        //    expr_node_id cannot reduce, so only the inner `y = z` emits;
+        //  * `arr[i] = v` — Index LHS cannot reduce → no WRITES_TO;
+        //  * `*p = v` — deref reduces through to the inner reference.
+        let fa = parse_and_analyze(
+            "fn main() { \
+                let (mut x, mut y, z) = (0, 0, 0); x = y = z; \
+                let mut arr = [0; 3]; arr[0] = 1; \
+                let mut n = 0; let p = &mut n; *p = 5; \
+            }"
+        );
+        let writes: Vec<_> = fa.edges.iter()
+            .filter(|e| e.edge_type == "WRITES_TO")
+            .collect();
+        // inner `y = z` and `*p = 5` emit; `arr[0] = 1` (Index LHS) and the
+        // outer chained `x = (y = z)` (Assign RHS) cannot reduce, so do not.
+        assert!(writes.iter().any(|e| e.src.contains("REFERENCE") && e.src.contains("y")),
+            "inner chained assignment y = z should emit WRITES_TO");
+        assert!(writes.iter().any(|e| e.src.contains("REFERENCE") && e.src.contains("p")
+            && e.dst.contains("LITERAL")),
+            "deref assignment *p = 5 should emit WRITES_TO from the reference");
+        assert!(!writes.iter().any(|e| e.src.contains("REFERENCE") && e.src.contains("x")
+            && e.dst.contains("REFERENCE") && e.dst.contains("y")),
+            "outer chained x = (y = z) cannot reduce its RHS — no x->y WRITES_TO");
+    }
+
+    #[test]
+    fn test_plain_binary_no_writes_to() {
+        // A pure binary expression `a + b` is NOT an assignment — it must not
+        // emit a spurious WRITES_TO edge. Guards the compound-assign
+        // discriminator against over-emitting on ordinary arithmetic.
+        let fa = parse_and_analyze("fn main() { let a = 1; let b = 2; let _c = a + b; }");
+        let writes: Vec<_> = fa.edges.iter()
+            .filter(|e| e.edge_type == "WRITES_TO")
+            .collect();
+        assert!(writes.is_empty(), "pure binary a + b must not emit WRITES_TO, got: {:?}", writes);
     }
 
     #[test]
