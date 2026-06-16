@@ -234,12 +234,18 @@ export async function handleRemember(args: RememberArgs): Promise<ToolResult> {
       }),
     }]);
 
+    // Honor the advertised `confidence` parameter (0-1, default 0.9), matching
+    // handleAddAssertion. Without this the caller's confidence was silently
+    // dropped — the stored assertion edge carried no confidence at all. `??`
+    // (not `||`) preserves an explicit confidence of 0.
+    const confidence = args.confidence ?? 0.9;
+
     // Create edge from subject to fact
     await client.addEdges([{
       src: subjectId,
       dst: factNodeId,
       edgeType: relation as EdgeType,
-      metadata: JSON.stringify({ created_at: nowISO() }),
+      metadata: JSON.stringify({ created_at: nowISO(), confidence }),
     }]);
 
     await client.flush();
@@ -249,7 +255,8 @@ export async function handleRemember(args: RememberArgs): Promise<ToolResult> {
       `  Subject: ${subjectId}\n` +
       `  Fact: ${factNodeId}\n` +
       `  Relation: ${relation}\n` +
-      `  Domain: ${domain}`
+      `  Domain: ${domain}\n` +
+      `  Confidence: ${confidence}`
     );
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
