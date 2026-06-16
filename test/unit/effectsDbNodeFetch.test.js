@@ -2,12 +2,13 @@
  * Effects-db coverage guard for the `node-fetch` HTTP client.
  *
  * Why this exists:
- *   - The effects-db annotates the HTTP *server* side (express → IO:HTTP:LISTEN).
- *     The `http` bridge pattern (effects-db/bridges.yaml) matches a sender with
+ *   - The `http` bridge pattern (effects-db/bridges.yaml) matches a sender with
  *     `IO:HTTP:REQUEST` to a receiver with `IO:HTTP:LISTEN` to synthesize
- *     CALLS_REMOTE edges. node-fetch is one of the most-downloaded HTTP *clients*
- *     on npm; annotating its default `fetch` export lights up the sender side of
- *     that bridge for every `import fetch from 'node-fetch'` call site.
+ *     CALLS_REMOTE edges. The receiver side already exists on node's built-in
+ *     http/https server (runtimes/node.yaml: createServer / Server.listen); the
+ *     gap was a popular userland HTTP *client* on the sender side. node-fetch is
+ *     one of the most-downloaded on npm; annotating its default `fetch` export
+ *     lights up the sender side for every `import fetch from 'node-fetch'` call site.
  *   - This test pins the effect annotations so a future edit can't silently drop
  *     IO:HTTP:REQUEST (which would break http-bridge sender detection), drop the
  *     `channel.url` metadata the bridge uses for URL extraction, or — critically —

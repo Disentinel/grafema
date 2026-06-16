@@ -13,12 +13,18 @@
 # purl: pkg:npm/node-fetch
 #
 # Why this package matters for Grafema:
-#   effects-db already annotates the HTTP *server* side (express → IO:HTTP:LISTEN).
-#   The `http` bridge (effects-db/bridges.yaml) pairs a sender carrying
-#   IO:HTTP:REQUEST with a receiver carrying IO:HTTP:LISTEN to emit CALLS_REMOTE
-#   edges. node-fetch is one of the most-downloaded HTTP *clients* on npm, so
-#   annotating its default `fetch` export lights up the sender side of that bridge
-#   for every `import fetch from 'node-fetch'` call site.
+#   The `http` bridge (effects-db/bridges.yaml:22-29) pairs a SENDER carrying
+#   IO:HTTP:REQUEST with a RECEIVER carrying IO:HTTP:LISTEN to emit CALLS_REMOTE
+#   edges. The receiver side already exists at the runtime level: node's built-in
+#   HTTP/HTTPS server carries IO:HTTP:LISTEN (`node:http`/`node:https`
+#   `createServer` + `Server.listen`, runtimes/node.yaml:319,338,347). What was
+#   missing was a popular userland HTTP *client* on the SENDER side — node-fetch is
+#   one of the most-downloaded on npm, so annotating its default `fetch` export
+#   (IO:HTTP:REQUEST) lights up that sender side for every
+#   `import fetch from 'node-fetch'` call site.
+#   (NB: framework server `.listen` methods — express/fastify/koa — are annotated
+#   [IO, ASYNC] at the package level, NOT the IO:HTTP:LISTEN subtype; the subtype
+#   is only on the node runtime server they delegate to.)
 #
 # Effect conventions used here:
 #   - `fetch` carries the same effects + channel as the ecma:web `fetch` entry in
