@@ -1,0 +1,43 @@
+# cross-spawn (v7.x) — cross-platform child_process.spawn
+# Generated: 2026-06-16
+# Method: real API probe (cross-spawn@7.0.6) + node:child_process precedent
+# Taxonomy version: 1
+# purl: pkg:npm/cross-spawn
+#
+# cross-spawn is a drop-in replacement for node:child_process spawn / spawnSync
+# that fixes Windows quoting/PATH/shebang handling. It is one of the most
+# depended-upon npm packages (a dependency of npm itself and most CLI tooling),
+# so leaving it UNKNOWN dropped the IO:PROCESS:SPAWN signal for every subprocess
+# launched through it. Effects mirror node:child_process (node.yaml:257-278).
+#
+# Probe findings (cross-spawn@7.0.6, Object.keys + behaviour probes in /tmp):
+#   - module.exports === the spawn function; own keys: spawn, sync, _parse, _enoent
+#   - spawn(cmd, args, opts) returns a ChildProcess SYNCHRONOUSLY (the subprocess
+#     runs async, but the call does not await) → NO ASYNC, same as node spawn
+#   - spawn(123) THROWs synchronously (TypeError from child_process validateString)
+#   - sync(123) THROWs synchronously (TypeError) and returns a spawnSync result
+#   - a missing binary emits an async 'error' event, NOT a sync throw (so the
+#     THROW tag reflects only the synchronous bad-argument validation, exactly
+#     like node:child_process.spawn)
+#   - _parse / _enoent are underscore-prefixed internals (arg parser + ENOENT
+#     hook), not part of the documented call API → intentionally NOT annotated
+#
+# channel.binary = arg[0] lets the subprocess-cli / subprocess-stdio bridges
+# (bridges.yaml) match the spawned binary name to its entry point.
+
+cross-spawn:
+  # Default export === spawn(command, [args], [options]) -> ChildProcess.
+  # Keyed module.module, matching the default-export-function convention used by
+  # minimatch (minimatch.minimatch) and express (express.express).
+  cross-spawn:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
+  # Named property alias of the same function (crossSpawn.spawn(...)).
+  spawn:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
+  # crossSpawn.sync(...) === child_process.spawnSync — synchronous, returns the
+  # { status, signal, output, pid, stdout, stderr, error } result object.
+  sync:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
