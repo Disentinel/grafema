@@ -605,3 +605,48 @@ describe('REG-1144 — advertised tools all have dispatch handlers', () => {
     );
   });
 });
+
+// ============================================================================
+// REG-1192 — save_document must honor every advertised parameter
+//
+// The save_document tool advertises a `doc_type` parameter (enum adr/postmortem/
+// spec/note/artifact). Before the fix, handleSaveDocument never read it, so an
+// agent calling save_document({ doc_type: "adr" }) silently lost the
+// classification — the same advertised-but-ignored trust hole as REG-1191
+// (analyze_project.index_only) and QA-7 (semantic_search.include_edges).
+//
+// This guards the REG-1191-style invariant for save_document: every parameter
+// advertised in its inputSchema must be referenced by handleSaveDocument as
+// `args.<param>`, or it is dead-on-arrival for callers.
+// ============================================================================
+
+describe('REG-1192 — save_document honors advertised parameters', () => {
+  it('every advertised save_document param is read by handleSaveDocument', () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+
+    const tool = TOOLS.find((t) => t.name === 'save_document');
+    assert.ok(tool, 'save_document tool must be advertised in TOOLS');
+
+    const schema = tool.inputSchema as { properties?: Record<string, unknown> };
+    const advertised = Object.keys(schema.properties ?? {});
+    assert.ok(advertised.length > 0, 'save_document must advertise parameters');
+
+    // Isolate the handleSaveDocument function body so unrelated handlers in the
+    // same file can't satisfy the invariant by accident.
+    const src = readFileSync(
+      join(here, '..', 'src', 'handlers', 'enox-handlers.ts'),
+      'utf8',
+    );
+    const start = src.indexOf('export async function handleSaveDocument');
+    assert.ok(start >= 0, 'handleSaveDocument must exist');
+    const after = src.indexOf('\nexport ', start + 1);
+    const body = after >= 0 ? src.slice(start, after) : src.slice(start);
+
+    const ignored = advertised.filter((param) => !body.includes(`args.${param}`));
+    assert.deepStrictEqual(
+      ignored,
+      [],
+      `save_document advertises params its handler never reads: ${ignored.join(', ')}`,
+    );
+  });
+});

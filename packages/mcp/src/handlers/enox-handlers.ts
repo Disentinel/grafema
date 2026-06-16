@@ -1061,6 +1061,12 @@ export interface SaveDocumentArgs {
   title: string;
   content: string;
   domain?: string;
+  /**
+   * Document classification (e.g. "adr", "postmortem", "spec", "note",
+   * "artifact"). Persisted on the DOCUMENT node metadata so saved documents
+   * are queryable by type. Defaults to "note" when omitted.
+   */
+  doc_type?: string;
   relates_to?: string[];
 }
 
@@ -1068,6 +1074,7 @@ export async function handleSaveDocument(args: SaveDocumentArgs): Promise<ToolRe
   try {
     const client = await getKnowledgeClient();
     const domain = args.domain || 'general';
+    const docType = args.doc_type || 'note';
 
     const docId = `doc:${createHash('sha256')
       .update(`${args.title}|${Date.now()}`)
@@ -1083,6 +1090,7 @@ export async function handleSaveDocument(args: SaveDocumentArgs): Promise<ToolRe
       metadata: JSON.stringify({
         content: args.content,
         domain,
+        doc_type: docType,
         created_at: nowISO(),
       }),
     }]);
@@ -1110,6 +1118,7 @@ export async function handleSaveDocument(args: SaveDocumentArgs): Promise<ToolRe
       `Document saved:`,
       `  ID: ${docId}`,
       `  Title: ${args.title}`,
+      `  Type: ${docType}`,
       `  Domain: ${domain}`,
       `  Content: ${args.content.length} chars`,
     ];
