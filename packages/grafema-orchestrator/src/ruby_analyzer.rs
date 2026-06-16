@@ -1582,10 +1582,11 @@ fn walk_node_inner(node: &ruby_prism::Node<'_>, ctx: &mut Ctx) {
             walk_node(&n.value(), ctx);
             if ctx.nodes.len() > before {
                 let value_node_id = ctx.nodes[before].id.clone();
+                // `x &&= y` is a reassignment — WRITES_TO, not ASSIGNED_FROM (REG-1146).
                 ctx.emit_edge(GraphEdge {
                     src: node_id,
                     dst: value_node_id,
-                    edge_type: "ASSIGNED_FROM".to_string(),
+                    edge_type: "WRITES_TO".to_string(),
                     metadata: HashMap::new(),
                 });
             }
@@ -1614,10 +1615,11 @@ fn walk_node_inner(node: &ruby_prism::Node<'_>, ctx: &mut Ctx) {
             walk_node(&n.value(), ctx);
             if ctx.nodes.len() > before {
                 let value_node_id = ctx.nodes[before].id.clone();
+                // `x ||= y` is a reassignment — WRITES_TO, not ASSIGNED_FROM (REG-1146).
                 ctx.emit_edge(GraphEdge {
                     src: node_id,
                     dst: value_node_id,
-                    edge_type: "ASSIGNED_FROM".to_string(),
+                    edge_type: "WRITES_TO".to_string(),
                     metadata: HashMap::new(),
                 });
             }
@@ -1646,10 +1648,12 @@ fn walk_node_inner(node: &ruby_prism::Node<'_>, ctx: &mut Ctx) {
             walk_node(&n.value(), ctx);
             if ctx.nodes.len() > before {
                 let value_node_id = ctx.nodes[before].id.clone();
+                // `x += y` (and other operator-writes) is a reassignment — WRITES_TO,
+                // not ASSIGNED_FROM (REG-1146; mirrors rust_analyzer is_compound_assign).
                 ctx.emit_edge(GraphEdge {
                     src: node_id,
                     dst: value_node_id,
-                    edge_type: "ASSIGNED_FROM".to_string(),
+                    edge_type: "WRITES_TO".to_string(),
                     metadata: HashMap::new(),
                 });
             }
@@ -2955,7 +2959,9 @@ fn emit_call_node(ctx: &mut Ctx, node_id: &str, name: &str, line: i64, col: i64,
 }
 
 // ---------------------------------------------------------------------------
-// Helper: emit instance variable write (compound forms)
+// Helper: emit instance variable write (compound forms only: `@x ||=`/`&&=`/`+=`).
+// These are reassignments into an existing place, so the value edge is WRITES_TO
+// (not ASSIGNED_FROM, which is reserved for declarations-with-initializer). REG-1146.
 // ---------------------------------------------------------------------------
 
 fn emit_ivar_write(ctx: &mut Ctx, name: &str, loc: &ruby_prism::Location<'_>, value: &ruby_prism::Node<'_>) {
@@ -2978,17 +2984,22 @@ fn emit_ivar_write(ctx: &mut Ctx, name: &str, loc: &ruby_prism::Location<'_>, va
     walk_node(value, ctx);
     if ctx.nodes.len() > before {
         let value_node_id = ctx.nodes[before].id.clone();
+        // Compound write (`+=`, `||=`, `&&=`, …) is a reassignment into an existing
+        // place, not a declaration-with-initializer — emit WRITES_TO so backward
+        // Value Trace (traceDataflow.ts) recovers the written value. Mirrors the
+        // rust_analyzer `is_compound_assign` path (REG-1146).
         ctx.emit_edge(GraphEdge {
             src: node_id,
             dst: value_node_id,
-            edge_type: "ASSIGNED_FROM".to_string(),
+            edge_type: "WRITES_TO".to_string(),
             metadata: HashMap::new(),
         });
     }
 }
 
 // ---------------------------------------------------------------------------
-// Helper: emit class variable write (compound forms)
+// Helper: emit class variable write (compound forms only: `@@x ||=`/`&&=`/`+=`).
+// Reassignment → WRITES_TO value edge (see emit_ivar_write). REG-1146.
 // ---------------------------------------------------------------------------
 
 fn emit_cvar_write(ctx: &mut Ctx, name: &str, loc: &ruby_prism::Location<'_>, value: &ruby_prism::Node<'_>) {
@@ -3011,17 +3022,22 @@ fn emit_cvar_write(ctx: &mut Ctx, name: &str, loc: &ruby_prism::Location<'_>, va
     walk_node(value, ctx);
     if ctx.nodes.len() > before {
         let value_node_id = ctx.nodes[before].id.clone();
+        // Compound write (`+=`, `||=`, `&&=`, …) is a reassignment into an existing
+        // place, not a declaration-with-initializer — emit WRITES_TO so backward
+        // Value Trace (traceDataflow.ts) recovers the written value. Mirrors the
+        // rust_analyzer `is_compound_assign` path (REG-1146).
         ctx.emit_edge(GraphEdge {
             src: node_id,
             dst: value_node_id,
-            edge_type: "ASSIGNED_FROM".to_string(),
+            edge_type: "WRITES_TO".to_string(),
             metadata: HashMap::new(),
         });
     }
 }
 
 // ---------------------------------------------------------------------------
-// Helper: emit global variable write (compound forms)
+// Helper: emit global variable write (compound forms only: `$x ||=`/`&&=`/`+=`).
+// Reassignment → WRITES_TO value edge (see emit_ivar_write). REG-1146.
 // ---------------------------------------------------------------------------
 
 fn emit_gvar_write(ctx: &mut Ctx, name: &str, loc: &ruby_prism::Location<'_>, value: &ruby_prism::Node<'_>) {
@@ -3043,17 +3059,22 @@ fn emit_gvar_write(ctx: &mut Ctx, name: &str, loc: &ruby_prism::Location<'_>, va
     walk_node(value, ctx);
     if ctx.nodes.len() > before {
         let value_node_id = ctx.nodes[before].id.clone();
+        // Compound write (`+=`, `||=`, `&&=`, …) is a reassignment into an existing
+        // place, not a declaration-with-initializer — emit WRITES_TO so backward
+        // Value Trace (traceDataflow.ts) recovers the written value. Mirrors the
+        // rust_analyzer `is_compound_assign` path (REG-1146).
         ctx.emit_edge(GraphEdge {
             src: node_id,
             dst: value_node_id,
-            edge_type: "ASSIGNED_FROM".to_string(),
+            edge_type: "WRITES_TO".to_string(),
             metadata: HashMap::new(),
         });
     }
 }
 
 // ---------------------------------------------------------------------------
-// Helper: emit constant write (compound forms)
+// Helper: emit constant write (compound forms only: `K ||=`/`&&=`/`+=`, incl.
+// constant paths). Reassignment → WRITES_TO value edge (see emit_ivar_write). REG-1146.
 // ---------------------------------------------------------------------------
 
 fn emit_const_write(ctx: &mut Ctx, name: &str, loc: &ruby_prism::Location<'_>, value: &ruby_prism::Node<'_>) {
@@ -3076,10 +3097,14 @@ fn emit_const_write(ctx: &mut Ctx, name: &str, loc: &ruby_prism::Location<'_>, v
     walk_node(value, ctx);
     if ctx.nodes.len() > before {
         let value_node_id = ctx.nodes[before].id.clone();
+        // Compound write (`+=`, `||=`, `&&=`, …) is a reassignment into an existing
+        // place, not a declaration-with-initializer — emit WRITES_TO so backward
+        // Value Trace (traceDataflow.ts) recovers the written value. Mirrors the
+        // rust_analyzer `is_compound_assign` path (REG-1146).
         ctx.emit_edge(GraphEdge {
             src: node_id,
             dst: value_node_id,
-            edge_type: "ASSIGNED_FROM".to_string(),
+            edge_type: "WRITES_TO".to_string(),
             metadata: HashMap::new(),
         });
     }
@@ -3387,6 +3412,62 @@ mod tests {
         let consts = find_nodes_by_type(&a, "CONSTANT");
         assert_eq!(consts.len(), 1);
         assert_eq!(consts[0].name, "MAX");
+    }
+
+    // 12b. Compound reassignment emits WRITES_TO (REG-1146 sibling of rust_analyzer).
+    // Ruby's operator/or/and write nodes (`x += 1`, `@c ||= y`, `$g &&= z`, ...) are
+    // unambiguous reassignments into an existing place, so they mirror the Rust
+    // analyzer's `is_compound_assign` path: place --WRITES_TO--> value, NOT the
+    // `ASSIGNED_FROM` edge reserved for declarations-with-initializer. The deep
+    // value-trace consumer (traceDataflow.ts) follows WRITES_TO to recover the
+    // written value, so without this edge Ruby backward Value Trace dead-ends on
+    // every reassigned binding.
+    #[test]
+    fn test_compound_reassignment_emits_writes_to() {
+        // Local operator-write `+=`, instance or-write `||=`, class operator-write,
+        // global and-write `&&=`, constant operator-write — one of each kind.
+        // RHS are bareword method calls (not literals): Ruby integer/nil/bool
+        // literals emit no graph node, so a node-producing RHS is required for any
+        // value edge (ASSIGNED_FROM or WRITES_TO) to be emitted at all.
+        let src = "$g = initial_value\n\
+                   $g &&= caller_value\n\
+                   COUNT = base_value\n\
+                   COUNT += step_value\n\
+                   class Foo\n  \
+                     @@total = 0\n  \
+                     def run\n    \
+                       count = 0\n    \
+                       count += amount_value\n    \
+                       @cache ||= cache_value\n    \
+                       @@total += total_value\n  \
+                     end\n\
+                   end";
+        let a = analyze(src);
+        let writes = find_edges_by_type(&a, "WRITES_TO");
+
+        // Each compound reassignment whose RHS reduces to a single node must emit a
+        // WRITES_TO edge from the VARIABLE/CONSTANT place to that value node.
+        let has_write_for = |name: &str| {
+            writes.iter().any(|e| e.src.contains(name))
+        };
+        assert!(has_write_for("count"),
+            "local `count += amount_value` should emit WRITES_TO, got: {:?}", writes);
+        assert!(has_write_for("@cache"),
+            "instance `@cache ||= cache_value` should emit WRITES_TO, got: {:?}", writes);
+        assert!(has_write_for("@@total"),
+            "class `@@total += total_value` should emit WRITES_TO, got: {:?}", writes);
+        assert!(has_write_for("$g"),
+            "global `$g &&= caller_value` should emit WRITES_TO, got: {:?}", writes);
+        assert!(has_write_for("COUNT"),
+            "constant `COUNT += step_value` should emit WRITES_TO, got: {:?}", writes);
+
+        // Boundary: plain declarations-with-initializer keep ASSIGNED_FROM and must
+        // NOT be reclassified as reassignments.
+        let assigned = find_edges_by_type(&a, "ASSIGNED_FROM");
+        assert!(assigned.iter().any(|e| e.src.contains("$g")),
+            "plain `$g = 1` should still emit ASSIGNED_FROM, got: {:?}", assigned);
+        assert!(assigned.iter().any(|e| e.src.contains("COUNT")),
+            "plain `COUNT = 0` should still emit ASSIGNED_FROM, got: {:?}", assigned);
     }
 
     // 13. require_relative
