@@ -84,6 +84,9 @@ export const EDGE_TYPE = {
   EXPOSES: 'EXPOSES',
   RESPONDS_WITH: 'RESPONDS_WITH',
 
+  // Connascence / version-consistency (RFD-75)
+  REFERS_TO: 'REFERS_TO',   // version:ref -> version:coord
+
   // Events/Sockets
   LISTENS_TO: 'LISTENS_TO',
   EMITS_EVENT: 'EMITS_EVENT',
@@ -220,6 +223,12 @@ export interface RouteEdge extends EdgeRecord {
   type: 'ROUTES_TO' | 'HANDLED_BY';
   method?: string;
   path?: string;
+}
+
+// version:ref -> version:coord (RFD-75 connascence). Derived by the
+// version_refs_edges pack; carries no metadata of its own.
+export interface RefersToEdge extends EdgeRecord {
+  type: 'REFERS_TO';
 }
 
 /**

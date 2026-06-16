@@ -28,6 +28,7 @@ import { enrichBehaviors } from '@grafema/util/enrichers/behaviorEnricher';
 import { enrichContracts } from '@grafema/util/enrichers/contractEnricher';
 import { enrichLibraryCallbacks } from '@grafema/util/enrichers/libraryCallbackEnricher';
 import { enrichPackageApis } from '@grafema/util/enrichers/packageApiEnricher';
+import { enrichVersionRefs } from '@grafema/util/enrichers/versionRefEnricher';
 import { enrichMcpToolDefinitions } from '@grafema/util/enrichers/mcpToolDefinitionEnricher';
 import { enrichSpecedContracts } from '@grafema/util/enrichers/specedContractEnricher';
 import { commanderExtractor } from '@grafema/util/enrichers/extractors/commanderExtractor';
@@ -525,6 +526,23 @@ export async function analyzeAction(path: string, options: { service?: string; e
         }
       } catch (err) {
         debug(`Package API enricher skipped: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      // Version-ref enricher (RFD-75) — emit a `version:ref` node per repo-
+      // static version locus (package.json version, @grafema/* dependency pins,
+      // git tag, CHANGELOG top entry). The version_coords_nodes /
+      // version_refs_edges derive packs then mint `version:coord` + REFERS_TO,
+      // and the `value-lockstep` guarantee trips on connascence-of-value drift.
+      try {
+        const client = (backend as unknown as { client: Parameters<typeof enrichVersionRefs>[0] }).client;
+        if (client) {
+          const result = await enrichVersionRefs(client, projectPath);
+          if (result.nodesCreated > 0) {
+            info(`  Version refs: ${result.nodesCreated} version:ref nodes across ${result.lociScanned} loci (pkg.version=${result.packageVersionRefs}, deps=${result.dependencyRefs}, gitTag=${result.gitTagRefs}, changelog=${result.changelogRefs})`);
+          }
+        }
+      } catch (err) {
+        debug(`Version-ref enricher skipped: ${err instanceof Error ? err.message : String(err)}`);
       }
 
       // Generate manifest after successful analysis

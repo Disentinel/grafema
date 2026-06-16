@@ -169,6 +169,13 @@ const STDLIB_RULE_PACKS: &[&str] = &[
     // consume analyzer EDB only.
     "@stdlib/js_entrypoint_features_nodes",
     "@stdlib/js_entrypoint_features_edges",
+    // RFD-75 connascence-of-value vertical: version_coords_nodes MINTS the
+    // version:coord nodes (one per distinct coord) the version_refs_edges pack
+    // joins as committed EDB to derive REFERS_TO (strict nodes→edges order — the
+    // js_builtins two-pack split). Both consume the enricher-minted version:ref
+    // EDB only.
+    "@stdlib/version_coords_nodes",
+    "@stdlib/version_refs_edges",
 ];
 
 
@@ -618,6 +625,8 @@ fn pack_owned_slice(pack: &str) -> &'static str {
         "@stdlib/js_http_routes_edges" => "js http:route EXPOSES + HANDLES",
         "@stdlib/js_entrypoint_features_nodes" => "js cli:command/mcp:tool/vscode:command FEATURE nodes (commander/mcp-sdk/vscode)",
         "@stdlib/js_entrypoint_features_edges" => "js cli:command/mcp:tool/vscode:command EXPOSES + HANDLES",
+        "@stdlib/version_coords_nodes" => "version:coord nodes (RFD-75 connascence)",
+        "@stdlib/version_refs_edges" => "version:ref → version:coord REFERS_TO (RFD-75 connascence)",
         _ => "(unregistered pack)",
     }
 }

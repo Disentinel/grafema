@@ -100,6 +100,10 @@ export const NAMESPACED_TYPE = {
 
   // Grafema internal (self-describing pipeline)
   GRAFEMA_PLUGIN: 'grafema:plugin',
+
+  // Connascence / version-consistency (RFD-75)
+  VERSION_REF: 'version:ref',
+  VERSION_COORD: 'version:coord',
 } as const;
 
 export type NamespacedNodeType = typeof NAMESPACED_TYPE[keyof typeof NAMESPACED_TYPE];
@@ -288,6 +292,26 @@ export interface HttpRouteNodeRecord extends BaseNodeRecord {
   method: string;
   path: string;
   handler?: string;
+}
+
+// version:ref — one physical occurrence of a version value (RFD-75).
+// value/locus/coord are carried in the node's metadata JSON (read by the
+// `value-lockstep` guarantee via `node_attr`), NOT as RFDB top-level columns —
+// these fields document the metadata shape for TS consumers, exactly like
+// HttpRouteNodeRecord's method/path which ride node metadata.
+export interface VersionRefNodeRecord extends BaseNodeRecord {
+  type: 'version:ref';
+  value: string;   // the version string, e.g. "0.4.0"
+  locus: string;   // "package.version" | "optionalDeps[<name>]" | "git.tag" | "changelog" | "binary.<name>"
+  coord: string;   // the logical coord this ref must agree with: "release" or "<pkg-name>"
+}
+
+// version:coord — the logical thing that must agree (RFD-75). Minted by the
+// version_coords_nodes derive pack (one node per distinct coord). `coord` rides
+// the node metadata so the edge pack can join ref→coord via `node_attr`.
+export interface VersionCoordNodeRecord extends BaseNodeRecord {
+  type: 'version:coord';
+  coord: string;
 }
 
 // Database query node

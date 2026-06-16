@@ -1,0 +1,47 @@
+% version_coords_nodes.dl — node half of the RFD-75 connascence-of-value
+% vertical. Mints one `version:coord` node per DISTINCT coord value carried by
+% the `version:ref` nodes the versionRefEnricher committed (package.json
+% version + @grafema/* dependency pins + git tag + CHANGELOG top entry).
+%
+% The `version:coord` node is the logical thing that must agree: coord
+% "release" (shared by package.version / git.tag / changelog) and one coord per
+% tracked dependency name. The PAIRED edge pack version_refs_edges.dl then joins
+% these committed coord nodes as EDB and derives REFERS_TO (ref → coord) — the
+% js_http_routes two-pack split (node pack strictly before edge pack; the edge
+% endpoint must be a node-ID column, and a same-run-minted node's id exists only
+% as the BLAKE3 of the sid string this pack builds).
+%
+% Unlike js_http_routes, the version:ref NODES are NOT minted here — the
+% enricher mints them directly (RFD plan §1: version sources are filesystem
+% reads of package.json/git/CHANGELOG, not graph-derivable from analyzer EDB).
+% This pack only derives the coord nodes + (in the edge pack) the REFERS_TO
+% edge.
+%
+% IDENTITY: sid = "version:coord::" + Coord (deterministic, one per distinct
+% coord — the engine's set semantics dedup multiple refs → same coord, since
+% the head's only varying column besides Sid is Coord). Coord is projected into
+% the node's OWN metadata via meta(coord) so the edge pack can read it back with
+% node_attr(Coord_node, "coord", Coord) — node_attr is a point probe (no
+% generator mode, builtin.rs NODE_ATTR_MODES = [B,B,F]/[B,B,B]), so the coord
+% value MUST live in the coord node's metadata for the join.
+%
+% mode = "exclusive" is PROVENANCE-SCOPED: only the version:coord nodes stamped
+% with THIS rule's _source are owned — a coord no longer referenced by any ref
+% retracts on the next run; foreign producers' nodes are never touched.
+%
+% MAINTAIN ENVELOPE: pure positive joins, NO negation ⇒ incrementally
+% maintainable (unlike js_http_routes, which is scratch-only due to negation).
+%
+% ORDERING (PRODUCER): consumes only the committed version:ref EDB; produces the
+% version:coord nodes version_refs_edges joins. MUST run strictly before it.
+
+% Head shape (the @materialize_node contract, materialize.rs §node section):
+%   col0 = SemanticId, col1 = Name, col2 = File, col3.. = meta(...) columns.
+% Here Name = File = Coord (a coord node has no source file; the coord string
+% doubles as a human-facing label). meta(coord) projects col3 into the metadata
+% JSON so node_attr(Coord_node, "coord", Coord) reads it back in the edge pack.
+@materialize_node(node_type = "version:coord", mode = "exclusive", meta(coord))
+vcoord(Sid, Coord, Coord, Coord) :-
+    node(R, "version:ref"),
+    node_attr(R, "coord", Coord),
+    concat("version:coord::", Coord, Sid).
