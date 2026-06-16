@@ -46,6 +46,10 @@ elixirStrategy = RG.NameStrategy
   , RG.nsFilter      = RG.FilterCalls
   , RG.nsEdgeType    = "CALLS"
   , RG.nsVirtualFile = "<runtime/elixir>"
+  , RG.nsResolvedVia = "runtime-globals"
+  , RG.nsGlobalCategory = "elixir-stdlib"
+  , RG.nsNodeType    = "GLOBAL_DEFINITION"
+  , RG.nsNodeSource  = "effects-db"
   }
 
 -- | Strategy for Erlang BIFs. Same separator as Elixir because
@@ -59,6 +63,10 @@ erlangStrategy = RG.NameStrategy
   , RG.nsFilter      = RG.FilterCalls
   , RG.nsEdgeType    = "CALLS"
   , RG.nsVirtualFile = "<runtime/erlang>"
+  , RG.nsResolvedVia = "runtime-globals"
+  , RG.nsGlobalCategory = "erlang-bif"
+  , RG.nsNodeType    = "GLOBAL_DEFINITION"
+  , RG.nsNodeSource  = "effects-db"
   }
 
 -- | Run both strategies against the same node set. The shared engine
