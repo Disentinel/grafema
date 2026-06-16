@@ -222,6 +222,16 @@ pub struct GraphEngineV2 {
     cached_profile: TuningProfile,
     /// Timestamp of last resource re-detection (rate-limits sysinfo calls).
     last_resource_check: Instant,
+    /// W4 #2: when `true`, the buffer-pressure auto-flush hooks at the end of
+    /// `add_nodes`/`add_edges` are inert. Set only for the brief apply phase of an ATOMIC
+    /// multi-step write-back (the `@materialize` delta — see [`Self::materialize_writeback_delta`]),
+    /// where an intra-add `store.flush_all` would publish the adds while the run's
+    /// `pending_tombstone_*` retractions are still engine-side, exposing a torn intermediate
+    /// version. Always restored to its prior value via [`Self::with_auto_flush_suppressed`];
+    /// the explicit `flush()` that closes the delta is never suppressed, so durability and
+    /// the single atomic publish are preserved. Default `false` — every other write path
+    /// keeps its OOM-safeguard auto-flush.
+    suppress_auto_flush: bool,
     /// Embedding engine for semantic search (None when feature disabled or not initialized).
     #[cfg(feature = "embedding")]
     embedding_engine: Option<std::sync::Arc<crate::embedding::EmbeddingEngine>>,
@@ -318,6 +328,7 @@ impl GraphEngineV2 {
             declared_fields: Vec::new(),
             cached_profile: profile,
             last_resource_check: Instant::now(),
+            suppress_auto_flush: false,
             bulk_load_active: false,
             auto_compact_threshold: 8,
             auto_compact_fanout: 4.0,
@@ -346,6 +357,7 @@ impl GraphEngineV2 {
             declared_fields: Vec::new(),
             cached_profile: TuningProfile::default(),
             last_resource_check: Instant::now(),
+            suppress_auto_flush: false,
             bulk_load_active: false,
             auto_compact_threshold: 8,
             auto_compact_fanout: 4.0,
@@ -397,6 +409,7 @@ impl GraphEngineV2 {
             declared_fields: Vec::new(),
             cached_profile: profile,
             last_resource_check: Instant::now(),
+            suppress_auto_flush: false,
             bulk_load_active: false,
             auto_compact_threshold: 8,
             auto_compact_fanout: 4.0,
@@ -1308,20 +1321,26 @@ impl GraphEngineV2 {
             nodes: !added_nodes.is_empty() || !removed_node_ids.is_empty(),
             edges_unbounded: !removed_node_ids.is_empty(),
         };
-        for id in &removed_node_ids {
-            self.delete_node(*id);
-        }
-        for (s, d, t) in &removed {
-            self.delete_edge(*s, *d, t);
-        }
-        if !added.is_empty() {
-            let v1: Vec<EdgeRecord> = added.iter().map(edge_v2_to_v1).collect();
-            self.add_edges(v1, true);
-        }
-        if !added_nodes.is_empty() {
-            let v1: Vec<NodeRecord> = added_nodes.iter().map(node_v2_to_v1).collect();
-            self.add_nodes(v1);
-        }
+        // W4 #2: stage tombstones + adds with intra-add auto-flush suppressed, so the
+        // SINGLE explicit flush() below is the only publish — a buffer-pressure auto-flush
+        // inside add_nodes/add_edges would otherwise expose the adds while these tombstones
+        // are still engine-side (`pending_tombstone_*`), tearing the "ONE flush" invariant.
+        self.with_auto_flush_suppressed(|s| {
+            for id in &removed_node_ids {
+                s.delete_node(*id);
+            }
+            for (src, dst, t) in &removed {
+                s.delete_edge(*src, *dst, t);
+            }
+            if !added.is_empty() {
+                let v1: Vec<EdgeRecord> = added.iter().map(edge_v2_to_v1).collect();
+                s.add_edges(v1, true);
+            }
+            if !added_nodes.is_empty() {
+                let v1: Vec<NodeRecord> = added_nodes.iter().map(node_v2_to_v1).collect();
+                s.add_nodes(v1);
+            }
+        });
         self.flush().map_err(|e| {
             crate::derive::EvalError::Materialize(crate::derive::materialize::MaterializeError {
                 code: "E-MAT-005",
@@ -2425,6 +2444,12 @@ impl GraphEngineV2 {
     fn maybe_auto_flush(&mut self) {
         use std::time::Duration;
 
+        // W4 #2: inert inside an atomic write-back's apply phase — the closing explicit
+        // flush() is the sole publish, so the adds and the run's tombstones land together.
+        if self.suppress_auto_flush {
+            return;
+        }
+
         // Rate-limit resource re-detection to at most once per second.
         // Between checks we use the cached TuningProfile, which is stale
         // by at most 1 s — acceptable for adaptive buffer limits and
@@ -2467,11 +2492,30 @@ impl GraphEngineV2 {
     /// genuine OOM safeguard. Callers that want guaranteed durability should call
     /// flush() or compact() explicitly.
     fn maybe_auto_flush_edges(&mut self) {
+        // W4 #2: same atomic-write-back suppression as the node path (see maybe_auto_flush).
+        if self.suppress_auto_flush {
+            return;
+        }
         if self.store.any_shard_needs_flush(usize::MAX, self.cached_profile.write_buffer_byte_limit) {
             if let Err(e) = self.store.flush_all(self.manifest.get_mut().unwrap()) {
                 tracing::warn!("auto-flush (edges) failed: {}", e);
             }
         }
+    }
+
+    /// W4 #2: run `f` with the buffer-pressure auto-flush hooks suppressed, restoring the
+    /// PRIOR flag afterward (re-entrancy safe). Used by the `@materialize` write-back so its
+    /// `delete_node`/`add_edges`/`add_nodes` sequence cannot publish a torn intermediate
+    /// version mid-delta — only the explicit `flush()` that runs AFTER `f` (outside this
+    /// scope) publishes, committing adds and tombstones together. `f` performs the infallible
+    /// staging operations; the one fallible step (the flush) is intentionally left outside,
+    /// so an early `?`-return can never strand the flag set.
+    fn with_auto_flush_suppressed<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let prev = self.suppress_auto_flush;
+        self.suppress_auto_flush = true;
+        let out = f(self);
+        self.suppress_auto_flush = prev;
+        out
     }
 
     /// Get incoming neighbors (src nodes of incoming edges).
@@ -4442,6 +4486,81 @@ mod tests {
         assert!(
             engine.store.node_exists_at(&snap3, foreign_id),
             "foreign ISSUE survives the retraction run too"
+        );
+    }
+
+    /// W4 #2 regression: the `@materialize` write-back is ATOMIC even under write-buffer
+    /// pressure. `materialize_writeback_delta` tombstones the owned-stale set then adds the
+    /// derived nodes, relying on a SINGLE final flush to publish both together (its own
+    /// docstring: "ONE flush commits node+edge adds + tombstones"). But `add_nodes` ends in
+    /// `maybe_auto_flush`, which calls `store.flush_all` — and the run's tombstones live in
+    /// the engine's `pending_tombstone_*`, which `flush_all` never touches. So under buffer
+    /// pressure the auto-flush inside `add_nodes` published a manifest version exposing the
+    /// new node while the owned-stale node was NOT yet retracted: a reader pinning that
+    /// intermediate version saw a torn state (the add without the matching retraction).
+    ///
+    /// Observable proxy for the tear: the number of manifest flips. An atomic write-back
+    /// advances the version EXACTLY ONCE; a torn one advances it twice (the intra-add
+    /// auto-flush, then the tombstone-applying final flush) — and that first extra version
+    /// IS the torn intermediate, by construction the only thing committed between the two
+    /// flips is "add without tombstone". So `== version_before + 1` is the atomicity invariant.
+    #[test]
+    fn materialize_writeback_is_atomic_under_buffer_pressure() {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let hash = node_prog_hash();
+
+        let f = make_v2_node("a.js->FUNCTION->f", "FUNCTION", "f", "a.js");
+        let fid = f.id;
+        // OWNED-STALE ISSUE node (this rule's `_source`, not derived this run) → the
+        // write-back must tombstone it. Pairing an add (for `f`) with this retraction is
+        // exactly the shape that tears under an intra-add auto-flush.
+        let mut stale = make_v2_node("issue::fn::999", "ISSUE", "gone", "c.js");
+        stale.metadata = format!(r#"{{"_source":"{hash}","_generation":1}}"#);
+        let stale_id = stale.id;
+        engine
+            .commit_batch_ext(
+                vec![f, stale],
+                Vec::new(),
+                &["a.js".to_string(), "c.js".to_string()],
+                HashMap::new(),
+                &[],
+            )
+            .expect("base commit");
+
+        // Force the node-count auto-flush to fire as soon as ONE node is staged
+        // (`exceeds_limits` uses `>=`). Pinning `last_resource_check` to now keeps
+        // `maybe_auto_flush`'s 1s-rate-limited re-detection from overwriting the injected
+        // profile mid-call.
+        engine.cached_profile.write_buffer_node_limit = 1;
+        engine.last_resource_check = std::time::Instant::now();
+
+        let version_before = engine.snapshot().version;
+        let (added, removed) = engine
+            .eval_derive_materialize_incremental(NODE_PROG, crate::datalog::EvalLimits::none())
+            .expect("write-back");
+        assert_eq!(
+            (added, removed),
+            (1, 1),
+            "one ISSUE added (for f), one owned-stale ISSUE tombstoned"
+        );
+
+        assert_eq!(
+            engine.snapshot().version,
+            version_before + 1,
+            "write-back must publish EXACTLY ONE manifest version (atomic; no torn \
+             intermediate exposing the add before the retraction)"
+        );
+
+        // Final state is correct regardless (the bug tore only the INTERMEDIATE view).
+        let snap = engine.snapshot();
+        let derived_id = crate::graph::string_id_to_u128(&format!("issue::fn::{fid}"));
+        assert!(
+            engine.store.node_exists_at(&snap, derived_id),
+            "derived ISSUE present in the committed state"
+        );
+        assert!(
+            !engine.store.node_exists_at(&snap, stale_id),
+            "owned-stale ISSUE retracted in the committed state"
         );
     }
 
