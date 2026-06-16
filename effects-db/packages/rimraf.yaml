@@ -1,0 +1,53 @@
+# rimraf (v6.x) — `rm -rf` for node
+# Generated: 2026-06-16
+# Method: REAL API probe of rimraf@6.1.3 (Object.keys + behaviour probes) + Claude inference
+# Taxonomy version: 2
+# purl: pkg:npm/rimraf
+#
+# rimraf is recursive filesystem delete — the npm equivalent of `rm -rf`.
+# The closest runtime precedent is node:fs `rm`/`rmSync`, annotated in
+# runtimes/node.yaml as [IO, ASYNC, MUTATION] / [IO, MUTATION]. rimraf mirrors
+# that precedent exactly so that `rm -rf` reports identical effects whether it
+# goes through node:fs or rimraf.
+#
+# Deliberate annotation choices (consistency with node:fs rm):
+#   - NOT IO:FILE:WRITE — delete is a filesystem MUTATION, not a content write.
+#     The IO:FILE:WRITE subtype is reserved for content writes (writeFile et al.),
+#     matching node.yaml where rm/rmdir/unlink carry plain IO + MUTATION only.
+#     Consequently rimraf is NOT a file-ipc bridge sender.
+#   - NOT THROW on the delete functions — node:fs rm/rmSync are not annotated
+#     THROW either; rimraf suppresses ENOENT by default (`rm -rf` semantics),
+#     and the bad-arg TypeError edge case is not part of the effect contract.
+#
+# API surface verified live against rimraf@6.1.3:
+#   exports = {rimraf, rimrafSync, sync, native, nativeSync, manual, manualSync,
+#              posix, posixSync, windows, windowsSync, moveRemove, moveRemoveSync,
+#              isRimrafOptions, assertRimrafOptions}
+#   - The default `rimraf` function also carries every variant as a property
+#     (rimraf.sync === rimrafSync, rimraf.native, rimraf.manual, ...), so call
+#     shapes `rimraf.X(path)` and named-export `X(path)` resolve to the same key.
+#   - async forms return a Promise<boolean>; *Sync forms return a boolean.
+#   - bad-arg handling differs from execa: async forms REJECT (not sync-throw),
+#     sync forms throw a TypeError — neither is annotated (see rationale above).
+
+rimraf:
+  # Async forms — recursive delete, return Promise<boolean>
+  rimraf: [IO, ASYNC, MUTATION]          # default callable + named export
+  native: [IO, ASYNC, MUTATION]          # uses fs.rm under the hood
+  manual: [IO, ASYNC, MUTATION]          # manual recursive walk + unlink/rmdir
+  posix: [IO, ASYNC, MUTATION]           # POSIX strategy
+  windows: [IO, ASYNC, MUTATION]         # Windows strategy (rename-then-delete)
+  moveRemove: [IO, ASYNC, MUTATION]      # move-then-remove strategy
+
+  # Sync forms — recursive delete, return boolean
+  rimrafSync: [IO, MUTATION]
+  sync: [IO, MUTATION]                   # alias of rimrafSync
+  nativeSync: [IO, MUTATION]
+  manualSync: [IO, MUTATION]
+  posixSync: [IO, MUTATION]
+  windowsSync: [IO, MUTATION]
+  moveRemoveSync: [IO, MUTATION]
+
+  # Option helpers — no filesystem access
+  isRimrafOptions: [PURE]                # type guard, returns boolean, never throws
+  assertRimrafOptions: [THROW]           # validates options, throws "invalid rimraf options"
