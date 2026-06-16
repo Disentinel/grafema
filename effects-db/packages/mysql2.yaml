@@ -1,0 +1,168 @@
+# mysql2 (3.x) — MySQL/MariaDB client for Node.js
+# Generated: 2026-06-16
+# Method: REAL behavioral probe of mysql2@3.22.5 (Object.keys + prototype-chain walk +
+#         no-DB-server behaviour probes in /tmp), cross-checked against node.yaml net.Socket
+#         precedent. NOT from memory.
+# Taxonomy version: 2
+# purl: pkg:npm/mysql2
+#
+# mysql2 is the second relational DB client in effects-db (sibling to pg) and a
+# SOCKET-bridge SENDER per bridges.yaml unix-socket pattern: connect=IO:SOCKET:CONNECT,
+# query/execute/end write the socket=IO:SOCKET:WRITE. It speaks the MySQL wire protocol
+# over a TCP (or unix) socket.
+#
+# Probe-verified divergences (each asserted in test/unit/effectsDbMysql2.test.js):
+#   - createConnection(config) EAGERLY opens the socket: an async ECONNREFUSED fires
+#     WITHOUT calling .connect() => [IO, IO:SOCKET:CONNECT, ASYNC]. This is DISTINCT from
+#     pg, where `new Client()` does no IO and is PURE.
+#   - createPool(config) is LAZY: no eager connect (no error without a query) => [PURE].
+#   - Connection.query() no-arg SYNC-THROWS (TypeError) => THROW; Connection.execute()
+#     does NOT sync-throw (it queues a command, error surfaces async) => no THROW;
+#     Pool.query()/Pool.execute() forward to a pooled client async and do NOT sync-throw
+#     => no THROW. (Same query-vs-pool THROW split as pg.)
+#   - escape/escapeId/format coerce ANY input and never throw (escape(undefined)=="NULL",
+#     escape(123)=="123", escapeId(123)=="`123`") => PURE; raw() returns a {toSqlString}
+#     marker object, no IO => PURE.
+#   - `connect` is === createConnection (top-level alias), same effects.
+#
+# Async rejection is NOT THROW: THROW marks SYNCHRONOUS throw at the call site only,
+# consistent with node.yaml Socket.connect/write (which reject/emit-error but are not THROW)
+# and the pg annotation.
+#
+# Skipped (intentionally, like pg's underscore internals / ws's Sender/Receiver codecs):
+#   wire-protocol & server internals — write/writePacket/writeColumns/writeTextRow/
+#   writeEof/writeOk/writeError/writeBinaryRow/writeTextResult/handlePacket/serverHandshake/
+#   addCommand/protocolError/startTLS/createBinlogStream/_binlogDump/_registerSlave and all
+#   _-prefixed methods. Data/config exports (Types, Charsets, CharsetToEncoding,
+#   ConnectionConfig, authPlugins) are not call surfaces. createQuery is a low-level command
+#   builder (not probe-resolved here) and is left UNKNOWN rather than guessed.
+
+mysql2:
+  # ---------------------------------------------------------------------------
+  # Top-level factories — connection opens EAGERLY, pool is LAZY
+  # ---------------------------------------------------------------------------
+  createConnection: [IO, IO:SOCKET:CONNECT, ASYNC]   # eager socket connect (verified)
+  connect: [IO, IO:SOCKET:CONNECT, ASYNC]            # === createConnection (verified alias)
+  createConnectionPromise: [IO, IO:SOCKET:CONNECT, ASYNC]  # returns Promise<Connection>
+  createPool: [PURE]                                 # lazy: no socket until first query (verified)
+  createPoolPromise: [PURE]
+  createPoolCluster: [PURE]                          # constructs cluster manager, no IO
+  createPoolClusterPromise: [PURE]
+  createServer: [IO, IO:SOCKET:LISTEN]               # mirror node net.createServer (Server.listen binds)
+
+  # ---------------------------------------------------------------------------
+  # Pure SQL string helpers — coerce, never throw (verified)
+  # ---------------------------------------------------------------------------
+  escape: [PURE]
+  escapeId: [PURE]
+  format: [PURE]
+  raw: [PURE]
+
+  # Module-level parser-cache config — mutates shared internal cache
+  setMaxParserCache: [MUTATION]
+  clearParserCache: [MUTATION]
+
+  # ---------------------------------------------------------------------------
+  # Connection — single socket to the server
+  # ---------------------------------------------------------------------------
+  Connection.connect: [IO, IO:SOCKET:CONNECT, ASYNC]
+  Connection.query: [IO, IO:SOCKET:WRITE, ASYNC, THROW]   # no-arg SYNC-THROWS (verified)
+  Connection.execute: [IO, IO:SOCKET:WRITE, ASYNC]        # no sync-throw, queues command (verified)
+  Connection.prepare: [IO, IO:SOCKET:WRITE, ASYNC]        # COM_STMT_PREPARE
+  Connection.unprepare: [IO, IO:SOCKET:WRITE, ASYNC]      # COM_STMT_CLOSE
+  Connection.beginTransaction: [IO, IO:SOCKET:WRITE, ASYNC]
+  Connection.commit: [IO, IO:SOCKET:WRITE, ASYNC]
+  Connection.rollback: [IO, IO:SOCKET:WRITE, ASYNC]
+  Connection.ping: [IO, IO:SOCKET:WRITE, ASYNC]           # COM_PING
+  Connection.changeUser: [IO, IO:SOCKET:WRITE, ASYNC]
+  Connection.reset: [IO, IO:SOCKET:WRITE, ASYNC]          # COM_RESET_CONNECTION
+  Connection.end: [IO, IO:SOCKET:WRITE, ASYNC]            # COM_QUIT then close (mirror Socket.end)
+  Connection.destroy: [IO, MUTATION]                      # immediate close (mirror Socket.destroy)
+  Connection.pause: [IO, MUTATION]                        # mirror Socket.pause
+  Connection.resume: [IO, MUTATION]                       # mirror Socket.resume
+  # Pure helpers also exposed on the connection instance
+  Connection.escape: [PURE]
+  Connection.escapeId: [PURE]
+  Connection.format: [PURE]
+  Connection.raw: [PURE]
+  # EventEmitter surface — listener registration mutates the emitter; the incoming-row
+  # READ is NOT attributed to .on (same stance as node socket.on('data'), ws, pg).
+  Connection.on: [MUTATION]
+  Connection.once: [MUTATION]
+  Connection.off: [MUTATION]
+  Connection.addListener: [MUTATION]
+  Connection.removeListener: [MUTATION]
+  Connection.removeAllListeners: [MUTATION]
+  Connection.emit: [MUTATION]
+
+  # ---------------------------------------------------------------------------
+  # Pool — lazy connection pool; query/execute forward to a pooled client (no sync-throw)
+  # ---------------------------------------------------------------------------
+  Pool.query: [IO, IO:SOCKET:WRITE, ASYNC]               # NO THROW (forwards async, verified)
+  Pool.execute: [IO, IO:SOCKET:WRITE, ASYNC]             # NO THROW (verified)
+  Pool.getConnection: [IO, IO:SOCKET:CONNECT, ASYNC]     # may open a new socket
+  Pool.releaseConnection: [MUTATION]                     # returns conn to pool, no socket IO (verified)
+  Pool.end: [IO, IO:SOCKET:WRITE, ASYNC]                 # closes all pooled connections
+  Pool.escape: [PURE]
+  Pool.escapeId: [PURE]
+  Pool.format: [PURE]
+  Pool.on: [MUTATION]
+  Pool.once: [MUTATION]
+  Pool.off: [MUTATION]
+  Pool.emit: [MUTATION]
+
+  # PoolConnection — a Connection handed out by a Pool
+  PoolConnection.release: [MUTATION]                     # return to pool, no socket IO
+  PoolConnection.destroy: [IO, MUTATION]                 # close + remove from pool
+
+  # PoolCluster — manages multiple pools (read/write split, failover)
+  PoolCluster.add: [MUTATION]                            # register a node config
+  PoolCluster.of: [PURE]                                 # returns a namespace selector, no IO
+  PoolCluster.getConnection: [IO, IO:SOCKET:CONNECT, ASYNC]
+  PoolCluster.end: [IO, IO:SOCKET:WRITE, ASYNC]
+  PoolCluster.remove: [MUTATION]
+
+# ---------------------------------------------------------------------------
+# mysql2/promise — the modern async/await entry point (most common in new code).
+# Same socket effects; promise variants REJECT instead of sync-throwing, so query/execute
+# carry NO THROW. Keyed under the subpath specifier (loader splits module on the first dot,
+# so `mysql2/promise.createConnection` resolves module=`mysql2/promise`, fn=`createConnection`).
+# ---------------------------------------------------------------------------
+mysql2/promise:
+  createConnection: [IO, IO:SOCKET:CONNECT, ASYNC]   # returns Promise<Connection> (eager connect, verified)
+  createPool: [PURE]                                 # lazy (verified)
+  createPoolCluster: [PURE]
+  escape: [PURE]
+  escapeId: [PURE]
+  format: [PURE]
+  raw: [PURE]
+  setMaxParserCache: [MUTATION]
+  clearParserCache: [MUTATION]
+
+  # PromiseConnection
+  Connection.query: [IO, IO:SOCKET:WRITE, ASYNC]     # promise rejects, no sync-throw → no THROW
+  Connection.execute: [IO, IO:SOCKET:WRITE, ASYNC]
+  Connection.beginTransaction: [IO, IO:SOCKET:WRITE, ASYNC]
+  Connection.commit: [IO, IO:SOCKET:WRITE, ASYNC]
+  Connection.rollback: [IO, IO:SOCKET:WRITE, ASYNC]
+  Connection.ping: [IO, IO:SOCKET:WRITE, ASYNC]
+  Connection.changeUser: [IO, IO:SOCKET:WRITE, ASYNC]
+  Connection.prepare: [IO, IO:SOCKET:WRITE, ASYNC]
+  Connection.end: [IO, IO:SOCKET:WRITE, ASYNC]
+  Connection.destroy: [IO, MUTATION]
+  Connection.escape: [PURE]
+  Connection.escapeId: [PURE]
+  Connection.format: [PURE]
+
+  # PromisePool
+  Pool.query: [IO, IO:SOCKET:WRITE, ASYNC]
+  Pool.execute: [IO, IO:SOCKET:WRITE, ASYNC]
+  Pool.getConnection: [IO, IO:SOCKET:CONNECT, ASYNC]
+  Pool.end: [IO, IO:SOCKET:WRITE, ASYNC]
+  Pool.escape: [PURE]
+  Pool.escapeId: [PURE]
+  Pool.format: [PURE]
+
+  # PromisePoolConnection
+  PoolConnection.release: [MUTATION]
+  PoolConnection.destroy: [IO, MUTATION]
