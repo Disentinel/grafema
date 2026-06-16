@@ -1,0 +1,66 @@
+# execa — process execution (Promise + sync), the modern child_process wrapper
+# Generated: 2026-06-16
+# Method: REAL API probe of execa@5 (CJS) and execa@8 (ESM); effects derived
+#   from observed behaviour, not memory. Taxonomy version: 2. purl: pkg:npm/execa
+#
+# execa is a primary IO:PROCESS:SPAWN carrier — it wraps node:child_process
+# spawn/spawnSync, so every entry point starts a child process. It is therefore
+# a *sender* in the subprocess-cli / subprocess-stdio bridge patterns
+# (effects-db/bridges.yaml): channel.binary = arg[0] mirrors node.yaml's
+# child_process exec/spawn annotations so bridge detection can match the spawned
+# binary to a receiver's main() entry point.
+#
+# Effects derived from probe (execa@5 + execa@8):
+#   * execa('node', [...]) returns a thenable (Promise) whose stdout is piped,
+#     and throws SYNCHRONOUSLY on an invalid command arg (TypeError from
+#     node:child_process validateString) → [IO, IO:PROCESS:SPAWN, ASYNC, THROW].
+#   * execaSync(...) returns a result object synchronously and THROWS on a
+#     non-zero exit code or invalid arg → [IO, IO:PROCESS:SPAWN, THROW] (no ASYNC).
+#   * the $ template tag (`await $`cmd``) behaves like execa → async + throwing;
+#     $.sync is the synchronous form.
+#
+# Two call shapes are annotated so both major-version usages resolve:
+#   * execa@8 ESM named exports: execa, execaSync, execaCommand,
+#     execaCommandSync, execaNode, $ (+ $.sync)
+#   * execa@5 CJS property forms on the default import: execa.sync,
+#     execa.command, execa.commandSync, execa.node
+
+execa:
+  # ── async spawns: return a Promise, throw synchronously on bad args ──
+  execa:
+    effects: [IO, IO:PROCESS:SPAWN, ASYNC, THROW]
+    channel: { binary: "arg[0]" }
+  execaCommand:
+    effects: [IO, IO:PROCESS:SPAWN, ASYNC, THROW]
+    channel: { binary: "arg[0]" }
+  execaNode:
+    effects: [IO, IO:PROCESS:SPAWN, ASYNC, THROW]
+    channel: { binary: "arg[0]" }
+  "$":
+    effects: [IO, IO:PROCESS:SPAWN, ASYNC, THROW]
+    channel: { binary: "arg[0]" }
+
+  # ── sync spawns: return a result, throw on non-zero exit / bad args ──
+  execaSync:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
+  execaCommandSync:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
+  "$.sync":
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
+
+  # ── execa@5 CJS property forms on the default import (execa.sync etc.) ──
+  command:
+    effects: [IO, IO:PROCESS:SPAWN, ASYNC, THROW]
+    channel: { binary: "arg[0]" }
+  node:
+    effects: [IO, IO:PROCESS:SPAWN, ASYNC, THROW]
+    channel: { binary: "arg[0]" }
+  sync:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
+  commandSync:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
