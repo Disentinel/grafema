@@ -650,3 +650,55 @@ describe('REG-1192 — save_document honors advertised parameters', () => {
     );
   });
 });
+
+// ============================================================================
+// get_coverage must honor every advertised parameter
+//
+// get_coverage advertised a `depth` parameter ("Directory depth to report")
+// that handleGetCoverage never read — the same advertised-but-ignored trust
+// hole as REG-1191 (analyze_project.index_only) and REG-1192
+// (save_document.doc_type). Unlike save_document, handleGetCoverage destructures
+// its params (e.g. `const { path: targetPath } = args`) rather than reading
+// `args.path`, so a literal `args.<param>` check is too strict — a param counts
+// as honored if it is referenced as `args.<param>` OR as a destructured
+// word-boundary identifier in the handler body.
+//
+// `depth` was wired to nothing (no directory-depth report exists), so the fix
+// is an honest delist — remove it from the advertised schema — matching the
+// REG-1191 precedent for an advertised-but-unimplemented parameter.
+// ============================================================================
+
+describe('get_coverage honors advertised parameters', () => {
+  it('every advertised get_coverage param is read by handleGetCoverage', () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+
+    const tool = TOOLS.find((t) => t.name === 'get_coverage');
+    assert.ok(tool, 'get_coverage tool must be advertised in TOOLS');
+
+    const schema = tool.inputSchema as { properties?: Record<string, unknown> };
+    const advertised = Object.keys(schema.properties ?? {});
+    assert.ok(advertised.length > 0, 'get_coverage must advertise parameters');
+
+    // Isolate the handleGetCoverage function body so unrelated handlers in the
+    // same file can't satisfy the invariant by accident.
+    const src = readFileSync(
+      join(here, '..', 'src', 'handlers', 'coverage-handlers.ts'),
+      'utf8',
+    );
+    const start = src.indexOf('export async function handleGetCoverage');
+    assert.ok(start >= 0, 'handleGetCoverage must exist');
+    const after = src.indexOf('\nexport ', start + 1);
+    const body = after >= 0 ? src.slice(start, after) : src.slice(start);
+
+    const ignored = advertised.filter((param) => {
+      if (body.includes(`args.${param}`)) return false;
+      // Allow destructured reads like `const { path: targetPath } = args`.
+      return !new RegExp(`\\b${param}\\b`).test(body);
+    });
+    assert.deepStrictEqual(
+      ignored,
+      [],
+      `get_coverage advertises params its handler never reads: ${ignored.join(', ')}`,
+    );
+  });
+});
