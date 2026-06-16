@@ -1,0 +1,51 @@
+# uuid (v9.x / v10.x / v11.x) — RFC 4122/9562 UUID generation & parsing
+# Generated: 2026-06-16 (effects-db registry coverage)
+# Method: Claude inference based on uuid docs + source + Grafema effects taxonomy
+# Taxonomy version: 1
+# purl: pkg:npm/uuid
+#
+# uuid is one of the most-depended-upon npm packages. Its public surface is a
+# set of direct named-export factory/helper functions (v1, v3, v4, ...), so the
+# resolved call names are `uuid.<fn>` — no receiver/instance tracing needed.
+#
+# Effect rationale:
+#   - Random/time-based generators (v1, v4, v6, v7) draw from a CSPRNG
+#     (crypto.randomFillSync / getRandomValues) and/or the wall clock, so the
+#     same input yields a different output every call → NONDETERMINISTIC. This
+#     matches the runtime convention already used for Node's `crypto.randomUUID`
+#     (effects-db/runtimes/node.yaml). The RNG draw is classified as
+#     NONDETERMINISTIC (internal randomness), NOT IO, per the taxonomy examples
+#     ("Math.random", "crypto.randomUUID").
+#   - Name-based generators (v3 MD5, v5 SHA-1) are pure functions of
+#     (name, namespace) → PURE.
+#   - parse / stringify / version validate their input and THROW on a malformed
+#     UUID, but are otherwise pure → [PURE, THROW].
+#   - validate returns a boolean and never throws → PURE.
+#   - v1ToV6 / v6ToV1 are deterministic bit re-orderings → PURE.
+
+uuid:
+  # Random / time-based generators — NONDETERMINISTIC (CSPRNG + clock).
+  # Even when passed an explicit `options` object the documented default path
+  # draws randomness, so we annotate the safe (propagating) effect.
+  v1: [NONDETERMINISTIC]
+  v4: [NONDETERMINISTIC]
+  v6: [NONDETERMINISTIC]
+  v7: [NONDETERMINISTIC]
+
+  # Name-based generators — deterministic hash of (name, namespace), but they
+  # parse a string `namespace` via the same path as `parse` and THROW a
+  # TypeError when it is malformed → [PURE, THROW].
+  v3: [PURE, THROW]
+  v5: [PURE, THROW]
+
+  # Deterministic conversions between v1 and v6 layouts.
+  v1ToV6: [PURE]
+  v6ToV1: [PURE]
+
+  # Parsing / formatting helpers — pure, but THROW on malformed input.
+  parse: [PURE, THROW]      # throws TypeError on invalid UUID string
+  stringify: [PURE, THROW]  # throws TypeError when bytes are out of range
+  version: [PURE, THROW]    # throws TypeError on invalid UUID string
+
+  # Validation — returns boolean, never throws.
+  validate: [PURE]
