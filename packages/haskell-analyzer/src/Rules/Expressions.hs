@@ -637,16 +637,63 @@ walkGRHSResult (L _ (GRHS _ _guards body)) =
 
 -- | Walk do-block statements, returning the result ID from the last
 -- statement. Used for DFG edge emission on DO_BLOCK nodes.
-walkStmtsResult :: [GenLocated l (StmtLR GhcPs GhcPs (LHsExpr GhcPs))] -> Analyzer (Maybe T.Text)
+--
+-- Haskell @do@ desugars right-associatively: @x <- e; rest@ becomes
+-- @e >>= \\x -> rest@, so a do-bind binder is in scope only for the
+-- /remaining/ statements, not for its own RHS. We mirror that here by
+-- minting a fresh 'DoScope' per binding statement (@BindStmt@\/@LetStmt@)
+-- and walking the rest of the block inside it. Consequences:
+--
+--   * sibling do-blocks (e.g. two Hspec @it@ bodies) get
+--     position-stamped, hence distinct, DoScope ids — they never share
+--     a scope;
+--   * two @results <-@ binds inside ONE do-block land in two DISTINCT
+--     nested DoScopes (each opens its own), so a single scope holds at
+--     most one same-name do-bind binder — the @wwspr3tzq@ fanout=2
+--     case is gone.
+--
+-- The bind's RHS ('body') is walked in the CURRENT (outer) scope before
+-- the new scope is pushed, since the binder is not visible in its own
+-- RHS. Non-binding statements ('BodyStmt'\/'LastStmt') introduce no
+-- binder and so do not open a scope.
+walkStmtsResult :: [GenLocated SrcSpanAnnA (StmtLR GhcPs GhcPs (LHsExpr GhcPs))] -> Analyzer (Maybe T.Text)
 walkStmtsResult [] = return Nothing
 walkStmtsResult [s] = walkStmtResult s
-walkStmtsResult (s:ss) = do
-  _ <- walkStmtResult s
-  walkStmtsResult ss
+walkStmtsResult (s@(L _ stmt) : ss) =
+  case stmt of
+    -- x <- expr : binder is visible in `ss`, so open a fresh DoScope
+    -- (anchored on this statement's position) and walk the rest inside.
+    BindStmt _ pat body -> do
+      _ <- walkExpr body              -- RHS: outer scope (binder not in scope yet)
+      anchor <- doStmtAnchor s
+      withScopeNode DoScope anchor $ do
+        walkPat pat                   -- binder lands in the NEW scope
+        walkStmtsResult ss
+    -- let binds : let-bound names are visible in `ss`; same treatment.
+    LetStmt _ binds -> do
+      anchor <- doStmtAnchor s
+      withScopeNode DoScope anchor $ do
+        walkLocalBinds binds
+        walkStmtsResult ss
+    -- non-binding statement: introduces no binder, no new scope.
+    _ -> do
+      _ <- walkStmtResult s
+      walkStmtsResult ss
 
--- | Walk a do-block statement, recursing into contained expressions.
--- Returns the result ID of the statement's expression (if any).
-walkStmtResult :: GenLocated l (StmtLR GhcPs GhcPs (LHsExpr GhcPs)) -> Analyzer (Maybe T.Text)
+-- | The anchor for a do-bind's 'DoScope': @\<enclosingScopeId\>:do@\<line\>:\<col\>@.
+-- Position-stamped on the binding statement so sibling do-blocks /and/
+-- successive binds within one block never collide.
+doStmtAnchor :: GenLocated SrcSpanAnnA (StmtLR GhcPs GhcPs (LHsExpr GhcPs)) -> Analyzer T.Text
+doStmtAnchor lstmt = do
+  parent <- askScopeId
+  let (line, col, _, _) = getLoc lstmt
+  return (parent <> ":do@" <> T.pack (show line) <> ":" <> T.pack (show col))
+
+-- | Walk a single do-block statement, recursing into contained
+-- expressions. Returns the result ID of the statement's expression (if
+-- any). Used for the LAST statement and non-binding statements, where no
+-- new scope is opened (see 'walkStmtsResult' for the binding cases).
+walkStmtResult :: GenLocated SrcSpanAnnA (StmtLR GhcPs GhcPs (LHsExpr GhcPs)) -> Analyzer (Maybe T.Text)
 walkStmtResult (L _ stmt) = case stmt of
   -- x <- expr
   BindStmt _ pat body -> do

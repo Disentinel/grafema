@@ -1113,3 +1113,55 @@ main = hspec $ do
       length caseScopes `shouldBe` 2
       let ids = map gnId caseScopes
       length ids `shouldBe` length (dedup ids)
+
+    it "do-bind statement gets its own DoScope" $ do
+      let src = T.unlines
+            [ "module Test where"
+            , "f = do"
+            , "  x <- getLine"
+            , "  putStrLn x"
+            ]
+      let Right fa = analyzeSource "Test.hs" src
+      let scopes = filter (\n -> gnType n == "SCOPE") (faNodes fa)
+      map gnName scopes `shouldContain` ["do"]
+
+    it "two same-name do-binds in ONE do-block land in DISTINCT scopes (wwspr3tzq)" $ do
+      -- THE regression fixture: two `results <-` in one clause must NOT
+      -- collapse into a single scope (was fanout=2). Each bind opens its
+      -- own nested DoScope, so each PARAMETER `results` is CONTAINS'd from
+      -- a DISTINCT scope.
+      let src = T.unlines
+            [ "module Test where"
+            , "f = do"
+            , "  results <- step1"
+            , "  _ <- consume results"
+            , "  results <- step2"
+            , "  consume results"
+            ]
+      let Right fa = analyzeSource "Test.hs" src
+      let paramsR = filter (\n -> gnType n == "PARAMETER" && gnName n == "results") (faNodes fa)
+      length paramsR `shouldBe` 2
+      let paramScopes = concatMap (scopeOf fa . gnId) paramsR
+      length paramScopes `shouldBe` 2
+      -- distinct scopes => at most one same-name do-bind binder per scope
+      length paramScopes `shouldBe` length (dedup paramScopes)
+
+    it "sibling do-blocks binding the same name get DISTINCT scopes" $ do
+      -- two independent do-blocks (e.g. sibling guard branches / Hspec it
+      -- bodies) that each bind `results` must not share a DoScope.
+      let src = T.unlines
+            [ "module Test where"
+            , "f a"
+            , "  | a = do"
+            , "      results <- step1"
+            , "      consume results"
+            , "  | otherwise = do"
+            , "      results <- step2"
+            , "      consume results"
+            ]
+      let Right fa = analyzeSource "Test.hs" src
+      let paramsR = filter (\n -> gnType n == "PARAMETER" && gnName n == "results") (faNodes fa)
+      length paramsR `shouldBe` 2
+      let paramScopes = concatMap (scopeOf fa . gnId) paramsR
+      length paramScopes `shouldBe` 2
+      (head paramScopes /= last paramScopes) `shouldBe` True
