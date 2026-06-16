@@ -158,7 +158,6 @@ export interface AnalyzeProjectArgs {
 
 export interface GetCoverageArgs {
   path?: string;
-  depth?: number;
 }
 
 export interface GetDocumentationArgs {
