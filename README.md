@@ -74,6 +74,8 @@ Add to `.mcp.json` in your project root:
 }
 ```
 
+There is also a Docker image for running the MCP server (stdio) in a container — see the root [`Dockerfile`](./Dockerfile): `docker run -i --rm -v "$PWD":/workspace grafema-mcp`.
+
 30+ MCP tools available: `find_nodes`, `find_calls`, `trace_dataflow`, `get_file_overview`, `describe`, `query_graph`, and more. The AI agent queries the graph instead of reading files — faster, cheaper, more complete.
 
 `find_nodes` returns rich context in a single call: callers, members, parent, import/call counts. Fuzzy name matching via local embeddings means approximate queries like `find_nodes(name="PtyHostHeartbeatService")` find `HeartbeatService` even without exact match.
