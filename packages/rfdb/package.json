@@ -36,7 +36,7 @@
     "rega-flow",
     "rfdb"
   ],
-  "license": "FSL-1.1-Apache-2.0",
+  "license": "FSL-1.1-ALv2",
   "author": "Vadim Reshetnikov",
   "repository": {
     "type": "git",
