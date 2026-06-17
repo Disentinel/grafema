@@ -11,12 +11,17 @@
  * @module queries/traceEffects
  */
 
-import type { DataflowBackend, DataflowNode } from './traceDataflow.js';
+import type { DataflowBackend, DataflowNode, DataflowEdge } from './traceDataflow.js';
 import type { EffectsLookup } from '../manifest/effects-lookup.js';
 import { parseCallTarget } from '../manifest/effects-lookup.js';
 import type { EffectType } from '../manifest/types.js';
 import { isValidEffect } from '../manifest/types.js';
 import { findCallsInFunction } from './findCallsInFunction.js';
+import {
+  classifyResolution,
+  receiverExternalImport,
+  type ResolutionMarker,
+} from './resolutionPrecision.js';
 
 // ── Public types ──────────────────────────────────────────────
 
@@ -29,11 +34,38 @@ export interface TraceEffectsResult {
   boundary_crossings: BoundaryCrossing[];
   /** Where effects originate (external calls) */
   leaf_sources: LeafSource[];
+  /**
+   * R5: suspected-unsound resolutions encountered while tracing — a member
+   * call whose receiver is a real non-relative import but that resolved to a
+   * PURE/empty ecma-GLOBAL (the axios.get→GLOBAL::get suffix-collapse defect).
+   * The effects PART A recovers via effects-db; this list is the explicit
+   * PRECISION mark on top, so a consumer SEES "unsound resolution" instead of
+   * silently trusting the wrong PURE global.
+   */
+  suspected_unsound: UnsoundResolutionLeaf[];
   /** True if traversal was truncated by depth limit */
   max_depth_reached: boolean;
   /** Configured depth limit */
   max_depth: number;
   nodes_visited: number;
+}
+
+/**
+ * R5: a suspected-unsound resolution surfaced from a trace.
+ */
+export interface UnsoundResolutionLeaf {
+  /** The originating CALL node id. */
+  call_id: string;
+  /** The dotted call name, e.g. "axios.get". */
+  call_name: string;
+  /** The (wrong) resolved target id, e.g. "GLOBAL::get". */
+  resolved_to: string;
+  /** The (wrong) resolved target name, e.g. "get". */
+  resolved_to_name: string;
+  /** The collapsed-away receiver module specifier, e.g. "axios". */
+  receiver_module: string;
+  /** Effects the wrong global presents (what the defect masks), e.g. ["PURE"]. */
+  presented_effects: string[];
 }
 
 export interface BoundaryCrossing {
@@ -55,6 +87,13 @@ export interface LeafSource {
   effects: EffectType[];
   depth: number;
   file?: string;
+  /**
+   * R2: resolution-precision marker for the CALL→target edge that produced
+   * this leaf, when one was classifiable (i.e. the leaf came from a resolved
+   * CALL with a known fan-out). Additive: undefined for leaves where no
+   * resolution edge was classified (e.g. unresolved-call effects-db lookups).
+   */
+  precision?: ResolutionMarker;
 }
 
 export interface TraceEffectsOptions {
@@ -67,6 +106,16 @@ const CALL_EDGE_TYPES = ['CALLS', 'CALLS_REMOTE'];
 const FUNCTION_TYPES = new Set(['FUNCTION', 'METHOD', 'CONSTRUCTOR', 'LAMBDA']);
 
 // ── Helpers ───────────────────────────────────────────────────
+
+/** Read a leaf target's `effects` in either array or comma-string shape (R5). */
+function readLeafEffects(node: DataflowNode): string[] {
+  const raw = (node as Record<string, unknown>).effects;
+  if (Array.isArray(raw)) return raw.map(String);
+  if (typeof raw === 'string' && raw.length > 0) {
+    return raw.split(',').map(s => s.trim()).filter(s => s.length > 0);
+  }
+  return [];
+}
 
 /** Extract direct metadata effects from a graph node (async / throw). */
 function extractDirectEffects(node: DataflowNode): Set<EffectType> {
@@ -167,6 +216,22 @@ interface DfsResult {
   leafSources: LeafSource[];
   boundaryCrossings: BoundaryCrossing[];
   maxDepthReached: boolean;
+  /** R5: suspected-unsound resolutions found below this node. */
+  suspectedUnsound: UnsoundResolutionLeaf[];
+}
+
+/**
+ * R5: context for classifying the resolution edge that reaches a target.
+ * Carried alongside the target so processTarget can attach a precision marker
+ * to the leaf and detect the suspected-unsound importedDefault.method() defect.
+ */
+interface ResolutionContext {
+  /** The originating CALL node (receiver-bearing), if known. */
+  callNode: DataflowNode;
+  /** The resolution edge (CALLS / CALLS_REMOTE) that reached the target. */
+  edge: DataflowEdge;
+  /** Total resolved targets for this CALL (fan-out). */
+  candidateCount: number;
 }
 
 // ── Main entry ────────────────────────────────────────────────
@@ -216,6 +281,7 @@ export async function traceEffects(
     transitive,
     boundary_crossings: dfs.boundaryCrossings,
     leaf_sources: dfs.leafSources,
+    suspected_unsound: dfs.suspectedUnsound,
     max_depth_reached: dfs.maxDepthReached,
     max_depth: maxDepth,
     nodes_visited: visited.size,
@@ -237,6 +303,7 @@ async function dfsCollectEffects(
   const effects = new Set<EffectType>();
   const leafSources: LeafSource[] = [];
   const boundaryCrossings: BoundaryCrossing[] = [];
+  const suspectedUnsound: UnsoundResolutionLeaf[] = [];
   let maxDepthReached = false;
 
   // Collect node's own metadata effects
@@ -260,9 +327,26 @@ async function dfsCollectEffects(
       if (!targetNode) continue;
 
       processedTargets.add(targetNode.id);
+
+      // R5/R2: build the resolution context from the CALL node's own resolution
+      // edges so we can classify precision and detect the suspected-unsound
+      // importedDefault.method()→ecma-GLOBAL defect. The CALL node carries the
+      // receiver (lost once we descend into the function), so this is the only
+      // place the receiver walk is meaningful.
+      const callNode = await backend.getNode(call.id);
+      let resolution: ResolutionContext | undefined;
+      if (callNode) {
+        const resEdges = await backend.getOutgoingEdges(call.id, CALL_EDGE_TYPES);
+        const edge = resEdges.find(e => e.dst === targetNode.id);
+        if (edge) {
+          resolution = { callNode, edge, candidateCount: resEdges.length };
+        }
+      }
+
       const result = await processTarget(
         backend, node, targetNode, effectsLookup, visited,
         depth, maxDepth, effects, leafSources, boundaryCrossings,
+        suspectedUnsound, resolution,
         { callId: call.id, callName: call.name },
       );
       if (result.maxDepthReached) maxDepthReached = true;
@@ -306,14 +390,24 @@ async function dfsCollectEffects(
     if (!targetNode) continue;
 
     processedTargets.add(targetNode.id);
+    // R5/R2: direct-edge layout — the edge source IS the (function-or-call)
+    // node. receiverExternalImport(node.id) only resolves a receiver when node
+    // is a member-call with a PROPERTY_ACCESS chain, so genuine FUNCTION→FUNCTION
+    // edges classify as precise and never mis-flag.
+    const resolution: ResolutionContext = {
+      callNode: node,
+      edge,
+      candidateCount: directCallEdges.length,
+    };
     const result = await processTarget(
       backend, node, targetNode, effectsLookup, visited,
       depth, maxDepth, effects, leafSources, boundaryCrossings,
+      suspectedUnsound, resolution,
     );
     if (result.maxDepthReached) maxDepthReached = true;
   }
 
-  return { effects, leafSources, boundaryCrossings, maxDepthReached };
+  return { effects, leafSources, boundaryCrossings, maxDepthReached, suspectedUnsound };
 }
 
 /**
@@ -353,6 +447,8 @@ async function processTarget(
   effects: Set<EffectType>,
   leafSources: LeafSource[],
   boundaryCrossings: BoundaryCrossing[],
+  suspectedUnsound: UnsoundResolutionLeaf[],
+  resolution?: ResolutionContext,
   /**
    * Context about the originating CALL node, present only when the target was
    * discovered via findCallsInFunction (Strategy 1). Used to reconcile a
@@ -362,6 +458,32 @@ async function processTarget(
   callContext?: { callId: string; callName: string },
 ): Promise<{ maxDepthReached: boolean }> {
   let maxDepthReached = false;
+
+  // R5/R2: classify the resolution edge that reached this leaf target. Only
+  // meaningful for non-recursive leaf targets (external/global); FUNCTION
+  // recursion below ignores it. The receiver walk runs once per resolved call.
+  let leafMarker: ResolutionMarker | undefined;
+  if (resolution && !FUNCTION_TYPES.has(targetNode.type)) {
+    const receiverModule = await receiverExternalImport(backend, resolution.callNode.id);
+    const marker = classifyResolution({
+      call: resolution.callNode,
+      edge: resolution.edge,
+      target: targetNode,
+      candidateCount: resolution.candidateCount,
+      receiverIsExternalImport: receiverModule !== null,
+    });
+    leafMarker = marker;
+    if (marker.precision === 'suspected-unsound') {
+      suspectedUnsound.push({
+        call_id: resolution.callNode.id,
+        call_name: typeof resolution.callNode.name === 'string' ? resolution.callNode.name : '',
+        resolved_to: targetNode.id,
+        resolved_to_name: typeof targetNode.name === 'string' ? targetNode.name : '',
+        receiver_module: receiverModule ?? '',
+        presented_effects: readLeafEffects(targetNode),
+      });
+    }
+  }
 
   // ── FUNCTION / METHOD / CONSTRUCTOR / LAMBDA → recurse ──
   if (FUNCTION_TYPES.has(targetNode.type)) {
@@ -389,6 +511,7 @@ async function processTarget(
     for (const e of childResult.effects) effects.add(e);
     leafSources.push(...childResult.leafSources);
     boundaryCrossings.push(...childResult.boundaryCrossings);
+    suspectedUnsound.push(...childResult.suspectedUnsound);
     if (childResult.maxDepthReached) maxDepthReached = true;
 
     // Backfill boundary crossing effects
@@ -441,6 +564,7 @@ async function processTarget(
               effects: leafEffects,
               depth,
               file: targetNode.file,
+              precision: leafMarker,
             });
             return { maxDepthReached };
           }
@@ -475,6 +599,7 @@ async function processTarget(
         effects: leafEffects,
         depth,
         file: targetNode.file,
+        precision: leafMarker,
       });
       return { maxDepthReached };
     }
@@ -492,6 +617,7 @@ async function processTarget(
           effects: leafEffects,
           depth,
           file: targetNode.file,
+          precision: leafMarker,
         });
       } else {
         effects.add('UNKNOWN');
@@ -501,6 +627,7 @@ async function processTarget(
           effects: ['UNKNOWN'],
           depth,
           file: targetNode.file,
+          precision: leafMarker,
         });
       }
     } else {
@@ -511,6 +638,7 @@ async function processTarget(
         effects: ['UNKNOWN'],
         depth,
         file: targetNode.file,
+        precision: leafMarker,
       });
     }
     return { maxDepthReached };
@@ -534,6 +662,7 @@ async function processTarget(
           effects: leafEffects,
           depth,
           file: targetNode.file,
+          precision: leafMarker,
         });
       } else {
         effects.add('UNKNOWN');
@@ -543,6 +672,7 @@ async function processTarget(
           effects: ['UNKNOWN'],
           depth,
           file: targetNode.file,
+          precision: leafMarker,
         });
       }
       return { maxDepthReached };
@@ -597,6 +727,7 @@ async function processTarget(
           for (const e of childResult.effects) effects.add(e);
           leafSources.push(...childResult.leafSources);
           boundaryCrossings.push(...childResult.boundaryCrossings);
+          suspectedUnsound.push(...childResult.suspectedUnsound);
           if (childResult.maxDepthReached) maxDepthReached = true;
 
           // Backfill boundary crossing effects
@@ -625,6 +756,7 @@ async function processTarget(
       effects: ['UNKNOWN'],
       depth,
       file: targetNode.file,
+      precision: leafMarker,
     });
     return { maxDepthReached };
   }
@@ -640,6 +772,7 @@ async function processTarget(
       effects: leafEffects,
       depth,
       file: targetNode.file,
+      precision: leafMarker,
     });
   } else {
     effects.add('UNKNOWN');
@@ -649,6 +782,7 @@ async function processTarget(
       effects: ['UNKNOWN'],
       depth,
       file: targetNode.file,
+      precision: leafMarker,
     });
   }
 

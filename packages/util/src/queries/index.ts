@@ -47,8 +47,14 @@ export type {
   DataflowIndexCache,
 } from './traceDataflow.js';
 export { traceEffects } from './traceEffects.js';
-export type { TraceEffectsResult, BoundaryCrossing, LeafSource, TraceEffectsOptions } from './traceEffects.js';
-export { classifyResolution, auditResolutionPrecision } from './resolutionPrecision.js';
+export type { TraceEffectsResult, BoundaryCrossing, LeafSource, TraceEffectsOptions, UnsoundResolutionLeaf } from './traceEffects.js';
+export {
+  classifyResolution,
+  auditResolutionPrecision,
+  receiverExternalImport,
+  soundnessOf,
+  checkResolutionSoundness,
+} from './resolutionPrecision.js';
 export type {
   ResolutionPrecision,
   ResolutionMarker,
@@ -57,4 +63,7 @@ export type {
   MarkedResolution,
   UnsoundCase,
   ResolutionPrecisionAudit,
+  SoundnessVerdict,
+  ResolutionSoundnessViolation,
+  ResolutionSoundnessReport,
 } from './resolutionPrecision.js';

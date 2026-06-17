@@ -477,7 +477,31 @@ export async function handleTraceEffects(args: TraceEffectsArgs): Promise<ToolRe
     for (const leaf of result.leaf_sources) {
       const leafFile = leaf.file ? leaf.file.split('/').pop() : '';
       const loc = leafFile ? ` (${leafFile})` : '';
-      lines.push(`  depth ${leaf.depth}: ${leaf.node}${loc} → ${leaf.effects.join(', ')}`);
+      // R2: surface the resolution-precision class so a reader sees
+      // sound-superset / suspected-unsound resolutions, not just the effects.
+      let prec = '';
+      if (leaf.precision && leaf.precision.precision !== 'precise') {
+        const c = leaf.precision.candidateCount;
+        prec = leaf.precision.precision === 'suspected-unsound'
+          ? `  [⚠ suspected-unsound: ${leaf.precision.basis}]`
+          : `  [heuristic-superset: ${c} candidates]`;
+      }
+      lines.push(`  depth ${leaf.depth}: ${leaf.node}${loc} → ${leaf.effects.join(', ')}${prec}`);
+    }
+    lines.push('');
+  }
+
+  // R5: explicit suspected-unsound resolution block — the importedDefault
+  // .method() → ecma-GLOBAL defect (e.g. axios.get → GLOBAL::get). The effects
+  // are recovered elsewhere; this is the PRECISION mark on top so the reader
+  // knows the single resolved callee is WRONG.
+  if (result.suspected_unsound.length > 0) {
+    lines.push(`### ⚠ Suspected-unsound resolutions (${result.suspected_unsound.length})`);
+    for (const u of result.suspected_unsound) {
+      lines.push(
+        `  ${u.call_name} → ${u.resolved_to_name} (wrong: receiver '${u.receiver_module}' collapsed; ` +
+        `presents ${u.presented_effects.join(', ') || 'PURE'})`,
+      );
     }
     lines.push('');
   }
