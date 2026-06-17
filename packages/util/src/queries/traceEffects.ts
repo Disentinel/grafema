@@ -79,6 +79,87 @@ function extractDirectEffects(node: DataflowNode): Set<EffectType> {
   return effects;
 }
 
+/**
+ * Read a node's `effects` metadata in either shape: a JSON array (legacy
+ * enricher / Haskell resolver) or a comma-joined string (derive
+ * js_runtime_globals_nodes pack, whose meta() can only project strings).
+ * Returns null when no effects metadata is present.
+ */
+function readMetaEffects(node: DataflowNode): string[] | null {
+  const raw = (node as Record<string, unknown>).effects;
+  if (Array.isArray(raw)) return raw.map(String);
+  if (typeof raw === 'string' && raw.length > 0) {
+    return raw.split(',').map(s => s.trim()).filter(s => s.length > 0);
+  }
+  return null;
+}
+
+/**
+ * Resolve the receiver of a dotted member call (e.g. `axios.get`) to the
+ * bare/scoped module specifier it was imported from.
+ *
+ * The analyzer emits a dotted CALL node `axios.get` (receiver folded into the
+ * name, object=undefined) whose receiver is reachable via:
+ *
+ *   CALL -[DERIVES_FROM]-> PROPERTY_ACCESS {base:"axios"}
+ *        -[READS_FROM kind:receiver]-> REFERENCE "axios"
+ *        -[READS_FROM]-> IMPORT_BINDING "axios" {source:"axios", importedName:"default"}
+ *
+ * Returns the IMPORT_BINDING.source iff it is a NON-RELATIVE specifier (a bare
+ * or scoped package, not "./..."). Returns null for relative imports, locals,
+ * or genuine ecma-globals (JSON / Math) — whose receiver does not resolve to an
+ * IMPORT_BINDING at all — so callers must NOT override the global's metadata.
+ *
+ * @param callId  ID of the originating CALL node (NOT the resolved target).
+ */
+async function resolveReceiverModule(
+  backend: DataflowBackend,
+  callId: string,
+): Promise<string | null> {
+  // CALL -[DERIVES_FROM]-> PROPERTY_ACCESS (the receiver member access)
+  const derivesFrom = await backend.getOutgoingEdges(callId, ['DERIVES_FROM']);
+  for (const dfEdge of derivesFrom) {
+    const pa = await backend.getNode(dfEdge.dst);
+    if (!pa || pa.type !== 'PROPERTY_ACCESS') continue;
+
+    // PROPERTY_ACCESS -[READS_FROM]-> REFERENCE (the receiver identifier)
+    const readsFrom = await backend.getOutgoingEdges(pa.id, ['READS_FROM']);
+    for (const rfEdge of readsFrom) {
+      const ref = await backend.getNode(rfEdge.dst);
+      if (!ref) continue;
+
+      // Direct hit: the READS_FROM target is itself the IMPORT_BINDING.
+      const fromImport = importBindingSource(ref);
+      if (fromImport) return fromImport;
+
+      // One more hop: REFERENCE -[READS_FROM]-> IMPORT_BINDING.
+      if (ref.type === 'REFERENCE') {
+        const readsFrom2 = await backend.getOutgoingEdges(ref.id, ['READS_FROM']);
+        for (const rf2Edge of readsFrom2) {
+          const binding = await backend.getNode(rf2Edge.dst);
+          const src = binding ? importBindingSource(binding) : null;
+          if (src) return src;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Return the source specifier of a node iff it is an IMPORT_BINDING whose
+ * source is a NON-RELATIVE module (bare `axios` / scoped `@scope/pkg`), else
+ * null. Relative sources ("./util") are rejected — effects-db only annotates
+ * external modules, and overriding for a local import would be wrong.
+ */
+function importBindingSource(node: DataflowNode): string | null {
+  if (node.type !== 'IMPORT_BINDING') return null;
+  const source = (node as Record<string, unknown>).source;
+  if (typeof source !== 'string' || source.length === 0) return null;
+  if (source.startsWith('.') || source.startsWith('/')) return null;
+  return source;
+}
+
 // ── DFS state ─────────────────────────────────────────────────
 
 interface DfsResult {
@@ -182,6 +263,7 @@ async function dfsCollectEffects(
       const result = await processTarget(
         backend, node, targetNode, effectsLookup, visited,
         depth, maxDepth, effects, leafSources, boundaryCrossings,
+        { callId: call.id, callName: call.name },
       );
       if (result.maxDepthReached) maxDepthReached = true;
     } else {
@@ -271,6 +353,13 @@ async function processTarget(
   effects: Set<EffectType>,
   leafSources: LeafSource[],
   boundaryCrossings: BoundaryCrossing[],
+  /**
+   * Context about the originating CALL node, present only when the target was
+   * discovered via findCallsInFunction (Strategy 1). Used to reconcile a
+   * dotted member call (`axios.get`) against effects-db by its imported
+   * receiver module when the resolved target is a PURE ecma-global stand-in.
+   */
+  callContext?: { callId: string; callName: string },
 ): Promise<{ maxDepthReached: boolean }> {
   let maxDepthReached = false;
 
@@ -320,17 +409,56 @@ async function processTarget(
 
   // ── EXTERNAL_MODULE / GLOBAL_DEFINITION → metadata effects first, then effects-db ──
   if (targetNode.type === 'EXTERNAL_MODULE' || targetNode.type === 'GLOBAL_DEFINITION') {
+    // ── Member-call reconciliation (default-imported external module) ──
+    // A dotted CALL like `axios.get` whose receiver is a default/namespace
+    // import gets resolved by the runtime-globals pack onto the ecma-global
+    // `get` (GLOBAL_DEFINITION, effects=PURE) — the receiver is dropped. Before
+    // accepting that PURE stand-in, recover the real module from the receiver
+    // chain and consult effects-db. Guarded to ONLY override a PURE/empty/
+    // UNKNOWN global AND only when the receiver resolves to a non-relative
+    // imported module — so genuine ecma-globals (JSON.parse, Math.max) and the
+    // named-import path are untouched.
+    if (callContext) {
+      const parsedCall = parseCallTarget(callContext.callName);
+      const globalEffects = readMetaEffects(targetNode);
+      const globalIsInert =
+        globalEffects === null ||
+        globalEffects.length === 0 ||
+        globalEffects.every(e => e === 'PURE' || e === 'UNKNOWN');
+      if (parsedCall && globalIsInert) {
+        const [receiverToken, fn] = parsedCall;
+        const source =
+          (await resolveReceiverModule(backend, callContext.callId)) ?? null;
+        if (source) {
+          const known =
+            effectsLookup.lookup(source, fn) ??
+            effectsLookup.lookup(`node:${source}`, fn);
+          if (known) {
+            const leafEffects = collectEffectsFromLookup(known, effects);
+            leafSources.push({
+              node: `${source}.${fn}`,
+              id: targetNode.id,
+              effects: leafEffects,
+              depth,
+              file: targetNode.file,
+            });
+            return { maxDepthReached };
+          }
+        }
+        // Receiver token did not resolve via the chain; do NOT fall back to the
+        // bare token here — without a confirmed non-relative IMPORT_BINDING we
+        // cannot distinguish `axios.get` from a local-object `foo.get`. The
+        // global's own (inert) metadata is used below, preserving prior behavior.
+        void receiverToken;
+      }
+    }
+
     // Try reading effects from node metadata. Two producers, two shapes:
     // - legacy GenericRuntimeGlobals enricher / Haskell resolver: JSON array (MetaList)
     // - derive js_runtime_globals_nodes pack (Wave 4, DELTA 1): @materialize_node
     //   meta() can only project string surfaces, so effects arrive comma-joined
     //   ("IO,THROW"). Fresh graphs have ONLY pack-minted nodes — accept both.
-    const rawMetaEffects = (targetNode as Record<string, unknown>).effects;
-    const metaEffects = Array.isArray(rawMetaEffects)
-      ? rawMetaEffects
-      : typeof rawMetaEffects === 'string' && rawMetaEffects.length > 0
-        ? rawMetaEffects.split(',').map(s => s.trim()).filter(s => s.length > 0)
-        : null;
+    const metaEffects = readMetaEffects(targetNode);
     if (Array.isArray(metaEffects) && metaEffects.length > 0) {
       const leafEffects: EffectType[] = [];
       for (const e of metaEffects) {
