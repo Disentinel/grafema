@@ -155,7 +155,12 @@ function formatCallsForDisplay(calls: CallInfo[]): string[] {
       ? ` -> ${c.target?.name} (${c.target?.file}:${c.target?.line})`
       : ' (unresolved)';
     const prefix = c.type === 'METHOD_CALL' ? `${c.object}.` : '';
-    lines.push(`  - ${prefix}${c.name}()${target}`);
+    // R2: annotate non-precise resolutions so the reader sees the sound-superset
+    // fan-out (the precise default stays silent to avoid noise).
+    const prec = c.precision && c.precision.precision !== 'precise'
+      ? ` [${c.precision.precision}: ${c.precision.candidateCount} candidates]`
+      : '';
+    lines.push(`  - ${prefix}${c.name}()${target}${prec}`);
   }
 
   // Transitive calls (grouped by depth)

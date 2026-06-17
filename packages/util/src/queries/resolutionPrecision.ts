@@ -200,7 +200,7 @@ function isReceiverCollapsed(call: DataflowNode, target: DataflowNode): boolean 
 // null. Kept here so the marker is self-contained for the spike; the production
 // merge would share the one copy in traceEffects.
 
-async function receiverExternalImport(
+export async function receiverExternalImport(
   backend: DataflowBackend,
   callId: string,
 ): Promise<string | null> {
@@ -342,4 +342,107 @@ function readEffects(node: DataflowNode | null): string[] {
     return raw.split(',').map(s => s.trim()).filter(s => s.length > 0);
   }
   return [];
+}
+
+// ── R4: soundness taxonomy + util-layer invariant check ───────
+//
+// The three precision classes carry a SOUNDNESS verdict the ≤1-target
+// "is-a-function" guarantee cannot express:
+//
+//   precise            → SOUND   (the resolution names the one real callee).
+//   heuristic-superset → SOUND   (acceptable-but-noisy: the real target IS in
+//                                 the candidate set; the resolver over-
+//                                 approximated but dropped nothing).
+//   suspected-unsound  → UNSOUND (a DEFECT: the real target was dropped and a
+//                                 single WRONG callee presented in its place —
+//                                 axios.get → ecma GLOBAL::get. This passes the
+//                                 ≤1-target guarantee while lying about the
+//                                 callee, so it needs an explicit hard flag).
+//
+// `checkResolutionSoundness` is the explicit hard-flag: given a backend it
+// returns every unsound resolution as a VIOLATION. It is a plain function
+// (NOT a guarantees.yaml rule — that surface is vm-owned), so the unsound
+// class is caught at the util layer even though it survives the structural
+// guarantee.
+
+/** Soundness verdict for a precision class (R4 taxonomy). */
+export type SoundnessVerdict = 'sound' | 'sound-superset' | 'unsound';
+
+/** Map a precision class to its soundness verdict. */
+export function soundnessOf(precision: ResolutionPrecision): SoundnessVerdict {
+  switch (precision) {
+    case 'precise':
+      return 'sound';
+    case 'heuristic-superset':
+      return 'sound-superset';
+    case 'suspected-unsound':
+      return 'unsound';
+  }
+}
+
+/** A single unsound resolution surfaced as a hard violation. */
+export interface ResolutionSoundnessViolation {
+  callId: string;
+  callName: string;
+  /** The (wrong) single resolved target. */
+  resolvedTo: string;
+  resolvedToName: string;
+  /** The collapsed-away receiver's module specifier (e.g. "axios"). */
+  receiverModule: string;
+  /** Effects the wrong target masks (e.g. ["PURE"]). */
+  presentedEffects: string[];
+  basis: ResolutionBasis;
+  /** Always 'unsound' here — kept explicit so callers can branch on verdict. */
+  verdict: SoundnessVerdict;
+}
+
+export interface ResolutionSoundnessReport {
+  /** True iff at least one unsound resolution was found. */
+  hasUnsound: boolean;
+  /** Every unsound resolution as a hard violation. */
+  violations: ResolutionSoundnessViolation[];
+  /** Tally by soundness verdict across all resolution edges. */
+  bySoundness: Record<SoundnessVerdict, number>;
+}
+
+/**
+ * R4 invariant check: flag every UNSOUND resolution (suspected-unsound class)
+ * as a hard violation. Sound and sound-superset resolutions are tallied but
+ * never reported as violations.
+ *
+ * This is the util-layer counterpart to the ≤1-target "is-a-function"
+ * guarantee: that guarantee passes on the axios.get→GLOBAL::get defect (it IS
+ * one function); THIS check fails it.
+ */
+export async function checkResolutionSoundness(
+  backend: DataflowBackend,
+): Promise<ResolutionSoundnessReport> {
+  const audit = await auditResolutionPrecision(backend);
+
+  const bySoundness: Record<SoundnessVerdict, number> = {
+    sound: 0,
+    'sound-superset': 0,
+    unsound: 0,
+  };
+  for (const r of audit.resolutions) {
+    bySoundness[soundnessOf(r.marker.precision)] += 1;
+  }
+
+  const violations: ResolutionSoundnessViolation[] = [];
+  for (const r of audit.resolutions) {
+    if (r.marker.precision !== 'suspected-unsound') continue;
+    const u = audit.suspectedUnsound.find(c => c.callId === r.callId && c.resolvedTo === r.targetId);
+    violations.push({
+      callId: r.callId,
+      callName: r.callName,
+      resolvedTo: r.targetId,
+      resolvedToName: r.targetName,
+      receiverModule: u?.receiverModule ?? '',
+      presentedEffects: u?.presentedEffects ?? [],
+      basis: r.marker.basis,
+      verdict: 'unsound',
+    });
+  }
+
+  return { hasUnsound: violations.length > 0, violations, bySoundness };
 }

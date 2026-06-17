@@ -223,6 +223,26 @@ export { findCallsInFunction, findContainingFunction, traceValues, aggregateValu
 export { traceDataflow, traceForwardBFS, traceBackwardBFS, makeDataflowIndexCache } from './queries/index.js';
 export { traceCallChain } from './queries/index.js';
 export { traceEffects } from './queries/index.js';
+// Resolution-precision marker (RFD R1) + consumers (R4 soundness check).
+export {
+  classifyResolution,
+  auditResolutionPrecision,
+  receiverExternalImport,
+  soundnessOf,
+  checkResolutionSoundness,
+} from './queries/index.js';
+export type {
+  ResolutionPrecision,
+  ResolutionMarker,
+  ResolutionBasis,
+  ClassifyContext,
+  MarkedResolution,
+  UnsoundCase,
+  ResolutionPrecisionAudit,
+  SoundnessVerdict,
+  ResolutionSoundnessViolation,
+  ResolutionSoundnessReport,
+} from './queries/index.js';
 export { getShape } from './queries/index.js';
 export type { ShapeResult, ShapeMember, ClassIndex } from './queries/index.js';
 export { buildNodeContext, getNodeDisplayName, formatEdgeMetadata, STRUCTURAL_EDGE_TYPES } from './queries/index.js';
@@ -252,6 +272,7 @@ export type {
   BoundaryCrossing,
   LeafSource,
   TraceEffectsOptions,
+  UnsoundResolutionLeaf,
 } from './queries/index.js';
 
 // Notation — DSL rendering engine

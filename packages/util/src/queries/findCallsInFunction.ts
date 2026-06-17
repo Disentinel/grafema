@@ -33,6 +33,8 @@
  */
 
 import type { CallInfo, FindCallsOptions } from './types.js';
+import { classifyResolution } from './resolutionPrecision.js';
+import type { DataflowNode, DataflowEdge } from './traceDataflow.js';
 
 /**
  * Graph backend interface (minimal surface)
@@ -50,7 +52,7 @@ interface GraphBackend {
   getOutgoingEdges(
     nodeId: string,
     edgeTypes: string[] | null
-  ): Promise<Array<{ src: string; dst: string; type: string }>>;
+  ): Promise<Array<{ src: string; dst: string; type: string; metadata?: Record<string, unknown> }>>;
 }
 
 /** Normalize node type field (RFDB uses nodeType, some backends use type) */
@@ -187,8 +189,10 @@ async function buildCallInfo(
   const isRemote = callsEdges.length > 0 && callsEdges[0].type === 'CALLS_REMOTE';
 
   let target = undefined;
+  let precision: CallInfo['precision'] = undefined;
   if (isResolved) {
-    const targetNode = await backend.getNode(callsEdges[0].dst);
+    const resolvedEdge = callsEdges[0];
+    const targetNode = await backend.getNode(resolvedEdge.dst);
     if (targetNode) {
       target = {
         id: targetNode.id,
@@ -196,6 +200,18 @@ async function buildCallInfo(
         file: targetNode.file,
         line: targetNode.line,
       };
+
+      // R2: precision marker. find_calls has no queryNodes surface, so the
+      // receiver-import walk is skipped (receiverIsExternalImport=false) — this
+      // path reports precise / heuristic-superset from fan-out + resolvedVia,
+      // never suspected-unsound (reserved for the full-walk audit/traceEffects).
+      precision = classifyResolution({
+        call: { id: callNode.id, type: getNodeType(callNode), name: callNode.name } as DataflowNode,
+        edge: { src: callNode.id, dst: resolvedEdge.dst, type: resolvedEdge.type, metadata: resolvedEdge.metadata } as DataflowEdge,
+        target: { id: targetNode.id, type: getNodeType(targetNode), name: targetNode.name } as DataflowNode,
+        candidateCount: callsEdges.length,
+        receiverIsExternalImport: false,
+      });
     }
   }
 
@@ -210,6 +226,7 @@ async function buildCallInfo(
     line: callNode.line,
     depth,
     remote: isRemote,
+    precision,
   };
 }
 

@@ -7,6 +7,8 @@
  * @module queries/types
  */
 
+import type { ResolutionMarker } from './resolutionPrecision.js';
+
 /**
  * Information about a function/method call found in code
  */
@@ -36,6 +38,18 @@ export interface CallInfo {
   depth?: number;
   /** Whether this call crosses a process/language boundary (CALLS_REMOTE) */
   remote?: boolean;
+  /**
+   * R2: resolution-precision marker for this call's resolved target — the
+   * soundness class (precise / heuristic-superset / suspected-unsound) plus
+   * candidateCount. Additive; present only when the call was resolved.
+   *
+   * NOTE: find_calls classifies WITHOUT the receiver-import walk (it has no
+   * queryNodes surface), so it reports `precise` / `heuristic-superset` from
+   * fan-out + resolvedVia, but never `suspected-unsound` — that nuance is
+   * reserved for traceEffects / auditResolutionPrecision, which run the full
+   * receiver walk. A caller wanting the unsound verdict should use those.
+   */
+  precision?: ResolutionMarker;
 }
 
 /**
