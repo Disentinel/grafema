@@ -322,3 +322,58 @@ ext_func_node_pure(Sid, FnN, "<builtin>", M, P) :-
 @materialize_node(node_type = "EXTERNAL_FUNCTION", mode = "exclusive", meta(module))
 ext_func_node_plain(Sid, FnN, "<builtin>", M) :-
     ext_func_sid(M, FnN, Sid), \+ in_registry(M, FnN).
+
+% ── REG-624: external (non-builtin) imports → EXTERNAL_MODULE leaf nodes ─────
+% Goal: no JS IMPORT is a graph dead-end. The Phase-1 head above mints an
+% EXTERNAL_MODULE only for the REGISTERED Node builtins (source "nodejs-builtin").
+% Every npm package / scoped package / unregistered builtin import is left with
+% no outgoing IMPORTS_FROM (REG-624: 48% of all IMPORT nodes). This head mints a
+% leaf for the remainder so effects-db lookups (traceEffects.ts EXTERNAL_MODULE
+% arm) and "what external deps does this module use?" queries close.
+%
+% SCOPE — an import is project-EXTERNAL here iff ALL hold:
+%   (1) the specifier is NOT relative (no leading ".") and NOT absolute (no
+%       leading "/") — a leading "." is a project-internal path whose
+%       unresolved case MUST stay a violation of the imports-resolve-to-module
+%       guarantee (REG-1166), never be masked by a fake external leaf;
+%   (2) it is NOT a registered builtin (builtin_spec) — those already minted
+%       above with the richer "nodejs-builtin" source; excluded so
+%       EXTERNAL_MODULE:fs is never re-minted with a conflicting `source`;
+%   (3) the IMPORT was NOT already resolved to a MODULE by an earlier pack
+%       (js_module_imports / js_import_bindings commit IMPORTS_FROM as EDB
+%       strictly before this pack — see STDLIB_PACKS order). This drops
+%       workspace packages (`@scope/util` → a real project MODULE): they are
+%       internal, not external, and already have their IMPORTS_FROM edge.
+%
+% A leading "node:" is normalized away (strip_prefix) so `node:zlib` and `zlib`
+% collapse to ONE leaf — byte-identical sid ⇒ set-dedup — mirroring
+% normalizeModuleName's "node:" strip for the registered twins.
+%
+% source = "external" (honest: resolved outside the project). Richer
+% npm/crate/hackage tagging and subpath→package grouping (`lodash/merge` →
+% `lodash`) are deferred — they need a package-name extractor the engine's
+% string builtins don't yet provide (REG-624 follow-up). Full-specifier names
+% still close every dead-end and feed bare-package effects-db lookups.
+%
+% mode = "exclusive" is provenance-scoped (only THIS rule's _source is
+% retracted) — identical-sid nodes from the legacy resolver are never touched.
+resolved_imp(I) :- node(I, "IMPORT"), edge(I, _, "IMPORTS_FROM").
+
+% Single-column projection so negation binds one ground var (the `\+ dotted(C)`
+% discipline — a 2-arg `\+ builtin_spec(Spec, _)` does NOT exclude reliably).
+is_builtin_spec(Spec) :- builtin_spec(Spec, _).
+
+ext_other_imp(I, Spec) :-
+    js_imp(I, _, Spec),
+    not_starts_with(Spec, "."),
+    not_starts_with(Spec, "/"),
+    \+ is_builtin_spec(Spec),
+    \+ resolved_imp(I).
+
+ext_other_name(I, Spec) :- ext_other_imp(I, Spec), not_starts_with(Spec, "node:").
+ext_other_name(I, M)    :- ext_other_imp(I, Spec), strip_prefix(Spec, "node:", M), neq(M, "").
+
+@materialize_node(node_type = "EXTERNAL_MODULE", mode = "exclusive", meta(source))
+ext_other_module_node(Sid, Name, "<external>", "external") :-
+    ext_other_name(_, Name), neq(Name, ""),
+    concat("EXTERNAL_MODULE:", Name, Sid).

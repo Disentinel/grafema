@@ -117,3 +117,37 @@ bi_direct_edge(C, X, "builtins") :-
     bi_direct_call(C, M, FnN),
     node(X, "EXTERNAL_FUNCTION"), attr(X, "name", FnN), attr(X, "file", "<builtin>"),
     node_attr(X, "module", M).
+
+% ── REG-624: IMPORTS_FROM external IMPORT → its EXTERNAL_MODULE leaf ──
+% Joins the EXTERNAL_MODULE leaves minted in js_builtins_nodes (committed EDB,
+% file "<external>") to their importing IMPORT node. The external-scope prelude
+% (is_builtin_spec / ext_other_imp / ext_other_name) is a TEXTUAL DUPLICATE of
+% js_builtins_nodes.dl — the established per-pack include pattern (derived
+% relations are per-program). See that file's header for the full scope rationale
+% (non-relative/non-absolute, non-builtin; "node:" strip).
+%
+% Unlike the nodes pack, this pack does NOT re-derive `resolved_imp`: an edge
+% pack that both PRODUCES IMPORTS_FROM and negates on `edge(_,_,"IMPORTS_FROM")`
+% is a stratification cycle (NegationInCycle). It is unnecessary anyway — the
+% not-already-resolved gate is already baked into the leaf: js_builtins_nodes
+% only minted an "<external>" leaf for an unresolved external import, so the
+% `attr(X,"file","<external>")` join below naturally excludes every workspace /
+% relative / already-resolved import (no leaf ⇒ no edge).
+%
+% mode = "additive": IMPORTS_FROM is shared vocabulary — exclusive write-back
+% would tombstone the analyzers'/resolver's IMPORTS_FROM edges.
+is_builtin_spec(Spec) :- builtin_spec(Spec, _).
+
+ext_other_imp(I, Spec) :-
+    js_imp(I, _, Spec),
+    not_starts_with(Spec, "."),
+    not_starts_with(Spec, "/"),
+    \+ is_builtin_spec(Spec).
+
+ext_other_name(I, Spec) :- ext_other_imp(I, Spec), not_starts_with(Spec, "node:").
+ext_other_name(I, M)    :- ext_other_imp(I, Spec), strip_prefix(Spec, "node:", M), neq(M, "").
+
+@materialize(edge_type = "IMPORTS_FROM", mode = "additive", meta(resolvedVia))
+ext_other_import_edge(I, X, "external") :-
+    ext_other_name(I, Name),
+    node(X, "EXTERNAL_MODULE"), attr(X, "name", Name), attr(X, "file", "<external>").

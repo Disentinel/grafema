@@ -5850,7 +5850,11 @@ mod tests {
                 .find(|s| s.predicate == p)
                 .unwrap_or_else(|| panic!("missing node spec {p}"))
         };
-        assert_eq!(node_specs.len(), 4, "four @materialize_node heads");
+        assert_eq!(
+            node_specs.len(),
+            5,
+            "four builtin @materialize_node heads + the REG-624 external-leaf head"
+        );
         assert!(
             node_specs.iter().all(|s| !s.additive),
             "exclusive (provenance-scoped) on every node head"
@@ -5977,9 +5981,171 @@ mod tests {
                 .iter()
                 .filter(|s| s.edge_type == "IMPORTS_FROM")
                 .count(),
-            1,
-            "one IMPORTS_FROM head"
+            2,
+            "two IMPORTS_FROM heads: builtin (bi_import_edge) + REG-624 external \
+             (ext_other_import_edge)"
         );
+    }
+
+    /// REG-624 — js_builtins_nodes mints an EXTERNAL_MODULE leaf for every
+    /// project-EXTERNAL (non-builtin, non-relative, non-absolute, unresolved)
+    /// JS import so no IMPORT is a graph dead-end. Covers:
+    /// - a plain npm pkg (axios), a scoped pkg (@grafema/util), a subpath import
+    ///   kept verbatim (lodash/merge — package grouping is a follow-up);
+    /// - "node:" normalization of an UNREGISTERED builtin (node:zlib → zlib),
+    ///   sharing the bare-"zlib" leaf (one deduped sid).
+    /// Negatives that mint NOTHING:
+    /// - relative ("./local") and absolute ("/abs") specifiers — an unresolved
+    ///   relative import must stay a guarantee violation, never a fake leaf;
+    /// - a REGISTERED builtin ("fs") — left to the nodejs-builtin head;
+    /// - a workspace pkg already resolved to a MODULE ("@scope/internal" with an
+    ///   IMPORTS_FROM edge) — internal, not external (the dedup that stops a
+    ///   double-emit against js_module_imports);
+    /// - a .rs IMPORT (cross-language gate).
+    #[test]
+    fn js_builtins_nodes_mints_external_leaf_for_npm_imports() {
+        let mut v = FixtureStorageView::new(1);
+        named_node(&mut v, "i_axios", "axios", "IMPORT", "app.ts");
+        named_node(&mut v, "i_scoped", "@grafema/util", "IMPORT", "app.ts");
+        named_node(&mut v, "i_sub", "lodash/merge", "IMPORT", "app.ts");
+        named_node(&mut v, "i_nodezlib", "node:zlib", "IMPORT", "app.ts");
+        named_node(&mut v, "i_zlib", "zlib", "IMPORT", "app.ts");
+
+        // Negatives.
+        named_node(&mut v, "i_rel", "./local", "IMPORT", "app.ts");
+        named_node(&mut v, "i_abs", "/abs", "IMPORT", "app.ts");
+        named_node(&mut v, "i_fs", "fs", "IMPORT", "app.ts"); // registered builtin
+        // Workspace pkg already resolved to a real MODULE → internal, not external.
+        named_node(&mut v, "i_ws", "@scope/internal", "IMPORT", "app.ts");
+        named_node(&mut v, "m_ws", "internal.ts", "MODULE", "internal.ts");
+        edge(&mut v, "i_ws", "m_ws", "IMPORTS_FROM");
+        // Cross-language gate: a Rust `use serde` IMPORT must not mint a JS leaf.
+        named_node(&mut v, "i_rs", "serde", "IMPORT", "main.rs");
+
+        let (eval, _specs, node_specs) = evaluate_with_materialize(
+            &v,
+            JS_BUILTINS_NODES_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("js_builtins_nodes.dl evaluates");
+
+        let sids = |pred: &str| -> BTreeSet<String> {
+            eval.facts(pred)
+                .into_iter()
+                .map(|row| row[0].as_str())
+                .collect()
+        };
+        assert_eq!(
+            sids("ext_other_module_node"),
+            BTreeSet::from([
+                "EXTERNAL_MODULE:axios".to_string(),
+                "EXTERNAL_MODULE:@grafema/util".to_string(),
+                "EXTERNAL_MODULE:lodash/merge".to_string(),
+                "EXTERNAL_MODULE:zlib".to_string(),
+            ]),
+            "every external import mints a leaf; node:zlib normalizes to zlib and \
+             shares the bare-zlib leaf; relative/absolute/builtin/resolved/.rs excluded"
+        );
+        // The registered builtin keeps its richer nodejs-builtin leaf, NOT a
+        // second external mint.
+        assert_eq!(
+            sids("ext_module_node"),
+            BTreeSet::from(["EXTERNAL_MODULE:fs".to_string()]),
+            "fs stays on the nodejs-builtin head"
+        );
+
+        // Column shape: (sid, name, file "<external>", source "external").
+        let rows: BTreeSet<Vec<String>> = eval
+            .facts("ext_other_module_node")
+            .into_iter()
+            .map(|r| r.iter().map(|x| x.as_str()).collect())
+            .collect();
+        assert!(
+            rows.contains(&vec![
+                "EXTERNAL_MODULE:axios".to_string(),
+                "axios".to_string(),
+                "<external>".to_string(),
+                "external".to_string(),
+            ]),
+            "sid, name, file '<external>', source 'external'; got {rows:?}"
+        );
+
+        let ext_spec = node_specs
+            .iter()
+            .find(|s| s.predicate == "ext_other_module_node")
+            .expect("ext_other_module_node node spec");
+        assert_eq!(ext_spec.node_type, "EXTERNAL_MODULE");
+        assert_eq!(ext_spec.meta, vec!["source".to_string()]);
+        assert!(!ext_spec.additive, "exclusive (provenance-scoped)");
+    }
+
+    /// REG-624 — js_builtins_edges joins each external IMPORT to the committed
+    /// EXTERNAL_MODULE leaf (file "<external>"), emitting an additive
+    /// IMPORTS_FROM with resolvedVia="external". node:zlib is pinned to the
+    /// normalized "zlib" leaf. Negatives: a relative IMPORT and an IMPORT
+    /// already resolved to a MODULE emit no external edge.
+    #[test]
+    fn js_builtins_edges_links_external_imports_to_leaves() {
+        let mut v = FixtureStorageView::new(1);
+
+        // Committed external leaves (as js_builtins_nodes minted them).
+        named_node(
+            &mut v,
+            "EXTERNAL_MODULE:axios",
+            "axios",
+            "EXTERNAL_MODULE",
+            "<external>",
+        );
+        named_node(
+            &mut v,
+            "EXTERNAL_MODULE:zlib",
+            "zlib",
+            "EXTERNAL_MODULE",
+            "<external>",
+        );
+
+        named_node(&mut v, "i_axios", "axios", "IMPORT", "app.ts");
+        named_node(&mut v, "i_nodezlib", "node:zlib", "IMPORT", "app.ts");
+        // Negatives.
+        named_node(&mut v, "i_rel", "./local", "IMPORT", "app.ts");
+        named_node(&mut v, "i_ws", "@scope/internal", "IMPORT", "app.ts");
+        named_node(&mut v, "m_ws", "internal.ts", "MODULE", "internal.ts");
+        edge(&mut v, "i_ws", "m_ws", "IMPORTS_FROM");
+
+        let (eval, specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            JS_BUILTINS_EDGES_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("js_builtins_edges.dl evaluates");
+
+        let ext_via = |pairs: &[(&str, &str)]| -> BTreeSet<(u128, u128, String)> {
+            pairs
+                .iter()
+                .map(|(i, x)| (id_of(i), id_of(x), "external".to_string()))
+                .collect()
+        };
+        assert_eq!(
+            triples(&eval, "ext_other_import_edge"),
+            ext_via(&[
+                ("i_axios", "EXTERNAL_MODULE:axios"),
+                ("i_nodezlib", "EXTERNAL_MODULE:zlib"),
+            ]),
+            "external IMPORT → its leaf (node:zlib pinned to the normalized zlib \
+             leaf); relative and already-resolved imports emit no external edge"
+        );
+
+        let ext_spec = specs
+            .iter()
+            .find(|s| s.predicate == "ext_other_import_edge")
+            .expect("ext_other_import_edge edge spec");
+        assert_eq!(ext_spec.edge_type, "IMPORTS_FROM");
+        assert!(ext_spec.additive, "additive (shared IMPORTS_FROM vocabulary)");
+        assert_eq!(ext_spec.meta, vec!["resolvedVia".to_string()]);
     }
 
     /// The bundled js_module_imports pack (Wave 3b) reproduces the module-level
