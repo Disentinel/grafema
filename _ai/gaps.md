@@ -482,3 +482,27 @@ at the var-decl level, so a nested-pattern key vs binding distinction is handled
 `extractBindingInfo` (exports the VALUE, not the key) but deeper aliasing is untracked. Also:
 `Declarations.hs` is a pre-existing >500-line god-file — the variable-declaration rules are a
 natural extraction candidate (follow-up, not blocking).
+
+## GAP: effects-db effects don't propagate through member-calls on default-imported external modules (2026-06-17)
+
+**Query that should work but doesn't:** "what side effects does `fetchUser` have?" where
+`fetchUser` calls `axios.get(...)` (`import axios from 'axios'`).
+
+**Expected:** `IO:HTTP:REQUEST` (effects-db `axios.get: [IO, IO:HTTP:REQUEST, ASYNC, THROW]`).
+**Got:** `["ASYNC"]` only — the axios.get effect was NOT propagated.
+
+**Evidence (fixture /tmp/sep-test, fresh #449 binaries, real `traceEffects`):**
+- `loadConfig` → `fs.readFile()` (named import) → `["ASYNC","IO","THROW"]` ✅ propagates.
+- `fetchUser` → `axios.get()` (member call on default import) → `["ASYNC"]` ❌ no IO.
+- `EXTERNAL_MODULE:axios` node IS minted (#449/REG-624 verified) and `effects-db/packages/axios.yaml`
+  HAS `get: [IO, IO:HTTP:REQUEST, ...]` — so node + annotation both present; the missing link is
+  the `pkg.method()` → effects-db `lookup(module="axios", fn="get")` path in side-effect propagation.
+
+**Class:** SEP (side-effect propagation) works for direct named external-function calls but not for
+member-method calls on a default-imported external module. Surfaced by #449 (node) + the effects-db
+package annotations (#438-445) — before #449 npm had no EXTERNAL_MODULE anchor at all. Not a #449
+regression — a pre-existing propagation gap now reachable.
+
+**Locus (to confirm):** `traceEffects`/`findCallsInFunction` (packages/util) member-call resolution
+to (module, method) for the effects-db lookup, OR the JS property-access/method-call resolution that
+should link `axios.get` CALL → module=axios + method=get. Tracked: triage task.
