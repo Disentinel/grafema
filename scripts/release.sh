@@ -387,9 +387,14 @@ done
 # binary (hoisted from the meta) AND a 0.3.29 binary nested under @grafema/cli — and
 # the CLI resolved the nested 0.3.29 (a pre-derive binary) → 0.4.0 broken. Looping the
 # inject over all pin-bearing packages keeps every shipped pin == $NEW_VERSION.
+# @grafema/mcp also ships these optionalDeps (it auto-starts rfdb-server via
+# RFDBServerBackend when installed standalone), so it must be injected too — it was
+# missed through 0.4.1 and kept a stale 0.3.29 pin. The internal-pin lockstep test in
+# test/unit/version-sync.test.js guards against any pin-bearing package being omitted.
 PIN_PACKAGES=(
     "packages/grafema"
     "packages/cli"
+    "packages/mcp"
 )
 for PIN_PKG in "${PIN_PACKAGES[@]}"; do
     PKG_JSON="$ROOT_DIR/$PIN_PKG/package.json"
