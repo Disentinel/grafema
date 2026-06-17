@@ -48,3 +48,13 @@ export type {
 } from './traceDataflow.js';
 export { traceEffects } from './traceEffects.js';
 export type { TraceEffectsResult, BoundaryCrossing, LeafSource, TraceEffectsOptions } from './traceEffects.js';
+export { classifyResolution, auditResolutionPrecision } from './resolutionPrecision.js';
+export type {
+  ResolutionPrecision,
+  ResolutionMarker,
+  ResolutionBasis,
+  ClassifyContext,
+  MarkedResolution,
+  UnsoundCase,
+  ResolutionPrecisionAudit,
+} from './resolutionPrecision.js';
