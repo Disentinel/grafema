@@ -23,7 +23,7 @@
     "rfdb"
   ],
   "author": "Vadim Reshetnikov",
-  "license": "FSL-1.1-Apache-2.0",
+  "license": "FSL-1.1-ALv2",
   "engines": {
     "node": ">= 16"
   },
