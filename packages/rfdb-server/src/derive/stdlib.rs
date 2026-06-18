@@ -4972,6 +4972,62 @@ mod tests {
         assert_eq!(spec.meta, vec!["resolvedVia".to_string(), "globalCategory".to_string()]);
     }
 
+    /// SEP PART B / RFD R6 — the receiver-import guard. A dotted member call on
+    /// a default/namespace-IMPORTED receiver (`axios.get`) must NOT resolve to
+    /// the bare ecma-global `get`: that strips the receiver and is unsound (the
+    /// side-effect-propagation gap). The guard detects the receiver structurally
+    /// via the analyzer-committed chain CALL -DERIVES_FROM-> PROPERTY_ACCESS
+    /// -READS_FROM-> REFERENCE -READS_FROM-> IMPORT_BINDING and blocks the win on
+    /// the STRIPPED suffix. An identical `foo.get` whose receiver is a LOCAL
+    /// variable (not an import) is untouched — proving the discriminator is the
+    /// import receiver, not the dotted shape.
+    #[test]
+    fn js_runtime_globals_edges_receiver_import_guard() {
+        let mut v = FixtureStorageView::new(1);
+
+        // The bare ecma-global endpoint both calls would otherwise win.
+        named_node(&mut v, "GLOBAL::get", "get", "GLOBAL_DEFINITION", "<runtime/js>");
+
+        // DEFECT case: `axios.get`, receiver resolves to an IMPORT_BINDING.
+        named_node(&mut v, "c_axios", "axios.get", "CALL", "app.ts");
+        named_node(&mut v, "pa_axios", "get", "PROPERTY_ACCESS", "app.ts");
+        named_node(&mut v, "ref_axios", "axios", "REFERENCE", "app.ts");
+        named_node(&mut v, "ib_axios", "axios", "IMPORT_BINDING", "app.ts");
+        edge(&mut v, "c_axios", "pa_axios", "DERIVES_FROM");
+        edge(&mut v, "pa_axios", "ref_axios", "READS_FROM");
+        edge(&mut v, "ref_axios", "ib_axios", "READS_FROM");
+
+        // KEEP case: `foo.get`, identical suffix, but receiver is a LOCAL var.
+        named_node(&mut v, "c_foo", "foo.get", "CALL", "app.ts");
+        named_node(&mut v, "pa_foo", "get", "PROPERTY_ACCESS", "app.ts");
+        named_node(&mut v, "ref_foo", "foo", "REFERENCE", "app.ts");
+        named_node(&mut v, "var_foo", "foo", "VARIABLE", "app.ts");
+        edge(&mut v, "c_foo", "pa_foo", "DERIVES_FROM");
+        edge(&mut v, "pa_foo", "ref_foo", "READS_FROM");
+        edge(&mut v, "ref_foo", "var_foo", "READS_FROM");
+
+        let (eval, _specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            JS_RUNTIME_GLOBALS_EDGES_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("js_runtime_globals_edges.dl evaluates");
+
+        let edges: BTreeSet<(u128, u128)> = eval
+            .facts("rtg_call_edge")
+            .into_iter()
+            .map(|r| (r[0].as_id().expect("src id"), r[1].as_id().expect("dst id")))
+            .collect();
+        assert_eq!(
+            edges,
+            BTreeSet::from([(id_of("c_foo"), id_of("GLOBAL::get"))]),
+            "the imported-receiver call (axios.get) must be SUPPRESSED; only the \
+             local-receiver call (foo.get) keeps its bare-global edge"
+        );
+    }
+
     /// Realistic small-corpus stats for the Wave-14 fixture tests: the
     /// empty-graph `Stats::default()` (total_nodes = 0) degenerates every
     /// keyed probe into a DERIVED relation to its FULL cardinality

@@ -63,7 +63,33 @@ sfx(C, S) :- cand(C, N), dpfx(C, D), concat(D, ".", DP), strip_prefix(N, DP, S),
 
 msfx(C, S) :- sfx(C, S), rtg_key(S, _).
 msh(C, S) :- msfx(C, S), msfx(C, S2), concat(".", S, T), ends_with(S2, T).
-win(C, G) :- msfx(C, S), \+ msh(C, S), rtg_key(S, G).
+
+% ── SEP PART B / RFD R6: receiver-import guard (negation ⇒ scratch floor) ─────
+% A dotted member call on a default/namespace-imported module (e.g. `axios.get`)
+% has NO runtime-global meaning: the suffix chain strips the receiver and would
+% match the bare ecma-global `get`, minting an UNSOUND `CALLS C → GLOBAL::get`
+% (the receiver `axios` is lost; downstream effects-db lookup then sees a PURE
+% stand-in — the side-effect-propagation gap, _ai/gaps.md). Detect the receiver
+% structurally via the analyzer-committed receiver chain — CALL -DERIVES_FROM->
+% PROPERTY_ACCESS -READS_FROM-> REFERENCE -READS_FROM-> IMPORT_BINDING (all
+% committed EDB, emitted before any pack ⇒ no ordering dependency) — and block
+% the win on the STRIPPED suffix only. Genuine ecma-globals are untouched:
+% `JSON.parse` wins on the FULL name (not a stripped suffix), and `process.exit`
+% keeps `exit` because `process` is not an IMPORT_BINDING. False negatives (a
+% receiver the analyzer didn't link to its IMPORT_BINDING) degrade to the prior
+% behavior — sound, never a regression.
+recv_import(C) :-
+    edge(C, PA, "DERIVES_FROM"), node(PA, "PROPERTY_ACCESS"),
+    edge(PA, R, "READS_FROM"), node(R, "REFERENCE"),
+    edge(R, IB, "READS_FROM"), node(IB, "IMPORT_BINDING").
+
+% S is a STRIPPED suffix of C when it is a PROPER suffix of the full call name
+% (the dpfx chain removed the receiver), as opposed to the full name itself.
+strip_sfx(C, S) :- msfx(C, S), cand(C, N), neq(S, N).
+
+blocked(C, S) :- strip_sfx(C, S), recv_import(C).
+
+win(C, G) :- msfx(C, S), \+ msh(C, S), \+ blocked(C, S), rtg_key(S, G).
 
 % ── CALLS: matched CALL → its GLOBAL_DEFINITION, pinned by (name, virtual
 %    file). Metadata = the legacy mkEdge payload (:258-267), exact. ─────────
