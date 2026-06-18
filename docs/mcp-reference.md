@@ -1,104 +1,40 @@
 # Grafema feature catalogue
 
-_45 features exported._
+_27 features exported._
 
 ## Contents
 
-- [`mcp:tool` `add_knowledge`](#mcptool-addknowledge)
 - [`mcp:tool` `analyze_project`](#mcptool-analyzeproject)
-- [`mcp:tool` `CallToolRequestSchema`](#mcptool-calltoolrequestschema)
+- [`mcp:tool` `assert`](#mcptool-assert)
 - [`mcp:tool` `check_guarantees`](#mcptool-checkguarantees)
-- [`mcp:tool` `check_invariant`](#mcptool-checkinvariant)
+- [`mcp:tool` `crawl_entity`](#mcptool-crawlentity)
 - [`mcp:tool` `create_guarantee`](#mcptool-createguarantee)
 - [`mcp:tool` `delete_guarantee`](#mcptool-deleteguarantee)
-- [`mcp:tool` `describe`](#mcptool-describe)
 - [`mcp:tool` `discover_services`](#mcptool-discoverservices)
-- [`mcp:tool` `explain`](#mcptool-explain)
+- [`mcp:tool` `explain_datalog`](#mcptool-explaindatalog)
 - [`mcp:tool` `find_calls`](#mcptool-findcalls)
 - [`mcp:tool` `find_guards`](#mcptool-findguards)
 - [`mcp:tool` `find_nodes`](#mcptool-findnodes)
 - [`mcp:tool` `find_shared_behaviors`](#mcptool-findsharedbehaviors)
 - [`mcp:tool` `get_analysis_status`](#mcptool-getanalysisstatus)
-- [`mcp:tool` `get_context`](#mcptool-getcontext)
 - [`mcp:tool` `get_coverage`](#mcptool-getcoverage)
-- [`mcp:tool` `get_documentation`](#mcptool-getdocumentation)
-- [`mcp:tool` `get_file_overview`](#mcptool-getfileoverview)
-- [`mcp:tool` `get_function_details`](#mcptool-getfunctiondetails)
-- [`mcp:tool` `get_knowledge_stats`](#mcptool-getknowledgestats)
-- [`mcp:tool` `get_neighbors`](#mcptool-getneighbors)
+- [`mcp:tool` `get_docs`](#mcptool-getdocs)
 - [`mcp:tool` `get_node`](#mcptool-getnode)
-- [`mcp:tool` `get_schema`](#mcptool-getschema)
-- [`mcp:tool` `get_shape`](#mcptool-getshape)
 - [`mcp:tool` `get_stats`](#mcptool-getstats)
-- [`mcp:tool` `GetPromptRequestSchema`](#mcptool-getpromptrequestschema)
 - [`mcp:tool` `list_guarantees`](#mcptool-listguarantees)
-- [`mcp:tool` `ListPromptsRequestSchema`](#mcptool-listpromptsrequestschema)
-- [`mcp:tool` `ListToolsRequestSchema`](#mcptool-listtoolsrequestschema)
-- [`mcp:tool` `query_decisions`](#mcptool-querydecisions)
 - [`mcp:tool` `query_graph`](#mcptool-querygraph)
-- [`mcp:tool` `query_graphql`](#mcptool-querygraphql)
-- [`mcp:tool` `query_knowledge`](#mcptool-queryknowledge)
 - [`mcp:tool` `query_registry`](#mcptool-queryregistry)
 - [`mcp:tool` `read_project_structure`](#mcptool-readprojectstructure)
+- [`mcp:tool` `recall`](#mcptool-recall)
 - [`mcp:tool` `report_issue`](#mcptool-reportissue)
-- [`mcp:tool` `supersede_fact`](#mcptool-supersedefact)
-- [`mcp:tool` `TEST`](#mcptool-test)
-- [`mcp:tool` `trace_alias`](#mcptool-tracealias)
-- [`mcp:tool` `trace_calls`](#mcptool-tracecalls)
-- [`mcp:tool` `trace_dataflow`](#mcptool-tracedataflow)
-- [`mcp:tool` `trace_effects`](#mcptool-traceeffects)
-- [`mcp:tool` `traverse_graph`](#mcptool-traversegraph)
+- [`mcp:tool` `retract`](#mcptool-retract)
+- [`mcp:tool` `save_document`](#mcptool-savedocument)
+- [`mcp:tool` `trace`](#mcptool-trace)
 - [`mcp:tool` `write_config`](#mcptool-writeconfig)
-
-## `mcp:tool` `add_knowledge`
-
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/knowledge-tools.ts`
-**Modality**: `mcp:tool`
-
-### Contract — mcp-inputSchema
-
-Add a new knowledge node (decision, fact, session, etc.) to the knowledge base.
-
-Use this when you:
-- Make an architectural decision during a session → type: DECISION
-- Discover a fact about the codebase → type: FACT
-- Want to record a design session → type: SESSION
-- Need to track a commit, ticket, incident, or author → type: COMMIT/TICKET/INCIDENT/AUTHOR
-
-The node is persisted as a markdown file in the knowledge/ directory and tracked by git.
-ID format: kb:<type>:<slug> — generated from type + slug. Slug collision = error (likely a duplicate; use supersede_fact instead).
-
-Example: add_knowledge(type="DECISION", content="Use file-based storage for KB", slug="kb-file-based-storage", status="active", projections=["epistemic"])
-
-| Input | Type | Optional | Default | Description |
-|-------|------|----------|---------|-------------|
-| `type` | `string` | no |  | Node type |
-| `content` | `string` | no |  | Markdown body content for the knowledge node |
-| `slug` | `string` | yes |  | URL-safe slug for the ID (auto-generated from content if omitted). Format: lowercase, hyphens, digits. |
-| `subtype` | `string` | yes |  | Subtype within the node type. FACT: domain, error, preference. DECISION: adr, runbook. Extensible — not restricted to these values. |
-| `scope` | `string` | yes |  | Scope of applicability for this knowledge node |
-| `relates_to` | `array` | yes |  | Semantic IDs of related nodes. Creates edges in edges.yaml. |
-| `projections` | `array` | yes |  | Projections this node belongs to (e.g., "epistemic", "temporal", "organizational") |
-| `status` | `string` | yes |  | Decision status (only for DECISION type) |
-| `confidence` | `string` | yes |  | Confidence level (only for FACT type) |
-| `effective_from` | `string` | yes |  | Date when decision took effect (YYYY-MM-DD, only for DECISION) |
-| `applies_to` | `array` | yes |  | Semantic addresses of code this applies to (only for DECISION) |
-| `task_id` | `string` | yes |  | Associated Linear task ID (only for SESSION) |
-
-- Allowed for `type`: [DECISION, FACT, SESSION, COMMIT, FILE_CHANGE, AUTHOR, TICKET, INCIDENT]
-- Allowed for `scope`: [global, project, module]
-- Allowed for `status`: [active, superseded, deprecated, proposed]
-- Allowed for `confidence`: [high, medium, low]
-
-### Behavior
-
-- Effects: ASYNC, UNKNOWN
-- Transitive calls: 1
-- Depth: 10
 
 ## `mcp:tool` `analyze_project`
 
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/analysis-tools.ts`
+**File**: `/tmp/grafema-tools/packages/mcp/src/definitions/analysis-tools.ts`
 **Modality**: `mcp:tool`
 
 ### Contract — mcp-inputSchema
@@ -125,26 +61,76 @@ Tip: Use get_stats after analysis to verify graph was built successfully.
 
 ### Behavior
 
-- Effects: ASYNC, UNKNOWN
+- Effects: ASYNC, IO, IO:SOCKET:CONNECT, UNKNOWN
 - Transitive calls: 1
 - Depth: 10
 
-## `mcp:tool` `CallToolRequestSchema`
+## `mcp:tool` `assert`
 
-**File**: `packages/mcp/src/server.ts`
+**File**: `/tmp/grafema-tools/packages/mcp/src/definitions/enox-tools.ts`
 **Modality**: `mcp:tool`
+
+### When to use
+
+The SINGLE knowledge-write tool. BATCH-NATIVE: pass an array of
+assertions; one fact is an array of one. Use when you discover something
+worth remembering across sessions — a decision, experiment result,
+dependency, contradiction, or any relationship between two entities.
+Both `from` and `to` become nodes if they don't exist yet.
+Relation-expressed facts are just `assert` with the right relation — to
+record that a newer finding replaces an older one, use
+relation:"supersedes" (no separate supersede/supersede_fact tool).
+Re-asserting the same {from, relation, to} updates that edge's
+context/confidence.
+Replaces remember / add_assertion / update_assertion / supersede(_fact).
+"Enox" is the assertion protocol Grafema supports, not a tool prefix —
+hence `assert`, not `enox_remember`.
 
 _No speced contract recovered for this feature._
 
+### Examples
+
+**Record a single fact**
+
+```json
+{ "assertions": [
+  { "from": "Grafema", "relation": "uses", "to": "RFDB",
+    "context": "RFDB is the storage engine", "confidence": 1.0, "domain": "engineering" }
+] }
+```
+
+**Batch several facts at once**
+
+```json
+{ "assertions": [
+  { "from": "V2 engine", "relation": "supersedes", "to": "V1 engine",
+    "context": "segment-based persistence" },
+  { "from": "compaction", "relation": "depends_on", "to": "RFDB",
+    "context": "L1 compaction runs inside the storage engine" }
+] }
+```
+
 ### Behavior
 
-- Effects: ASYNC, IO, IO:HTTP:REQUEST, UNKNOWN
+- Effects: ASYNC, IO, IO:SOCKET:CONNECT, UNKNOWN
 - Transitive calls: 1
 - Depth: 10
 
+### Gotchas
+
+- Include a rich `context` string — that is what `recall` searches over.
+- `confidence` defaults to 0.9; `domain` scopes the fact to a knowledge domain that `recall`/`query_graph` can filter on.
+- To delete a fact entirely use `retract({fact_ids:[...]})`; prefer a "supersedes" assertion when you want to keep the history.
+
+### See also
+
+- `mcp:tool:retract`
+- `mcp:tool:recall`
+- `mcp:tool:save_document`
+
 ## `mcp:tool` `check_guarantees`
 
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/guarantee-tools.ts`
+**File**: `/tmp/grafema-tools/packages/mcp/src/definitions/guarantee-tools.ts`
 **Modality**: `mcp:tool`
 
 ### Contract — mcp-inputSchema
@@ -166,45 +152,40 @@ Empty array = all guarantees pass.
 
 ### Behavior
 
-- Effects: ASYNC, UNKNOWN
+- Effects: ASYNC, IO, IO:SOCKET:CONNECT, UNKNOWN
 - Transitive calls: 1
 - Depth: 10
 
-## `mcp:tool` `check_invariant`
+## `mcp:tool` `crawl_entity`
 
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/query-tools.ts`
+**File**: `/tmp/grafema-tools/packages/mcp/src/definitions/enox-tools.ts`
 **Modality**: `mcp:tool`
 
 ### Contract — mcp-inputSchema
 
-Check a one-off code invariant using a Datalog rule. Returns violations if broken.
+Run an ontological crawl on a CODE entity — bridge from the code graph into knowledge.
 
-Use this for ad-hoc checks without saving a permanent guarantee.
-For persistent rules, use create_guarantee + check_guarantees instead.
+Queries the Grafema code graph for the entity, generates graph-derived facts (what it is,
+who calls it, what it contains, what it calls), and surfaces any prior knowledge already
+recorded about it. Use \`assert\` afterwards to record interpretations worth persisting.
 
-Use cases:
-- Quick check: "Are there any eval() calls?" — rule: violation(X) :- node(X, "CALL"), attr(X, "name", "eval").
-- Audit: "Functions over 100 lines?" — check for excessive complexity
-- Pre-commit: "Any new SQL injection risks?" — one-time check before pushing
-
-Returns: List of nodes violating the rule, with file and line info.
+Example: crawl_entity(entity="compactionEnricher", context="TypeScript enricher creating FEATURE nodes")
 
 | Input | Type | Optional | Default | Description |
 |-------|------|----------|---------|-------------|
-| `rule` | `string` | no |  | Datalog rule defining violation/1 |
-| `description` | `string` | yes |  | Human-readable description |
-| `limit` | `number` | yes |  | Max violations (default: <expr>) |
-| `offset` | `number` | yes |  | Skip first N violations (default: 0) |
+| `entity` | `string` | no |  | Entity name to crawl |
+| `context` | `string` | yes |  | Brief description of what this entity is |
+| `depth` | `number` | yes |  | How many matched code nodes to explore (default: 3) |
 
 ### Behavior
 
-- Effects: ASYNC, UNKNOWN
+- Effects: ASYNC, IO, IO:SOCKET:CONNECT, UNKNOWN
 - Transitive calls: 1
 - Depth: 10
 
 ## `mcp:tool` `create_guarantee`
 
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/guarantee-tools.ts`
+**File**: `/tmp/grafema-tools/packages/mcp/src/definitions/guarantee-tools.ts`
 **Modality**: `mcp:tool`
 
 ### Contract — mcp-inputSchema
@@ -240,13 +221,13 @@ Examples:
 
 ### Behavior
 
-- Effects: ASYNC, UNKNOWN
+- Effects: ASYNC, IO, IO:SOCKET:CONNECT, UNKNOWN
 - Transitive calls: 1
 - Depth: 10
 
 ## `mcp:tool` `delete_guarantee`
 
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/guarantee-tools.ts`
+**File**: `/tmp/grafema-tools/packages/mcp/src/definitions/guarantee-tools.ts`
 **Modality**: `mcp:tool`
 
 ### Contract — mcp-inputSchema
@@ -266,66 +247,13 @@ This permanently removes the guarantee. Use list_guarantees first to verify the 
 
 ### Behavior
 
-- Effects: ASYNC, UNKNOWN
-- Transitive calls: 1
-- Depth: 10
-
-## `mcp:tool` `describe`
-
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/notation-tools.ts`
-**Modality**: `mcp:tool`
-
-### Contract — mcp-inputSchema
-
-Render a node's neighborhood as compact Grafema DSL notation.
-
-Reduces verbose edge listings to archetype-grouped visual operators:
-  o-  dependency/import
-  >   outward flow (calls, delegates, passes)
-  <   inward flow (reads, extends, receives)
-  =>  persistent write (db, file, redis)
-  >x  exception (throws, rejects)
-  ~>> event/message (emits, publishes)
-  ?|  conditional guard (if, case)
-  |=  governance (governs, monitors)
-
-Containment edges ({ }) define nesting structure.
-
-Example output:
-  login {
-    o- imports bcrypt
-    > calls UserDB.findByEmail, createToken
-    < reads config.auth
-    => writes session
-    >x throws AuthError
-    ~>> emits 'auth:login'
-  }
-
-Use depth to control detail:
-  0 = names only (children listed, no edges)
-  1 = edges (default — shows all relationship lines)
-  2 = nested + folded (compressed view — repetitive siblings collapsed)
-  3 = nested (exact — every node expanded, no folding)
-
-10-30 lines vs 500+ lines of raw edge data. Ideal for LLM context windows.
-
-| Input | Type | Optional | Default | Description |
-|-------|------|----------|---------|-------------|
-| `target` | `string` | no |  | Semantic ID, file path, or node name to describe |
-| `depth` | `number` | yes |  | Level of detail: 0=names, 1=edges (default), 2=nested+folded (compressed), 3=nested (exact, no folding) |
-| `perspective` | `string` | yes |  | Archetype filter preset: "security" (write,exception), "data" (flow_out,flow_in,write), "errors" (exception), "api" (flow_out,publishes,depends), "events" (publishes) |
-
-- Allowed for `perspective`: [security, data, errors, api, events]
-
-### Behavior
-
-- Effects: ASYNC, UNKNOWN
+- Effects: ASYNC, IO, IO:SOCKET:CONNECT, UNKNOWN
 - Transitive calls: 1
 - Depth: 10
 
 ## `mcp:tool` `discover_services`
 
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/analysis-tools.ts`
+**File**: `/tmp/grafema-tools/packages/mcp/src/definitions/analysis-tools.ts`
 **Modality**: `mcp:tool`
 
 ### Contract — mcp-inputSchema
@@ -353,43 +281,102 @@ Tip: If project has no .grafema/config.yaml, this scans for common patterns
 - Transitive calls: 1
 - Depth: 10
 
-## `mcp:tool` `explain`
+## `mcp:tool` `explain_datalog`
 
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/query-tools.ts`
+**File**: `/tmp/grafema-tools/packages/mcp/src/definitions/query-tools.ts`
 **Modality**: `mcp:tool`
+
+### When to use
+
+Explain or simulate derived (Datalog) facts — the provenance / what-if
+tool. Set `mode`:
+- "fact" — explain WHY a derived fact holds: the rule that derived it +
+           supporting body facts. Requires predicate + key.
+           "Why does module A depend on B?"
+- "gap"  — explain why a fact does NOT hold (why-not): the satisfied
+           premise prefix and the first premise no binding satisfies
+           (a missing positive premise, or a present negated one).
+           Requires predicate + key.
+- "sim"  — predict which NEW derived facts a hypothetical overlay of
+           nodes/edges would create, WITHOUT committing anything.
+           Requires predicate + at least one hypothetical node or edge.
+Default program is the bundled depends.dl (so the common predicate is
+"depends"). Pass `source` for a custom Datalog program.
+Replaces the old explain_fact / explain_gap / sim_datalog tools — they
+are now `mode` values of one tool.
 
 ### Contract — mcp-inputSchema
 
-Explain a code element using graph data — returns structured context + prompt for the LLM to summarize.
+Explain or simulate derived (Datalog) facts — the provenance/what-if tool.
 
-Unlike other tools that return raw data, this tool returns graph query results
-PLUS a natural-language prompt asking the calling LLM to explain the results
-to the user. The LLM uses its own reasoning to produce a human-readable summary.
+Set \`mode\`:
+- "fact" — explain WHY a derived fact holds: the rule that derived it + supporting body facts.
+  Requires predicate + key. "Why does module A depend on B?"
+  explain_datalog(mode="fact", predicate="depends", key=["<A_id>","<B_id>"])
+- "gap" — explain why a fact does NOT hold (why-not): the satisfied premise prefix and the first
+  premise no binding satisfies (a MISSING positive premise, or a PRESENT negated one).
+  Requires predicate + key.
+- "sim" — predict which NEW derived facts a hypothetical overlay of nodes/edges would create,
+  WITHOUT committing anything. Requires predicate + at least one hypothetical node or edge.
+  explain_datalog(mode="sim", predicate="depends", edges=[{src:"<A_id>",dst:"<B_id>",edgeType:"IMPORTS_FROM"}])
 
-No extra API calls needed — the calling model (Claude, GPT, etc.) does the summarization.
-
-Use cases:
-- "Explain where this value comes from" → dataflow trace + summarization prompt
-- "What does this function do?" → structure + calls + prompt to describe
-- "How is this variable used?" → forward trace + prompt to explain usage patterns
-
-The question parameter guides what graph data to fetch and how to frame the summary.
+Default program is the bundled depends.dl (so the common predicate is "depends"). Pass \`source\
 
 | Input | Type | Optional | Default | Description |
 |-------|------|----------|---------|-------------|
-| `target` | `string` | no |  | Variable, function, or node name to explain |
-| `file` | `string` | yes |  | File path to narrow scope |
-| `question` | `string` | yes |  | What to explain: "where does this value come from?", "what does this function do?", "how is this used?" (default: general explanation) |
+| `mode` | `string` | no |  | Which explanation: "fact" (why), "gap" (why-not), or "sim" (what-if). |
+| `predicate` | `string` | no |  | The derived predicate (e.g. "depends"). |
+| `key` | `array` | yes |  | The fact's ground key tuple as wire-string terms (required for mode fact/gap). |
+| `nodes` | `array` | yes |  | Hypothetical nodes to overlay (mode="sim"). |
+| `edges` | `array` | yes |  | Hypothetical edges to overlay (mode="sim"). |
+| `source` | `string` | yes |  | Optional Datalog program (derive engine); empty/omitted ⇒ the bundled depends.dl. |
+
+- Allowed for `mode`: [fact, gap, sim]
+
+### Examples
+
+**Why does this derived fact hold? (fact)**
+
+```json
+{ "mode": "fact", "predicate": "depends", "key": ["<A_id>", "<B_id>"] }
+```
+
+**Why does it NOT hold? (gap / why-not)**
+
+```json
+{ "mode": "gap", "predicate": "depends", "key": ["<A_id>", "<B_id>"] }
+```
+
+**What-if: which facts would a new edge create? (sim)**
+
+```json
+{
+  "mode": "sim",
+  "predicate": "depends",
+  "edges": [{ "src": "<A_id>", "dst": "<B_id>", "edgeType": "IMPORTS_FROM" }]
+}
+```
 
 ### Behavior
 
-- Effects: ASYNC, UNKNOWN
+- Effects: ASYNC, IO, IO:SOCKET:CONNECT, MESSAGE_PASSING, UNKNOWN
 - Transitive calls: 1
 - Depth: 10
 
+### Gotchas
+
+- Keys/ids are wire-string terms — node ids as decimal strings.
+- mode="sim" overlay ids may be new/invented ids; nothing is persisted.
+
+### See also
+
+- `mcp:tool:query_graph`
+- `mcp:tool:trace`
+- `cli:command:why`
+
 ## `mcp:tool` `find_calls`
 
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/query-tools.ts`
+**File**: `/tmp/grafema-tools/packages/mcp/src/definitions/query-tools.ts`
 **Modality**: `mcp:tool`
 
 ### When to use
@@ -397,7 +384,8 @@ The question parameter guides what graph data to fetch and how to frame the summ
 "Who calls this?" — the structural question grep can't answer
 because of aliases, re-exports, dynamic dispatch. Returns every
 resolved call site of a function or method with file:line. The
-callable side mirror of `trace_dataflow` (data side).
+callable side mirror of `trace(along="data")` (data side); for the
+transitive call graph use `trace(along="calls")`.
 
 ### Contract — mcp-inputSchema
 
@@ -433,7 +421,7 @@ Returns file, line, and whether the call target is resolved (linked to its defin
 
 ### Behavior
 
-- Effects: ASYNC, UNKNOWN
+- Effects: ASYNC, IO, IO:SOCKET:CONNECT, UNKNOWN
 - Transitive calls: 1
 - Depth: 10
 
@@ -443,13 +431,13 @@ Returns file, line, and whether the call target is resolved (linked to its defin
 
 ### See also
 
-- `mcp:tool:trace_alias`
+- `mcp:tool:trace`
 - `mcp:tool:find_nodes`
 - `cli:command:who`
 
 ## `mcp:tool` `find_guards`
 
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/context-tools.ts`
+**File**: `/tmp/grafema-tools/packages/mcp/src/definitions/context-tools.ts`
 **Modality**: `mcp:tool`
 
 ### Contract — mcp-inputSchema
@@ -477,13 +465,13 @@ Example use cases:
 
 ### Behavior
 
-- Effects: ASYNC, UNKNOWN
+- Effects: ASYNC, IO, IO:SOCKET:CONNECT, UNKNOWN
 - Transitive calls: 1
 - Depth: 10
 
 ## `mcp:tool` `find_nodes`
 
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/query-tools.ts`
+**File**: `/tmp/grafema-tools/packages/mcp/src/definitions/query-tools.ts`
 **Modality**: `mcp:tool`
 
 ### When to use
@@ -492,30 +480,39 @@ Primary entry point for navigating the code graph. Find functions,
 classes, modules, or any node by type and/or name pattern.
 Replaces grep for structural questions: instead of "where is the
 string `UserService`", ask "where is the CLASS named `UserService`."
-Returns semantic IDs you can hand to other tools (`get_context`,
-`find_calls`, `describe`).
+Returns semantic IDs you can hand to other tools (`get_node`,
+`find_calls`, `trace`).
 
 ### Contract — mcp-inputSchema
 
-Find nodes in the graph by type, name, or file pattern.
+Find nodes in a graph by type, name, or file pattern.
 
 Use this when you need to:
 - Find all functions in a specific file: type="FUNCTION", file="src/api.js"
 - Find a class by name: type="CLASS", name="UserService"
 - List all HTTP routes: type="http:route"
 - Get all modules in a directory: type="MODULE", file="services/"
+- Filter knowledge nodes: graph="knowledge", type="decision", file="<domain>" (domain is stored in the file field)
 
-Returns semantic IDs that you can pass to get_context, get_node, get_neighbors, or find_guards.
+Set \`graph\` to "knowledge" to filter the project knowledge graph instead of the code graph
+(default "code").
 
-Supports partial matches on name and file. When a name filter returns no exact matches, automatically falls back to fuzzy name matching using token similarity (CamelCase/snake_case aware). Use limit/offset for pagination.
+Returns semantic IDs that you can pass to get_node, trace, or find_guards.
+
+Supports partial matches on name and file. When a name filter returns no exact matches on the
+code graph, automatically falls back to fuzzy name matching (CamelCase/snake_case aware).
+Use limit/offset for pagination.
 
 | Input | Type | Optional | Default | Description |
 |-------|------|----------|---------|-------------|
 | `type` | `string` | yes |  | Node type (e.g., FUNCTION, CLASS, MODULE, PROPERTY_ACCESS) |
 | `name` | `string` | yes |  | Node name pattern |
-| `file` | `string` | yes |  | File path pattern |
+| `file` | `string` | yes |  | File path pattern (code graph) or domain (knowledge graph) |
+| `graph` | `string` | yes |  | Which graph to search: "code" (default) or "knowledge". |
 | `limit` | `number` | yes |  | Max results (default: <expr>, max: <expr>) |
 | `offset` | `number` | yes |  | Skip first N results (default: 0) |
+
+- Allowed for `graph`: [code, knowledge]
 
 ### Examples
 
@@ -533,7 +530,7 @@ Supports partial matches on name and file. When a name filter returns no exact m
 
 ### Behavior
 
-- Effects: ASYNC, UNKNOWN
+- Effects: ASYNC, IO, IO:SOCKET:CONNECT, UNKNOWN
 - Transitive calls: 1
 - Depth: 10
 
@@ -544,13 +541,13 @@ Supports partial matches on name and file. When a name filter returns no exact m
 
 ### See also
 
-- `mcp:tool:get_context`
+- `mcp:tool:get_node`
 - `mcp:tool:find_calls`
-- `mcp:tool:get_file_overview`
+- `mcp:tool:trace`
 
 ## `mcp:tool` `find_shared_behaviors`
 
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/query-tools.ts`
+**File**: `/tmp/grafema-tools/packages/mcp/src/definitions/query-tools.ts`
 **Modality**: `mcp:tool`
 
 ### Contract — mcp-inputSchema
@@ -580,13 +577,13 @@ Empty result means every FEATURE has a unique implementation.
 
 ### Behavior
 
-- Effects: ASYNC, UNKNOWN
+- Effects: ASYNC, IO, IO:SOCKET:CONNECT, UNKNOWN
 - Transitive calls: 1
 - Depth: 10
 
 ## `mcp:tool` `get_analysis_status`
 
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/analysis-tools.ts`
+**File**: `/tmp/grafema-tools/packages/mcp/src/definitions/analysis-tools.ts`
 **Modality**: `mcp:tool`
 
 ### Contract — mcp-inputSchema
@@ -608,71 +605,9 @@ Call this periodically after analyze_project to monitor progress.
 - Transitive calls: 1
 - Depth: 10
 
-## `mcp:tool` `get_context`
-
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/context-tools.ts`
-**Modality**: `mcp:tool`
-
-### When to use
-
-Single-call answer for "tell me everything you know about this
-node." Returns: source code snippet, immediate graph neighborhood
-(callers, callees, contains, contained-by), effects, throws.
-Cheaper than chaining multiple queries when you have a node id.
-Best paired with `find_nodes` (locate) → `get_context` (zoom in).
-
-### Contract — mcp-inputSchema
-
-Get deep context for a graph node: source code + full graph neighborhood.
-
-Shows ALL incoming and outgoing edges grouped by type, with source code
-at each connected node's location. Works for ANY node type.
-
-Use this after find_nodes or query_graph to deep-dive into a specific node.
-
-Output includes:
-- Node info (type, name, semantic ID, location)
-- Source code at the node's location
-- All outgoing edges (what this node connects to)
-- All incoming edges (what connects to this node)
-- Code context at each connected node's location
-
-Primary edges (CALLS, ASSIGNED_FROM, DEPENDS_ON, etc.) include code context.
-Structural edges (CONTAINS, HAS_SCOPE, etc.) are shown in compact form.
-
-| Input | Type | Optional | Default | Description |
-|-------|------|----------|---------|-------------|
-| `semanticId` | `string` | no |  | Exact semantic ID of the node (from find_nodes or query_graph) |
-| `contextLines` | `number` | yes |  | Lines of code context around each reference (default: 3) |
-| `edgeType` | `string` | yes |  | Filter by edge type (comma-separated, e.g., "CALLS,ASSIGNED_FROM") |
-
-### Examples
-
-**Get full context for a node**
-
-```json
-{ "nodeId": "FUNCTION:authenticate@src/auth.ts" }
-```
-
-### Behavior
-
-- Effects: ASYNC, UNKNOWN
-- Transitive calls: 1
-- Depth: 10
-
-### Gotchas
-
-- Returns up to ~30 neighbors by default. For exhaustive traversal of a hub node (e.g. a popular utility), use `find_calls` + `traverse_graph` for paginated control.
-
-### See also
-
-- `mcp:tool:describe`
-- `mcp:tool:find_nodes`
-- `mcp:tool:get_function_details`
-
 ## `mcp:tool` `get_coverage`
 
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/project-tools.ts`
+**File**: `/tmp/grafema-tools/packages/mcp/src/definitions/project-tools.ts`
 **Modality**: `mcp:tool`
 
 ### Contract — mcp-inputSchema
@@ -692,18 +627,25 @@ Use AFTER analyze_project when queries return unexpected empty results.
 | Input | Type | Optional | Default | Description |
 |-------|------|----------|---------|-------------|
 | `path` | `string` | yes |  | Path to check coverage for |
-| `depth` | `number` | yes |  | Directory depth to report (default: 2) |
 
 ### Behavior
 
-- Effects: ASYNC, UNKNOWN
+- Effects: ASYNC, IO, IO:SOCKET:CONNECT, UNKNOWN
 - Transitive calls: 1
 - Depth: 10
 
-## `mcp:tool` `get_documentation`
+## `mcp:tool` `get_docs`
 
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/project-tools.ts`
+**File**: `/tmp/grafema-tools/packages/mcp/src/definitions/project-tools.ts`
 **Modality**: `mcp:tool`
+
+### When to use
+
+Fetch Grafema's own usage documentation inline — query syntax, tool
+guidance, node/edge vocabulary, and "how do I…" help — without leaving
+the agent loop. Use when unsure how to phrase a Datalog/Cypher query,
+which tool answers a question, or what a node/edge type means.
+Renamed from get_documentation.
 
 ### Contract — mcp-inputSchema
 
@@ -725,316 +667,179 @@ Use this when you need to learn Datalog syntax, DSL notation, or understand avai
 |-------|------|----------|---------|-------------|
 | `topic` | `string` | yes |  | Topic: queries, types, guarantees, notation, metrics, effects, onboarding, or overview |
 
-### Behavior
+### Examples
 
-- Effects: ASYNC
-- Transitive calls: 1
-- Depth: 10
+**Get usage docs for a topic**
 
-## `mcp:tool` `get_file_overview`
+```json
+{ "topic": "queries" }
+```
 
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/context-tools.ts`
+### Gotchas
+
+- For the live type vocabulary of a specific graph (not prose docs), use `get_stats(include=["schema"])` instead.
+
+### See also
+
+- `mcp:tool:get_stats`
+- `mcp:tool:query_graph`
+
+## `mcp:tool` `get_node`
+
+**File**: `/tmp/grafema-tools/packages/mcp/src/definitions/context-tools.ts`
 **Modality**: `mcp:tool`
 
 ### When to use
 
-"What's in this file?" Returns every entity the file contains:
-classes, functions, exports, imports, top-level constants, plus
-line numbers. Use as the file-level entry point — read this first
-before diving into specific function definitions.
+The unified node inspector — single-call answer for "tell me about
+this node." `target` is a semantic ID (from find_nodes/query_graph), a
+node name, or a file path. Pick how much to return with `detail`:
+- "record"    — raw node record only (fast lookup, no edges)
+- "neighbors" — direct in/out edges grouped by type (no source code)
+- "context"   — (default) source code + full neighborhood with code context
+- "full"      — for a FUNCTION/METHOD: callers + callees, transitive chains
+Smart defaults when detail is omitted: a file path / MODULE → a file
+overview (imports, exports, classes, functions, constants); a
+CLASS/INTERFACE/typed VARIABLE → its shape (methods + properties).
+Best paired with `find_nodes` (locate) → `get_node` (zoom in).
+Replaces the old get_context / get_file_overview / get_function_details /
+get_shape / describe tools — they are now `detail` levels of one tool.
 
 ### Contract — mcp-inputSchema
 
-Understand what a file does without reading it — shows structure and relationships from the graph.
+Inspect a single node — the unified node-detail tool for the code graph (and knowledge graph).
 
-USE THIS FIRST when you need to understand a file. It replaces reading the file with
-a structured summary: imports, exports, classes, functions, variables, and how they
-connect to the rest of the codebase.
+\`target\` is a semantic ID (from find_nodes/query_graph), a node name, or a file path.
 
-Returns:
-- Imports: what modules are pulled in and which names
-- Exports: what the file exposes to others
-- Classes: with methods and their call targets
-- Functions: with what they call
-- Variables: with their assignment sources
+Set \`detail\` to choose how much to return:
+- "record" — the raw node record only (fast lookup, no edges).
+- "neighbors" — direct incoming/outgoing edges grouped by type (no source code).
+- "context" (default) — source code at the node + full graph neighborhood with code context at
+  each connected node.
+- "full" — for a FUNCTION/METHOD: comprehensive details incl. callers and callees (transitive
+  call chains).
 
-After this, use get_context with specific node IDs to deep-dive into relationships.
+Smart defaults by node kind (when detail is omitted/"context"):
+- a MODULE / file path → a file overview (imports, exports, classes, functions, variables).
+- a CLASS / INTERFACE / typed variable → its shape (methods + properties, incl. inherited).
+- otherwise → the source + neighborhood context described above.
+
+Set \`format\`:
+- "json" (default) — structured text + JSON.
+- "dsl" — compact Grafema DSL notation of the node's neighborhood (archetype-grouped operators;
+  great for LLM context windows). With format="dsl" you may pass \`perspective\` to filter
+  archetypes: "security", "data", "errors", "api", "events", and \`context_lines\` maps to DSL depth.
+
+Set \`graph\` to "knowledge" to inspect an entity in the project knowledge graph (its edges and
+metadata) instead of the code graph (default "code").
+
+Other params: \`edge_types\` (filter neighbors), \`context_lines\` (source context lines / DSL depth),
+\`file\` (disambiguate a name).
 
 | Input | Type | Optional | Default | Description |
 |-------|------|----------|---------|-------------|
-| `file` | `string` | no |  | File path (relative to project root or absolute) |
-| `include_edges` | `boolean` | yes |  | Include relationship edges like CALLS, EXTENDS (default: true). Set false for faster results. |
+| `target` | `string` | no |  | Semantic ID, node name, or file path to inspect. |
+| `file` | `string` | yes |  | File path to disambiguate a name (optional). |
+| `detail` | `string` | yes |  | record \| neighbors \| context (default) \| full |
+| `format` | `string` | yes |  | json (default) \| dsl (compact Grafema notation) |
+| `graph` | `string` | yes |  | Which graph: "code" (default) or "knowledge". |
+| `edge_types` | `array` | yes |  | Filter neighbors/context to these edge types (e.g. ["CALLS","ASSIGNED_FROM"]). |
+| `perspective` | `string` | yes |  | Archetype filter for format="dsl": security \| data \| errors \| api \| events |
+| `context_lines` | `number` | yes |  | Source context lines around each reference (default 3); for format="dsl", the notation depth. |
+
+- Allowed for `detail`: [record, neighbors, context, full]
+- Allowed for `format`: [json, dsl]
+- Allowed for `graph`: [code, knowledge]
+- Allowed for `perspective`: [security, data, errors, api, events]
 
 ### Examples
 
-**Overview of a source file**
+**Full context for a node (default)**
 
 ```json
-{ "file": "packages/cli/src/cli.ts" }
+{ "target": "FUNCTION:authenticate@src/auth.ts" }
+```
+
+**Just the record, no edges**
+
+```json
+{ "target": "UserService", "detail": "record" }
+```
+
+**Overview of a source file (file path ⇒ file overview)**
+
+```json
+{ "target": "packages/cli/src/cli.ts" }
+```
+
+**Comprehensive function details (callers + callees, transitive)**
+
+```json
+{ "target": "processOrder", "detail": "full" }
+```
+
+**Inspect a knowledge-graph entity**
+
+```json
+{ "target": "RFDB", "graph": "knowledge", "detail": "neighbors" }
 ```
 
 ### Behavior
 
-- Effects: ASYNC, UNKNOWN
+- Effects: ASYNC, IO, IO:SOCKET:CONNECT, UNKNOWN
 - Transitive calls: 1
 - Depth: 10
 
 ### Gotchas
 
-- For very large files (>200 entities) the response paginates via `limit` + `offset`. Default returns top 50.
+- "context" returns up to ~30 neighbors by default. For exhaustive traversal of a hub node (e.g. a popular utility), use `find_calls` + `trace(along="edges")` for paginated control.
+- Set `graph: "knowledge"` to inspect an entity in the project knowledge graph (its edges and metadata) instead of the code graph.
+- `format: "dsl"` renders compact Grafema notation; with it you may pass `perspective` (security|data|errors|api|events) and `context_lines` maps to DSL depth.
 
 ### See also
 
 - `mcp:tool:find_nodes`
-- `mcp:tool:describe`
-- `cli:command:tldr`
-- `cli:command:file`
-
-## `mcp:tool` `get_function_details`
-
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/context-tools.ts`
-**Modality**: `mcp:tool`
-
-### Contract — mcp-inputSchema
-
-Get comprehensive details about a function, including what it calls and who calls it.
-
-Graph structure:
-  FUNCTION -[HAS_SCOPE]-> SCOPE -[CONTAINS]-> CALL/METHOD_CALL
-  CALL -[CALLS]-> FUNCTION (target)
-
-Returns:
-- Function metadata (name, file, line, async)
-- calls: What functions/methods this function calls
-- calledBy: What functions call this one
-
-For calls array:
-- resolved=true means target function was found
-- resolved=false means unknown target (external/dynamic)
-- type='CALL' for function calls like foo()
-- type='METHOD_CALL' for method calls like obj.method()
-- depth field shows transitive level (0=direct, 1+=indirect)
-
-Use transitive=true to follow call chains (A calls B calls C).
-Max transitive depth is 5 to prevent explosion.
-
-| Input | Type | Optional | Default | Description |
-|-------|------|----------|---------|-------------|
-| `name` | `string` | no |  | Function name to look up |
-| `file` | `string` | yes |  | Optional: file path to disambiguate (partial match) |
-| `transitive` | `boolean` | yes |  | Follow call chains recursively (default: false) |
-
-### Behavior
-
-- Effects: ASYNC, UNKNOWN
-- Transitive calls: 1
-- Depth: 10
-
-## `mcp:tool` `get_knowledge_stats`
-
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/knowledge-tools.ts`
-**Modality**: `mcp:tool`
-
-### Contract — mcp-inputSchema
-
-Get statistics about the knowledge base.
-
-Use this to:
-- Check if knowledge base is loaded and has content
-- See counts by node type (DECISION, FACT, SESSION, etc.)
-- See counts by lifecycle (declared, derived, synced)
-- Identify dangling references in edges
-- See dangling code references (KB nodes pointing at code that no longer exists in the graph)
-
-Returns: total nodes, by-type counts, by-lifecycle counts, edge counts, dangling KB refs, dangling code refs.
-Code reference resolution requires the code graph to be analyzed — without it, danglingCodeRefs will be empty.
-
-### Behavior
-
-- Effects: ASYNC, UNKNOWN
-- Transitive calls: 1
-- Depth: 10
-
-## `mcp:tool` `get_neighbors`
-
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/graph-tools.ts`
-**Modality**: `mcp:tool`
-
-### Contract — mcp-inputSchema
-
-Get direct neighbors of a node — all incoming and/or outgoing edges.
-
-Returns edges grouped by type with connected node summaries.
-
-Use this when you need:
-- "What does this node connect to?" (outgoing)
-- "What connects to this node?" (incoming)
-- Simple graph exploration without Datalog
-
-Direction options:
-- outgoing: Edges FROM this node (calls, contains, depends on)
-- incoming: Edges TO this node (callers, containers, dependents)
-- both: All edges (default)
-
-Edge type filter: Pass edgeTypes to see only specific relationships.
-Omit to get all edge types.
-
-Cheaper than get_context (no code snippets). Use when you only need
-the graph structure, not source code.
-
-| Input | Type | Optional | Default | Description |
-|-------|------|----------|---------|-------------|
-| `semanticId` | `string` | no |  | Semantic ID of the node |
-| `direction` | `string` | yes |  | Edge direction: outgoing, incoming, or both (default: both) |
-| `edgeTypes` | `array` | yes |  | Filter by edge types (e.g., ["CALLS", "CONTAINS"]). Omit for all. |
-
-- Allowed for `direction`: [outgoing, incoming, both]
-
-### Behavior
-
-- Effects: ASYNC, UNKNOWN
-- Transitive calls: 1
-- Depth: 10
-
-## `mcp:tool` `get_node`
-
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/graph-tools.ts`
-**Modality**: `mcp:tool`
-
-### Contract — mcp-inputSchema
-
-Get a single node by its semantic ID with full metadata.
-
-Use this when you have a node ID from find_nodes, query_graph, or another tool
-and need the complete record.
-
-Returns: All node properties (type, name, file, line, exported) plus
-type-specific metadata (async, params, className, etc.).
-
-Use cases:
-- After find_nodes: get full details for a specific result
-- After query_graph: inspect a violation node
-- Quick lookup without full context (faster than get_context)
-
-Tip: For relationships and code context, use get_context instead.
-For just the direct edges, use get_neighbors.
-
-| Input | Type | Optional | Default | Description |
-|-------|------|----------|---------|-------------|
-| `semanticId` | `string` | no |  | Semantic ID of the node (from find_nodes, query_graph, etc.) |
-
-### Behavior
-
-- Effects: ASYNC, UNKNOWN
-- Transitive calls: 1
-- Depth: 10
-
-## `mcp:tool` `get_schema`
-
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/analysis-tools.ts`
-**Modality**: `mcp:tool`
-
-### Contract — mcp-inputSchema
-
-Get the graph schema: available node and edge types with counts.
-
-Use this to:
-- Discover what types exist: "What node types does this graph have?"
-- Validate edge types before traverse_graph or get_neighbors
-- Understand graph structure before writing Datalog queries
-- Find correct type names (e.g., "http:route" not "HTTP_ROUTE")
-
-Options:
-- type: "nodes" (node types only), "edges" (edge types only), "all" (default)
-
-Tip: Run this first when exploring a new graph to learn the available vocabulary.
-
-| Input | Type | Optional | Default | Description |
-|-------|------|----------|---------|-------------|
-| `type` | `string` | yes |  | nodes, edges, or all (default: all) |
-
-- Allowed for `type`: [nodes, edges, all]
-
-### Behavior
-
-- Effects: ASYNC, UNKNOWN
-- Transitive calls: 1
-- Depth: 10
-
-## `mcp:tool` `get_shape`
-
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/query-tools.ts`
-**Modality**: `mcp:tool`
-
-### Contract — mcp-inputSchema
-
-Get the shape (methods + properties) of a CLASS, INTERFACE, or typed variable.
-
-Shows all members including inherited ones via EXTENDS chain. For variables,
-follows INSTANCE_OF to find the type, then returns its shape.
-
-Use this to understand:
-- "What methods does GraphBackend have?" → get_shape(target="GraphBackend")
-- "What can I call on this variable?" → get_shape(target="db", file="handlers.ts")
-- "What does this interface require?" → get_shape(target="NodeRecord")
-
-Returns: members (methods + properties), extends chain, implements list.
-
-| Input | Type | Optional | Default | Description |
-|-------|------|----------|---------|-------------|
-| `target` | `string` | no |  | CLASS, INTERFACE, or variable name (or semantic ID) |
-| `file` | `string` | yes |  | File path to disambiguate (optional) |
-
-### Behavior
-
-- Effects: ASYNC, UNKNOWN
-- Transitive calls: 1
-- Depth: 10
+- `mcp:tool:find_calls`
+- `mcp:tool:trace`
 
 ## `mcp:tool` `get_stats`
 
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/analysis-tools.ts`
+**File**: `/tmp/grafema-tools/packages/mcp/src/definitions/analysis-tools.ts`
 **Modality**: `mcp:tool`
 
 ### Contract — mcp-inputSchema
 
-Get graph statistics: node and edge counts by type.
+Get graph statistics and/or schema — counts and the available node/edge type vocabulary.
 
 Use this to:
-- Verify analysis completed: nodeCount > 0 means the graph is loaded
-- Understand graph size before running expensive queries
-- See what node/edge types exist in this particular codebase
-- Debug empty results: check if expected node types are present
+- Verify analysis completed: nodeCount > 0 means the graph is loaded (call BEFORE querying).
+- Understand graph size before running expensive queries.
+- Discover the type vocabulary before writing Datalog/Cypher (e.g. "http:route" not "HTTP_ROUTE").
+- Debug empty results: check if expected node/edge types are present.
 
-Returns:
-- nodeCount, edgeCount: Total counts
-- nodesByType: {FUNCTION: 1234, CLASS: 56, ...}
-- edgesByType: {CALLS: 5678, CONTAINS: 3456, ...}
+Set \`include\` (array, default both):
+- "counts" — nodeCount, edgeCount, nodesByType, edgesByType, shard diagnostics.
+- "schema" — the node and edge type names with counts (the query vocabulary).
 
-Use BEFORE querying an unfamiliar graph to understand what data is available.
+Set \`graph\` to "knowledge" for the project knowledge graph instead of the code graph
+(default "code").
 
-### Behavior
+| Input | Type | Optional | Default | Description |
+|-------|------|----------|---------|-------------|
+| `graph` | `string` | yes |  | Which graph: "code" (default) or "knowledge". |
+| `include` | `array` | yes |  | What to include: "counts" and/or "schema" (default: both). |
 
-- Effects: ASYNC, UNKNOWN
-- Transitive calls: 1
-- Depth: 10
-
-## `mcp:tool` `GetPromptRequestSchema`
-
-**File**: `packages/mcp/src/server.ts`
-**Modality**: `mcp:tool`
-
-_No speced contract recovered for this feature._
+- Allowed for `graph`: [code, knowledge]
 
 ### Behavior
 
-- Effects: ASYNC
+- Effects: ASYNC, IO, IO:SOCKET:CONNECT, UNKNOWN
 - Transitive calls: 1
 - Depth: 10
 
 ## `mcp:tool` `list_guarantees`
 
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/guarantee-tools.ts`
+**File**: `/tmp/grafema-tools/packages/mcp/src/definitions/guarantee-tools.ts`
 **Modality**: `mcp:tool`
 
 ### Contract — mcp-inputSchema
@@ -1052,77 +857,30 @@ Use BEFORE check_guarantees to see what will be validated.
 
 ### Behavior
 
-- Effects: ASYNC, UNKNOWN
-- Transitive calls: 1
-- Depth: 10
-
-## `mcp:tool` `ListPromptsRequestSchema`
-
-**File**: `packages/mcp/src/server.ts`
-**Modality**: `mcp:tool`
-
-_No speced contract recovered for this feature._
-
-### Behavior
-
-- Effects: ASYNC
-- Transitive calls: 1
-- Depth: 10
-
-## `mcp:tool` `ListToolsRequestSchema`
-
-**File**: `packages/mcp/src/server.ts`
-**Modality**: `mcp:tool`
-
-_No speced contract recovered for this feature._
-
-### Behavior
-
-- Effects: ASYNC
-- Transitive calls: 1
-- Depth: 10
-
-## `mcp:tool` `query_decisions`
-
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/knowledge-tools.ts`
-**Modality**: `mcp:tool`
-
-### Contract — mcp-inputSchema
-
-Query architectural decisions, optionally filtered by module or status.
-
-Use this to:
-- Find decisions affecting a module: query_decisions(module="packages/cli:CLI:MODULE")
-- Find all active decisions: query_decisions(status="active")
-- Find all decisions: query_decisions()
-
-Returns decisions with status, applies_to, and full content.
-Decisions are the core artifact type — they record WHY code is the way it is.
-
-| Input | Type | Optional | Default | Description |
-|-------|------|----------|---------|-------------|
-| `module` | `string` | yes |  | Semantic address to match against applies_to (string includes matching) |
-| `status` | `string` | yes |  | Filter by decision status |
-
-- Allowed for `status`: [active, superseded, deprecated, proposed]
-
-### Behavior
-
-- Effects: ASYNC, UNKNOWN
+- Effects: ASYNC, IO, IO:SOCKET:CONNECT, UNKNOWN
 - Transitive calls: 1
 - Depth: 10
 
 ## `mcp:tool` `query_graph`
 
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/query-tools.ts`
+**File**: `/tmp/grafema-tools/packages/mcp/src/definitions/query-tools.ts`
 **Modality**: `mcp:tool`
 
 ### Contract — mcp-inputSchema
 
-Execute a Datalog or Cypher query on the code graph.
+Execute a Datalog, Cypher, or GraphQL query on a graph.
 
-Set language to "cypher" for Cypher queries (e.g., MATCH (n:FUNCTION) RETURN n.name).
-Default is Datalog.
+This is the general query tool. Set \`language\`:
+- "datalog" (default) — pattern matching with a violation/1 rule. Also use this to run a
+  one-off invariant/violation check (the rule IS the query; no separate check_invariant tool).
+- "cypher" — MATCH (n:FUNCTION) RETURN n.name
+- "graphql" — typed nested queries; pass the GraphQL document as \`query\`. Use GraphQL when
+  you need node + edges + neighbors in one shot.
+
+Set \`graph\`:
+- "code" (default) — the code graph (functions, calls, dataflow, modules…)
+- "knowledge" — the project knowledge graph (asserted facts, decisions, documents). With
+  graph="knowledge", filter by node type/domain/name (see find_nodes for the field-filter form).
 
 Available Datalog predicates:
 - type(Id, Type) / node(Id, Type) - match nodes by type
@@ -1131,134 +889,41 @@ Available Datalog predicates:
 - gt(Val, N), lt(Val, N), gte(Val, N), lte(Val, N) - numeric comparisons
 - \\+ - negation (not)
 
-NODE TYPES:
+NODE TYPES (code graph):
 - MODULE, FUNCTION, METHOD, CLASS, VARIABLE, PARAMETER
 - CALL, PROPERTY_ACCESS, METHOD_CALL, CALL_SITE
-- METRIC (performance metrics: value/unit/source in metadata, OBSERVES → MODULE)
-- ISSUE (analysis problems: category/severity/message in metadata, CONTAINS ← MODULE)
-- http:route, http:request, db:query, socketio:emit, socketio:on
+- METRIC, ISSUE, http:route, http:request, db:query, socketio:emit, socketio:on
 
 EDGE TYPES:
-- CONTAINS, CALLS, DEPENDS_ON, ASSIGNED_FROM, INSTANCE_OF, PASSES_ARGUMENT
-- OBSERVES (METRIC → MODULE, links performance metric to observed file)
+- CONTAINS, CALLS, DEPENDS_ON, ASSIGNED_FROM, INSTANCE_OF, PASSES_ARGUMENT, OBSERVES
 
 EXAMPLES:
-  violation(X) :- node(X, "MODULE").
   violation(X) :- node(X, "FUNCTION"), attr(X, "file", "src/api.js").
+  violation(X) :- node(X, "CALL"), attr(X, "name", "eval").          // one-off invariant
   violation(X) :- node(X, "CALL"), \\+ edge(X, _, "CALLS").
-  violation(F, Ms) :- node(M, "METRIC"), attr(M, "name", "parse_ms"), attr(M, "value", Ms), gte(Ms, 500), edge(M, Mod, "OBSERVES"), attr(Mod, "file", F).
 
 | Input | Type | Optional | Default | Description |
 |-------|------|----------|---------|-------------|
-| `query` | `string` | no |  | Datalog query (must define violation/1 predicate) or Cypher query (when language is "cypher"). |
-| `language` | `string` | yes |  | Query language: "datalog" (default) or "cypher" |
+| `query` | `string` | no |  | Datalog query (must define violation/1), Cypher query, or GraphQL document (per language). |
+| `language` | `string` | yes |  | Query language: "datalog" (default), "cypher", or "graphql" |
+| `graph` | `string` | yes |  | Which graph to query: "code" (default) or "knowledge". |
 | `limit` | `number` | yes |  | Max results to return (default: <expr>, max: <expr>) |
 | `offset` | `number` | yes |  | Skip first N results for pagination (default: 0) |
-| `explain` | `boolean` | yes |  | Show step-by-step query execution to debug empty results |
+| `explain` | `boolean` | yes |  | Show step-by-step query execution to debug empty results (datalog only) |
 | `count` | `boolean` | yes |  | When true, returns only the count of matching results instead of the full result list |
 
-- Allowed for `language`: [datalog, cypher]
+- Allowed for `language`: [datalog, cypher, graphql]
+- Allowed for `graph`: [code, knowledge]
 
 ### Behavior
 
-- Effects: ASYNC, UNKNOWN
-- Transitive calls: 1
-- Depth: 10
-
-## `mcp:tool` `query_graphql`
-
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/graphql-tools.ts`
-**Modality**: `mcp:tool`
-
-### Contract — mcp-inputSchema
-
-Execute a GraphQL query on the code graph.
-
-GraphQL provides typed, nested queries with pagination — complementary to Datalog.
-Use GraphQL when you need nested data in one query (node + edges + neighbors).
-Use Datalog (query_graph) for pattern matching and logical rules.
-
-SCHEMA HIGHLIGHTS:
-- node(id: ID!): Node — get a single node
-- nodes(filter: {type, name, file, exported}, first, after): NodeConnection — paginated search
-- bfs/dfs(startIds, maxDepth, edgeTypes): [ID!]! — graph traversal
-- reachability(from, to, edgeTypes, maxDepth): Boolean — path existence
-- datalog(query, limit, offset): DatalogResult — Datalog passthrough
-- findCalls(target, className): [CallInfo!]! — call graph
-- traceDataFlow(source, file, direction, maxDepth): [[String!]!]! — data flow
-- stats: GraphStats — node/edge counts
-
-Node fields: id, name, type, file, line, column, exported, metadata,
-  outgoingEdges(types), incomingEdges(types), children, parent
-
-EXAMPLE:
-  query {
-    nodes(filter: {type: "FUNCTION", file: "src/api"}, first: 5) {
-      edges {
-        node {
-          name, file, line
-          outgoingEdges(types: ["CALLS"]) {
-            edges { node { dst { name, file } } }
-          }
-        }
-      }
-      totalCount
-    }
-  }
-
-Use get_documentation(topic="graphql-schema") for the full schema.
-
-| Input | Type | Optional | Default | Description |
-|-------|------|----------|---------|-------------|
-| `query` | `string` | no |  | GraphQL query string |
-| `variables` | `object` | yes |  | Optional variables for the query (JSON object) |
-| `operationName` | `string` | yes |  | Optional operation name (when query contains multiple operations) |
-
-### Behavior
-
-- Effects: ASYNC, UNKNOWN
-- Transitive calls: 1
-- Depth: 10
-
-## `mcp:tool` `query_knowledge`
-
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/knowledge-tools.ts`
-**Modality**: `mcp:tool`
-
-### Contract — mcp-inputSchema
-
-Query knowledge nodes with filters.
-
-Use this to:
-- Find all decisions: query_knowledge(type="DECISION")
-- Search by keyword: query_knowledge(text="RFDB")
-- Find nodes in a projection: query_knowledge(projection="epistemic")
-- Find related nodes: query_knowledge(relates_to="kb:session:2026-03-06-design")
-- Combine filters: query_knowledge(type="FACT", text="auth")
-- Find facts about code that no longer exists: query_knowledge(include_dangling_only=true)
-
-Returns matching nodes with their full content, metadata, and code reference resolution status.
-Code references (relates_to, applies_to) are resolved against the current code graph — each ref shows [OK] or [DANGLING] status.
-
-| Input | Type | Optional | Default | Description |
-|-------|------|----------|---------|-------------|
-| `type` | `string` | yes |  | Filter by node type |
-| `projection` | `string` | yes |  | Filter by projection (e.g., "epistemic", "temporal") |
-| `relates_to` | `string` | yes |  | Filter by relates_to containing this semantic ID |
-| `text` | `string` | yes |  | Case-insensitive text search in body content |
-| `include_dangling_only` | `boolean` | yes |  | When true, return only nodes with code references that no longer resolve (dangling). Requires code graph to be analyzed. |
-
-- Allowed for `type`: [DECISION, FACT, SESSION, COMMIT, FILE_CHANGE, AUTHOR, TICKET, INCIDENT]
-
-### Behavior
-
-- Effects: ASYNC, UNKNOWN
+- Effects: ASYNC, IO, IO:SOCKET:CONNECT, MESSAGE_PASSING, UNKNOWN
 - Transitive calls: 1
 - Depth: 10
 
 ## `mcp:tool` `query_registry`
 
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/registry-tools.ts`
+**File**: `/tmp/grafema-tools/packages/mcp/src/definitions/registry-tools.ts`
 **Modality**: `mcp:tool`
 
 ### Contract — mcp-inputSchema
@@ -1292,13 +957,13 @@ source_type values:
 
 ### Behavior
 
-- Effects: ASYNC
+- Effects: ASYNC, UNKNOWN
 - Transitive calls: 1
 - Depth: 10
 
 ## `mcp:tool` `read_project_structure`
 
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/project-tools.ts`
+**File**: `/tmp/grafema-tools/packages/mcp/src/definitions/project-tools.ts`
 **Modality**: `mcp:tool`
 
 ### Contract — mcp-inputSchema
@@ -1320,13 +985,87 @@ packages, and entry points.
 
 ### Behavior
 
-- Effects: ASYNC
+- Effects: ASYNC, UNKNOWN
 - Transitive calls: 1
 - Depth: 10
 
+## `mcp:tool` `recall`
+
+**File**: `/tmp/grafema-tools/packages/mcp/src/definitions/enox-tools.ts`
+**Modality**: `mcp:tool`
+
+### When to use
+
+Broad "what do we know about X" retrieval over the project knowledge
+graph — combines name/content (semantic) search with graph traversal.
+Use at session start or before making decisions to check for prior art,
+known failures, and existing context. `depth` controls how far to
+traverse from matched seed nodes (1 = direct matches, 2 = + neighbors,
+3 = two hops out). `top_k` caps matched seed nodes; `domain` filters to
+one knowledge domain.
+This is the single knowledge-retrieval entry point — the old
+semantic_search (pure embedding similarity) is folded into recall; for
+exact name/type/domain filtering use `query_graph`/`find_nodes` with
+`graph: "knowledge"`.
+
+### Contract — mcp-inputSchema
+
+Broad "what do we know about X" retrieval over the project knowledge graph — combines
+name/content search with graph traversal.
+
+Use this at session start or before making decisions to check for prior art, known
+failures, and existing context.
+
+depth controls how far to traverse from matched nodes:
+- 1: direct matches only (fast)
+- 2: matches + their neighbors (good balance)
+- 3: two hops out (broader context, slower)
+
+top_k caps the number of matched seed nodes. domain filters to one knowledge domain.
+
+Example: recall(query="federation architecture", depth=2, top_k=10)
+
+| Input | Type | Optional | Default | Description |
+|-------|------|----------|---------|-------------|
+| `query` | `string` | no |  | What to recall — natural language query |
+| `depth` | `number` | yes |  | Traversal depth from matched nodes: 1-3 (default: 2) |
+| `top_k` | `number` | yes |  | Maximum number of matched seed nodes to expand (default: 10) |
+| `domain` | `string` | yes |  | Filter results to a specific knowledge domain |
+
+### Examples
+
+**What do we know about a topic?**
+
+```json
+{ "query": "federation architecture", "depth": 2, "top_k": 10 }
+```
+
+**Scope to one knowledge domain**
+
+```json
+{ "query": "compaction tradeoffs", "domain": "engineering", "depth": 2 }
+```
+
+### Behavior
+
+- Effects: ASYNC, IO, IO:SOCKET:CONNECT, UNKNOWN
+- Transitive calls: 1
+- Depth: 10
+
+### Gotchas
+
+- depth=3 is broader but slower; start at depth=2 for a good balance.
+- Results include `age_days` — older findings in fast-moving domains may be stale; check before relying on them.
+
+### See also
+
+- `mcp:tool:assert`
+- `mcp:tool:query_graph`
+- `mcp:tool:get_node`
+
 ## `mcp:tool` `report_issue`
 
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/project-tools.ts`
+**File**: `/tmp/grafema-tools/packages/mcp/src/definitions/project-tools.ts`
 **Modality**: `mcp:tool`
 
 ### Contract — mcp-inputSchema
@@ -1355,169 +1094,174 @@ Include relevant context: error messages, file paths, query used, etc.
 
 ### Behavior
 
-- Effects: ASYNC, IO, IO:HTTP:REQUEST, UNKNOWN
-- Transitive calls: 1
-- Depth: 10
-
-## `mcp:tool` `supersede_fact`
-
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/knowledge-tools.ts`
-**Modality**: `mcp:tool`
-
-### Contract — mcp-inputSchema
-
-Supersede an existing fact with a new version.
-
-Use this when:
-- A fact becomes outdated (e.g., library was upgraded, architecture changed)
-- You discover new information that replaces an existing fact
-- Correcting a previously recorded fact
-
-This creates a NEW fact and marks the OLD fact with superseded_by pointing to the new one.
-The old fact remains in the knowledge base for history.
-
-Example: supersede_fact(old_id="kb:fact:auth-uses-bcrypt", new_content="Auth now uses argon2 after migration in REG-500")
-
-| Input | Type | Optional | Default | Description |
-|-------|------|----------|---------|-------------|
-| `old_id` | `string` | no |  | Semantic ID of the fact to supersede (e.g., "kb:fact:auth-uses-bcrypt") |
-| `new_content` | `string` | no |  | Markdown content for the new fact |
-| `new_slug` | `string` | yes |  | Optional slug for the new fact (auto-generated if omitted) |
-
-### Behavior
-
 - Effects: ASYNC, UNKNOWN
 - Transitive calls: 1
 - Depth: 10
 
-## `mcp:tool` `TEST`
+## `mcp:tool` `retract`
 
-**File**: `a.ts`
-**Modality**: `mcp:tool`
-
-_No speced contract recovered for this feature._
-
-## `mcp:tool` `trace_alias`
-
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/query-tools.ts`
+**File**: `/tmp/grafema-tools/packages/mcp/src/definitions/enox-tools.ts`
 **Modality**: `mcp:tool`
 
 ### Contract — mcp-inputSchema
 
-Trace an alias chain to find the original source.
-For code like: const alias = obj.method; alias();
-This traces "alias" back to "obj.method".
+Delete one or more facts (relation edges) from the knowledge graph by fact_id. BATCH-NATIVE.
+
+Use this when assertions are wrong, outdated, or no longer relevant. Consider asserting a
+"supersedes" relation instead of retracting when you want to keep the history.
+
+fact_ids are the ids returned by \`assert\` (and visible in recall/get_node output).
+
+Example: retract(fact_ids=["a1b2c3...", "d4e5f6..."])
 
 | Input | Type | Optional | Default | Description |
 |-------|------|----------|---------|-------------|
-| `variableName` | `string` | no |  | Variable name to trace |
-| `file` | `string` | no |  | File path where the variable is defined |
+| `fact_ids` | `array` | no |  | IDs of the assertions/edges to remove. |
 
 ### Behavior
 
-- Effects: ASYNC, UNKNOWN
+- Effects: ASYNC, IO, IO:SOCKET:CONNECT, UNKNOWN
 - Transitive calls: 1
 - Depth: 10
 
-## `mcp:tool` `trace_calls`
+## `mcp:tool` `save_document`
 
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/query-tools.ts`
+**File**: `/tmp/grafema-tools/packages/mcp/src/definitions/enox-tools.ts`
 **Modality**: `mcp:tool`
 
 ### Contract — mcp-inputSchema
 
-Trace call chains from or to a function/method, following CALLS and CALLS_REMOTE edges transitively.
+Store a document or artifact as a node in the knowledge graph.
 
-Use this when you need to:
-- "What does this function eventually call?" (forward) — full call tree including cross-language hops
-- "Who calls this function?" (backward) — all callers up the stack
-- "Show the full call chain from handler to database" (forward with depth)
+Use this for longer-form content that should be persisted:
+- ADRs (Architecture Decision Records)
+- Postmortems and incident reports
+- Specifications and design documents
+- Session notes and artifacts
 
-Unlike trace_dataflow (which follows data assignments), this follows function CALLS edges:
-- CALLS: same-language function/method invocation
-- CALLS_REMOTE: cross-process/language boundary (IPC, HTTP, socket)
+The document becomes a node with its content stored. Use relates_to to
+link it to relevant entities in the graph.
 
-Returns: Indented call tree showing each hop with file:line location.
+Example: save_document(title="ADR: Federation via thick client", content="## Context\\n...", doc_type="adr", relates_to=["Grafema", "RFDB"])
 
 | Input | Type | Optional | Default | Description |
 |-------|------|----------|---------|-------------|
-| `source` | `string` | no |  | Function/method name or semantic ID to trace from |
-| `file` | `string` | yes |  | File path to disambiguate (optional) |
-| `direction` | `string` | yes |  | forward (callees), backward (callers), or both (default: forward) |
-| `max_depth` | `number` | yes |  | Maximum chain depth (default: 10) |
+| `title` | `string` | no |  | Document title (becomes the node name) |
+| `content` | `string` | no |  | Full document content (markdown supported) |
+| `doc_type` | `string` | yes |  | Document type (default: "note") |
+| `relates_to` | `array` | yes |  | Node IDs or names of related entities to link to |
 
-- Allowed for `direction`: [forward, backward, both]
+- Allowed for `doc_type`: [adr, postmortem, spec, note, artifact]
 
 ### Behavior
 
-- Effects: ASYNC, UNKNOWN
+- Effects: ASYNC, IO, IO:SOCKET:CONNECT, UNKNOWN
 - Transitive calls: 1
 - Depth: 10
 
-## `mcp:tool` `trace_dataflow`
+## `mcp:tool` `trace`
 
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/query-tools.ts`
+**File**: `/tmp/grafema-tools/packages/mcp/src/definitions/query-tools.ts`
 **Modality**: `mcp:tool`
 
 ### When to use
 
-Cross-function data trace. Forward: "where does this value flow
-next?" Backward: "where does this value come from?" Both: full
-lineage. Use for taint analysis, "is this user input ever logged",
-"is the password ever hashed before storage", "which response
-fields propagate to the cache".
+The unified transitive-traversal tool. Set `along` to pick what to follow:
+- "data"    — data flow (ASSIGNED_FROM, PASSES_ARGUMENT, FLOWS_INTO).
+              Forward: "where does this value flow next?" Backward: "where
+              does it come from?" Use for taint analysis, "is this user
+              input ever logged", "is the password hashed before storage".
+- "calls"   — the call graph (CALLS, CALLS_REMOTE), incl. cross-language
+              hops. "What does this call / who calls this?"
+- "effects" — transitive side effects (IO, MUTATION, THROW…) via effects-db.
+- "alias"   — an alias chain back to its source (const fn = obj.method).
+              Requires `file`.
+- "edges"   — generic BFS over given `edge_types` (impact analysis,
+              dependency trees, reachability). Requires edge_types.
+Set `direction`: "forward" (default), "backward", or "both"
+(data/calls/edges). Replaces trace_dataflow / trace_calls / trace_effects /
+trace_alias / traverse_graph — they are now `along` modes of one tool.
 
 ### Contract — mcp-inputSchema
 
-Trace data flow paths from or to a variable/expression.
+Trace relationships transitively from a source node — the unified traversal tool.
 
-Use this when you need to:
-- Forward trace: "Where does this value flow to?" (assignments, function calls, returns)
-- Backward trace: "Where does this value come from?" (sources, assignments)
-- Both: Full data lineage from sources to sinks
+Set \`along\` to pick what to follow:
+- "data" — data flow (ASSIGNED_FROM, PASSES_ARGUMENT, FLOWS_INTO). "Where does this value flow
+  to / come from?"
+- "calls" — the call graph (CALLS, CALLS_REMOTE), incl. cross-language hops. "What does this call /
+  who calls this?"
+- "effects" — transitive side effects through the call graph (IO, MUTATION, THROW…), using the
+  effects-db. direction is ignored (always forward).
+- "alias" — an alias chain back to its original source (const alias = obj.method; alias()).
+  requires \`file\`; direction is ignored.
+- "edges" — generic BFS following the given \`edge_types\` (impact analysis, dependency trees,
+  reachability). Requires edge_types.
 
-Direction options:
-- forward: Follow ASSIGNED_FROM, PASSES_ARGUMENT, FLOWS_INTO edges downstream
-- backward: Follow edges upstream to find data sources
-- both: Trace in both directions for complete context
+Set \`direction\`: "forward" (default), "backward", or "both" (data/calls/edges).
 
-Use cases:
-- Track tainted data: "Does user input reach database query?" (forward from input)
-- Find data sources: "What feeds this API response?" (backward from response)
-- Impact analysis: "If I change this variable, what breaks?" (forward trace)
+Set \`graph\` to "knowledge" to traverse the project knowledge graph instead of the code graph
+(generic relation BFS; pass edge_types to filter relations, default "code").
 
-Returns: List of nodes in the data flow chain with edge types and depth.
-Tip: Start with max_depth=5, increase if needed.
+Examples:
+  trace(source="userInput", along="data", direction="forward")
+  trace(source="handleRequest", along="calls", direction="backward")
+  trace(source="processOrder", along="effects")
+  trace(source="<modId>", along="edges", edge_types=["IMPORTS_FROM"], max_depth=10)
+  trace(source="RFDB", along="edges", graph="knowledge", edge_types=["depends_on","uses"])
 
 | Input | Type | Optional | Default | Description |
 |-------|------|----------|---------|-------------|
-| `source` | `string` | no |  | Variable or node ID to trace from |
-| `file` | `string` | yes |  | File path |
-| `direction` | `string` | yes |  | forward, backward, or both (default: forward) |
-| `max_depth` | `number` | yes |  | Maximum trace depth (default: 10) |
-| `limit` | `number` | yes |  | Max results (default: <expr>) |
-| `detail` | `string` | yes |  | Level of detail: summary (counts only), normal (auto-compressed, default), full (every node) |
+| `source` | `string` | no |  | Variable, function/method name, or semantic ID to trace from |
+| `file` | `string` | yes |  | File path to disambiguate (required for along="alias") |
+| `along` | `string` | yes |  | What to follow: "data", "calls", "effects", "alias", or "edges" (default: "calls") |
+| `direction` | `string` | yes |  | forward (default), backward, or both (data/calls/edges) |
+| `edge_types` | `array` | yes |  | Edge/relation types to follow for along="edges" (e.g., ["CALLS","DEPENDS_ON"]). |
+| `max_depth` | `number` | yes |  | Maximum traversal depth (default: 10; edges default 5, max 20) |
+| `detail` | `string` | yes |  | Detail level for along="data": summary, normal (default), full |
+| `graph` | `string` | yes |  | Which graph to traverse: "code" (default) or "knowledge" (along="edges"). |
+| `limit` | `number` | yes |  | Max results for along="data" (default: <expr>) |
 
+- Allowed for `along`: [data, calls, effects, alias, edges]
 - Allowed for `direction`: [forward, backward, both]
 - Allowed for `detail`: [summary, normal, full]
+- Allowed for `graph`: [code, knowledge]
 
 ### Examples
 
-**Forward trace from user input**
+**Forward data trace from user input**
 
 ```json
-{ "source": "userInput", "file": "src/api.ts", "direction": "forward" }
+{ "source": "userInput", "along": "data", "direction": "forward" }
 ```
 
-**Backward trace to find sources**
+**Backward data trace to find sources**
 
 ```json
-{ "source": "response", "file": "src/api.ts", "direction": "backward", "max_depth": 7 }
+{ "source": "response", "along": "data", "direction": "backward", "max_depth": 7 }
+```
+
+**Who calls this (call graph, backward)**
+
+```json
+{ "source": "handleRequest", "along": "calls", "direction": "backward" }
+```
+
+**Transitive side effects of a function**
+
+```json
+{ "source": "processOrder", "along": "effects" }
+```
+
+**Impact analysis over import edges**
+
+```json
+{ "source": "<modId>", "along": "edges", "edge_types": ["IMPORTS_FROM"], "max_depth": 10 }
 ```
 
 ### Behavior
 
-- Effects: ASYNC, UNKNOWN
+- Effects: ASYNC, IO, IO:SOCKET:CONNECT, UNKNOWN
 - Transitive calls: 1
 - Depth: 10
 
@@ -1525,95 +1269,17 @@ Tip: Start with max_depth=5, increase if needed.
 
 - Start with `max_depth: 5` and increase if the trace truncates. Going to 20 on a large project may take seconds.
 - Cross-process flows (HTTP, queue messages) are surfaced via `CALLS_REMOTE` bridges only when the analyzer recognized the library — use the bridge-detection list to verify coverage.
+- For along="edges" against the knowledge graph, set `graph: "knowledge"` and pass relation names in `edge_types`.
 
 ### See also
 
-- `mcp:tool:trace_alias`
 - `mcp:tool:find_calls`
+- `mcp:tool:get_node`
 - `cli:command:wtf`
-
-## `mcp:tool` `trace_effects`
-
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/query-tools.ts`
-**Modality**: `mcp:tool`
-
-### Contract — mcp-inputSchema
-
-Trace transitive side effects of a function through its call graph.
-
-For any function, traverses CALLS edges (DFS) and collects effects from leaf nodes
-using the effects-db (Node.js builtins, npm packages).
-
-Use this when you need to:
-- "What side effects does this function have?" → direct + transitive effects
-- "Does this handler do IO?" → trace shows IO:FILE:READ from fs.readFileSync at depth 3
-- "Where does the fetch() call come from?" → leaf_sources shows the origin at depth N
-- "What crosses module boundaries?" → boundary_crossings shows file-to-file effect flow
-
-Effect types: PURE, MUTATION, IO (with subtypes like IO:FILE:READ, IO:HTTP:REQUEST),
-THROW, ASYNC, NONDETERMINISTIC, UNKNOWN.
-
-UNKNOWN means: unresolved call, external package not in effects-db, or depth limit reached.
-
-Returns: direct effects, transitive effects, boundary crossings, leaf sources.
-
-| Input | Type | Optional | Default | Description |
-|-------|------|----------|---------|-------------|
-| `node` | `string` | no |  | Function/method name or semantic ID |
-| `file` | `string` | yes |  | File path to disambiguate (optional) |
-| `max_depth` | `number` | yes |  | Maximum call graph traversal depth (default: 10) |
-
-### Behavior
-
-- Effects: ASYNC, UNKNOWN
-- Transitive calls: 1
-- Depth: 10
-
-## `mcp:tool` `traverse_graph`
-
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/graph-tools.ts`
-**Modality**: `mcp:tool`
-
-### Contract — mcp-inputSchema
-
-Traverse the graph using BFS from start nodes, following specific edge types.
-
-Use this for:
-- Impact analysis: "What's affected if I change this?" (outgoing CALLS, DEPENDS_ON)
-- Dependency trees: "What does this module import?" (outgoing IMPORTS_FROM)
-- Reverse dependencies: "Who depends on this?" (incoming DEPENDS_ON)
-- Reachability: "Can data flow from X to Y?" (outgoing FLOWS_INTO, ASSIGNED_FROM)
-
-Returns nodes with depth info (0 = start, 1 = direct neighbor, 2+ = transitive).
-
-Direction:
-- outgoing: Follow edges FROM start nodes (default)
-- incoming: Follow edges TO start nodes
-
-Examples:
-- All transitive callers: traverse_graph(startNodeIds=[fnId], edgeTypes=["CALLS"], direction="incoming")
-- Module dependency tree: traverse_graph(startNodeIds=[modId], edgeTypes=["IMPORTS_FROM"], maxDepth=10)
-
-Tip: Start with maxDepth=5. Use get_schema(type="edges") to find valid edge type names.
-
-| Input | Type | Optional | Default | Description |
-|-------|------|----------|---------|-------------|
-| `startNodeIds` | `array` | no |  | Starting node IDs (semantic IDs) |
-| `edgeTypes` | `array` | no |  | Edge types to follow (e.g., ["CALLS", "DEPENDS_ON"]). Use get_schema to see available types. |
-| `maxDepth` | `number` | yes |  | Maximum traversal depth (default: 5, max: 20) |
-| `direction` | `string` | yes |  | Traversal direction: outgoing or incoming (default: outgoing) |
-
-- Allowed for `direction`: [outgoing, incoming]
-
-### Behavior
-
-- Effects: ASYNC, UNKNOWN
-- Transitive calls: 1
-- Depth: 10
 
 ## `mcp:tool` `write_config`
 
-**File**: `/Users/vadimr/grafema-worker-1/packages/mcp/src/definitions/project-tools.ts`
+**File**: `/tmp/grafema-tools/packages/mcp/src/definitions/project-tools.ts`
 **Modality**: `mcp:tool`
 
 ### Contract — mcp-inputSchema
