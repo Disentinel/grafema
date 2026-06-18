@@ -18,18 +18,22 @@
 %      the bare method name on the CALL node) — now SCOPE-precise rather than
 %      flat. Receiver-typed cross-impl dispatch stays Wave 1b
 %      (rust_cross_methods_ctor / rust_receiver_typing), deliberately NOT here.
-%   R2 '::'-suffix fallback, ONLY when R1 resolved nothing for that call
-%      (the ordered-lookup preference, encoded as \+ has_scoped): the call's
-%      path name ends with "::" ++ FUNCTION.name — assoc-fn / qualified paths
-%      (`Widget::new()`, `utils::helper()`) resolved by their last segment.
-%      A qualified path NAMES its type, so it is callable from anywhere and is
-%      NOT lexically scope-restricted — scope-walk does not apply; this arm is
-%      kept FLAT by design. The concat-built "::"-prefixed suffix enforces the
-%      segment boundary (Hs:50-54); only path calls (names containing "::") can
-%      match it. R2 is the EDB seam the downstream Rust packs depend on:
-%      rust_cross_methods_ctor / rust_receiver_typing read the committed CALLS
-%      edge of a `Type::new()` init call to type a variable — R2 produces those
-%      5374 path resolutions and they are preserved unchanged.
+%   R2 path-qualified fallback, ONLY when R1 resolved nothing for that call
+%      (the ordered-lookup preference, encoded as \+ has_scoped). A qualified
+%      path NAMES its type, so it is callable from anywhere and is NOT lexically
+%      scope-restricted — scope-walk does not apply. But it is NOT flat by the
+%      last segment alone: that over-resolved `IndexEntry::new` onto EVERY same-
+%      file `fn new` and bound std `HashSet::new` to a LOCAL `new` (#23 — the
+%      dominant resolution-is-a-function violation class). R2 is now TYPE-
+%      DISCRIMINATED in two arms (see the suffix_call clauses below for the full
+%      rationale): R2a resolves `Type::assoc` to the IMPL_BLOCK-of-that-type's
+%      associated fn (boundary-anchored so `MyArc` ≠ `Arc`; a foreign type with
+%      no local impl yields NO row — correctly unresolved); R2b keeps free-fn
+%      path calls (`utils::helper()`) flat on the last segment (module qualifiers
+%      have no node — inline mods are walked inline). R2 stays the EDB seam the
+%      downstream Rust packs depend on (rust_cross_methods_ctor /
+%      rust_receiver_typing read the committed CALLS edge of a `Type::new()` init
+%      call to type a variable) — type-discrimination only makes that seam precise.
 %
 % SCOPE-WALK (Rust scope shape, verified in rust_analyzer.rs):
 %   - A Rust FUNCTION IS its own scope node — NO separate SCOPE node for a fn
@@ -143,17 +147,51 @@ exact_scoped(C, T) :- rs_call(C, File, N), rs_fn(File, N, T), file_module(C, M),
 exact_scoped(C, T) :- rs_call(C, File, N), rs_fn(File, N, T), encl_fn(C, Fn), edge(Fn, T, "CONTAINS"), neq(Fn, T).
 has_scoped(C)      :- exact_scoped(C, T).
 
-% R2: last-'::'-segment fallback, ONLY when R1 resolved nothing (the
-% ordered-lookup preference as negation). FLAT by design (a qualified path names
-% its type — not scope-restricted). The "::"-prefixed concat suffix enforces the
-% segment boundary; the string_contains(N, "::") gate is IMPLIED by
-% ends_with(N, "::" ++ FN) and exists so the planner prunes non-path calls
-% BEFORE pairing them with every same-file FUNCTION.
+% R2: path-qualified fallback, ONLY when R1 resolved nothing (the ordered-lookup
+% preference as negation). Two TYPE-DISCRIMINATED arms — a path `Type::assoc`
+% names its type, so it must resolve to THAT type's associated fn, not to every
+% same-named fn in the file (#23 / RFD: the old flat `ends_with(N, "::"++FN)`
+% over-resolved `IndexEntry::new` to EVERY `fn new` and bound std `HashSet::new`
+% to LOCAL `new`s — the dominant resolution-is-a-function violation class, 1261
+% pairs on the self-graph; rust-calls is meant to be a function).
+%
+%   R2a — ASSOCIATED FN: the target is a method of the IMPL_BLOCK whose self-type
+%     (IMPL_BLOCK.name, rust_analyzer.rs:792) is the call's type segment. Two
+%     boundary-anchored sub-clauses so `MyArc::new` never matches `impl Arc`:
+%       leading   `Type::method`        → starts_with(N, "Type::")
+%       interior  `path::Type::method`  → string_contains(N, "::Type::")
+%     A std/foreign `HashSet::new` names no local IMPL_BLOCK → no row (correctly
+%     unresolved locally), instead of the old unsound bind to a same-named local.
+%     Same-file only (the original R2's scope), via the IMPL_BLOCK's file gate.
+%   R2b — FREE FN via path (`utils::helper()`): the target is a free function
+%     CONTAINS'd by the file MODULE (NOT an impl method). Kept FLAT on the last
+%     segment — an inline `mod` is walked inline (no MODULE node, header VISIBILITY
+%     MODEL), so the module qualifier has nothing to match against; impl methods
+%     are HAS_METHOD'd by their IMPL_BLOCK, never MODULE-CONTAINS'd, so this arm
+%     never fires for the assoc-fn over-resolution case R2a now owns.
+%
+% R2 stays the EDB seam for rust_cross_methods_ctor / rust_receiver_typing (they
+% read `Type::new()` init CALLS); type-discrimination only makes that seam precise.
+suffix_call(C, T) :-
+    rs_call(C, File, N),
+    \+ has_scoped(C),
+    node(IB, "IMPL_BLOCK"), attr(IB, "file", File), attr(IB, "name", TName), neq(TName, ""),
+    edge(IB, T, "HAS_METHOD"), node(T, "FUNCTION"), attr(T, "name", FN), neq(FN, ""),
+    concat(TName, "::", TPfx), starts_with(N, TPfx),
+    concat("::", FN, MSuf), ends_with(N, MSuf).
+suffix_call(C, T) :-
+    rs_call(C, File, N),
+    \+ has_scoped(C),
+    node(IB, "IMPL_BLOCK"), attr(IB, "file", File), attr(IB, "name", TName), neq(TName, ""),
+    edge(IB, T, "HAS_METHOD"), node(T, "FUNCTION"), attr(T, "name", FN), neq(FN, ""),
+    concat("::", TName, TInfL), concat(TInfL, "::", TInf), string_contains(N, TInf),
+    concat("::", FN, MSuf), ends_with(N, MSuf).
 suffix_call(C, T) :-
     rs_call(C, File, N),
     string_contains(N, "::"),
     \+ has_scoped(C),
-    rs_fn(File, FN, T),
+    file_module(C, M), edge(M, T, "CONTAINS"),
+    node(T, "FUNCTION"), attr(T, "name", FN), neq(FN, ""),
     concat("::", FN, Suf),
     ends_with(N, Suf).
 

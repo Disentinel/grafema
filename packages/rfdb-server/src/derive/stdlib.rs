@@ -2995,6 +2995,80 @@ mod tests {
         );
     }
 
+    /// #23 / RFD — R2 type-discrimination (the dominant resolution-is-a-function
+    /// violation fix). The old flat last-segment fallback resolved `Foo::new` to
+    /// EVERY same-file `fn new` and bound std `HashSet::new` to a LOCAL `new`.
+    /// The reworked R2a matches `Type::assoc` to the IMPL_BLOCK-of-that-type's
+    /// method only; R2b keeps free-fn path calls flat. Pinned:
+    ///  - `Foo::new` resolves to Foo::new ONLY (not Bar::new) — discrimination;
+    ///  - `crate::a::Foo::new` resolves Foo::new via the interior-segment arm;
+    ///  - `HashSet::new` (no local impl) resolves to NOTHING (was unsound);
+    ///  - `MyFoo::new` does NOT match `impl Foo` (left boundary anchored);
+    ///  - `utils::helper` still resolves the free fn `helper` (R2b preserved).
+    #[test]
+    fn rust_calls_r2_type_discriminated_assoc_fn() {
+        let mut v = FixtureStorageView::new(1);
+        named_node(&mut v, "m_x", "x", "MODULE", "x.rs");
+
+        // Two impls in one file, each with `fn new` (HAS_METHOD + CONTAINS, the
+        // real analyzer shape: rust_analyzer.rs:985 / fn-owner CONTAINS).
+        named_node(&mut v, "ib_foo", "Foo", "IMPL_BLOCK", "x.rs");
+        named_node(&mut v, "ib_bar", "Bar", "IMPL_BLOCK", "x.rs");
+        edge(&mut v, "m_x", "ib_foo", "CONTAINS");
+        edge(&mut v, "m_x", "ib_bar", "CONTAINS");
+        named_node(&mut v, "f_foo_new", "new", "FUNCTION", "x.rs");
+        named_node(&mut v, "f_bar_new", "new", "FUNCTION", "x.rs");
+        edge(&mut v, "ib_foo", "f_foo_new", "HAS_METHOD");
+        edge(&mut v, "ib_foo", "f_foo_new", "CONTAINS");
+        edge(&mut v, "ib_bar", "f_bar_new", "HAS_METHOD");
+        edge(&mut v, "ib_bar", "f_bar_new", "CONTAINS");
+
+        // A free fn for the R2b arm.
+        named_node(&mut v, "f_helper", "helper", "FUNCTION", "x.rs");
+        edge(&mut v, "m_x", "f_helper", "CONTAINS");
+
+        // Calls (MODULE-level so R1 cannot fire — no FUNCTION named the call path).
+        named_node(&mut v, "c_foo", "Foo::new", "CALL", "x.rs");
+        named_node(&mut v, "c_interior", "crate::a::Foo::new", "CALL", "x.rs");
+        named_node(&mut v, "c_hash", "HashSet::new", "CALL", "x.rs");
+        named_node(&mut v, "c_myfoo", "MyFoo::new", "CALL", "x.rs");
+        named_node(&mut v, "c_util", "utils::helper", "CALL", "x.rs");
+        for c in ["c_foo", "c_interior", "c_hash", "c_myfoo", "c_util"] {
+            edge(&mut v, "m_x", c, "CONTAINS");
+        }
+
+        let (eval, _specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            RUST_CALLS_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("rust_calls.dl evaluates");
+
+        let edges: BTreeSet<(u128, u128, String)> = triples(&eval, "rust_suffix_call");
+        let expect: BTreeSet<(u128, u128, String)> = [
+            ("c_foo", "f_foo_new"),         // R2a: ONLY Foo::new, not Bar::new
+            ("c_interior", "f_foo_new"),    // R2a interior segment
+            ("c_util", "f_helper"),         // R2b: free fn preserved
+        ]
+        .iter()
+        .map(|(c, t)| (id_of(c), id_of(t), "rust-calls".to_string()))
+        .collect();
+        assert_eq!(
+            edges, expect,
+            "R2a binds Type::assoc to that type's impl method only (Foo::new → \
+             Foo::new, NOT Bar::new); the interior path resolves Foo::new; \
+             HashSet::new (no local impl) and MyFoo::new (boundary) resolve to \
+             NOTHING; utils::helper still resolves the free fn via R2b"
+        );
+        // Explicit: the over-resolution to Bar::new is gone.
+        assert!(
+            !edges.contains(&(id_of("c_foo"), id_of("f_bar_new"), "rust-calls".to_string())),
+            "Foo::new must NOT resolve to Bar::new (the violation this fix removes)"
+        );
+    }
+
     /// Wave M (rust_calls DELTA 5): macro invocations — CALL nodes the analyzer
     /// stamps with metadata macro=true (rust_analyzer.rs:1433-1457, walk_macro;
     /// the name is the macro path WITHOUT '!') — are EXCLUDED from name
