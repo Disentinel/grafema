@@ -31,7 +31,7 @@ Welcome to the party!
 [![Benchmark](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Disentinel/fb8ae29db701dd788e1beaffb159ffef/raw/rfdb-benchmark.json)](https://github.com/Disentinel/grafema/actions/workflows/benchmark.yml)
 [![Glama](https://glama.ai/mcp/servers/Disentinel/grafema/badges/score.svg)](https://glama.ai/mcp/servers/Disentinel/grafema)
 
-> **v0.4.1** — Early access. [Changelog](./CHANGELOG.md) | [Known limitations](./KNOWN_LIMITATIONS.md)
+> **v0.5.0** — Early access. [Changelog](./CHANGELOG.md) | [Known limitations](./KNOWN_LIMITATIONS.md)
 
 ## Quick Start
 

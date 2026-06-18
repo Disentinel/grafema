@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-18
+
 ### ⚠️ BREAKING — MCP tool surface consolidated (52 → 27)
 
 The advertised MCP tool surface is consolidated from **52 to 27 focused tools**.
