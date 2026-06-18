@@ -141,13 +141,13 @@ Verification must produce evidence, not just a yes/no.
 "Confirmed: payment-service depends on Redis. Evidence: `import redis`
 in src/payment/cache.py, line 14. Last modified 2024-01-20."
 
-Prefer graph-assisted verification (`find_nodes`, `get_file_overview`,
-`find_calls`, `trace_dataflow`) over raw grep. Graph tools are faster,
+Prefer graph-assisted verification (`find_nodes`, `get_node`,
+`find_calls`, `trace`) over raw grep. Graph tools are faster,
 more accurate, and follow aliases/re-exports that text search misses.
 
 For batch verification without `tool_use` (e.g., Ollama or batch API),
-pre-compute richer context per hypothesis: `file_overview` + function
-signatures + neighbor nodes, not just grep snippets. Richer context
+pre-compute richer context per hypothesis: a `get_node` file overview +
+function signatures + neighbor nodes, not just grep snippets. Richer context
 dramatically improves verification accuracy for non-tool-using models.
 
 ### Step 4: Classify
@@ -179,8 +179,8 @@ Based on classification:
 New entities discovered during verification → push to backlog.
 
 **Merge-on-record:** Before creating a new entity, search for existing
-similar entities via substring match (semantic_search or query_graph
-with partial name). If a matching entity is found, add edges to the
+similar entities via substring match (`recall`, or `query_graph` /
+`find_nodes` with `graph="knowledge"` and a partial name). If a matching entity is found, add edges to the
 existing entity rather than creating a duplicate. Duplicates fragment
 the graph and dilute fan-in/fan-out signals.
 
@@ -365,7 +365,7 @@ Not all crawl work costs the same. Match the tool to the task.
 - Limitation: verification accuracy ~35% (too speculative on DEP/FRAGILE)
 
 ### Tier 2: Haiku API — fast, cheap ($0.02/entity)
-- Verification with native tool_use (grep, read, file_overview)
+- Verification with native tool_use (grep, read, get_node)
 - Batch API for mass crawl (50% discount, parallel processing)
 - Speed: ~30s/entity, 120 entities/hour
 - Best for: CONCEPT and PATTERN hypotheses (high confirmation rate)
@@ -410,7 +410,8 @@ Every finding belongs to one of three actionable states:
 - **domain=anomalies** — OPEN item requiring action or mitigation
 - **domain=questions** — UNRESOLVED hypothesis needing investigation
 
-Query for TODO list: `enox_query(domain="anomalies")` returns all open items.
+Query for TODO list: `recall(query="open anomalies", domain="anomalies")` (or
+`query_graph` with `graph="knowledge"`) returns all open items.
 An anomaly with an incoming `enables` edge = partially mitigated.
 An anomaly with no mitigation edges = fully open, highest priority.
 

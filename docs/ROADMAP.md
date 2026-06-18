@@ -37,7 +37,7 @@ Graph-Driven Development: from code graph to system guarantees.
 
 ### CLI & MCP
 - `grafema analyze`, `init`, `tldr`, `wtf`, `who`, `why`, `check`, `overview`, `doctor`
-- 24+ MCP tools: `find_nodes`, `find_calls`, `trace_dataflow`, `trace_alias`, `describe`, `get_shape`, `create_guarantee`, `query_graph`, …
+- 27 focused MCP tools: `find_nodes`, `find_calls`, `trace`, `get_node`, `create_guarantee`, `query_graph`, …
 
 ---
 

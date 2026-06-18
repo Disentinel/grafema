@@ -28,10 +28,10 @@ BAD:  Read 20 files hoping to find all callers of a function
 GOOD: find_calls({ name: "processPayment" }) -> get all callers in one query
 
 BAD:  Grep for variable name across files, miss aliased references
-GOOD: trace_dataflow({ source: "userInput", direction: "forward" }) -> complete data flow
+GOOD: trace({ source: "userInput", along: "data", direction: "forward" }) -> complete data flow
 
 BAD:  Read file by file to understand module dependencies
-GOOD: get_file_overview({ file: "src/api.ts" }) -> structured imports, exports, classes, functions
+GOOD: get_node({ target: "src/api.ts" }) -> structured imports, exports, classes, functions
 ```
 
 ### When to Use Grafema
@@ -52,7 +52,7 @@ GOOD: get_file_overview({ file: "src/api.ts" }) -> structured imports, exports, 
 
 ## Essential Tools (Tier 1)
 
-These 5 tools handle ~80% of queries. Start here.
+These 4 tools handle ~80% of queries. Start here.
 
 ### find_nodes — Find entities by type, name, or file
 
@@ -80,43 +80,42 @@ find_calls({ name: "query", className: "Database" })
 
 Returns call sites with file locations and whether the target is resolved.
 
-### get_function_details — Complete function info
+### get_node — The unified node inspector
 
 ```json
-get_function_details({ name: "handleRequest" })
-get_function_details({ name: "validate", file: "src/auth.ts" })
-get_function_details({ name: "processOrder", transitive: true })
+get_node({ target: "src/api.ts:handleRequest#fn" })                         // detail="context" (default): source + neighborhood
+get_node({ target: "handleRequest", detail: "full" })                       // function details: callers + callees, transitive
+get_node({ target: "src/db.ts:Database#class", detail: "neighbors", edge_types: ["CALLS"] })
+get_node({ target: "src/api.ts" })                                          // a file path ⇒ file overview
 ```
 
-**Use when:** "What does function X do?", "What does it call?", "Who calls it?"
+**Use when:** "Tell me everything about this entity", "What does this function do /
+call / get called by?", "Show me its relationships", "What's in this file?"
 
-Returns: signature, parameters, what it calls, who calls it.
-Use `transitive: true` to follow call chains (A calls B calls C, max depth 5).
+One tool replaces the old get_context / get_function_details / get_file_overview /
+get_shape / describe. Pick scope with `detail`: `record` (raw node), `neighbors`
+(edges only), `context` (default — source + neighborhood), `full` (FUNCTION/METHOD
+callers + callees + transitive chains). A file path / MODULE target defaults to a
+file overview; a CLASS / typed VARIABLE defaults to its shape. `format: "dsl"`
+renders compact Grafema notation. Use after `find_nodes` to deep-dive into a result.
 
-### get_context — Deep context for any node
-
-```json
-get_context({ semanticId: "src/api.ts:handleRequest#fn" })
-get_context({ semanticId: "src/db.ts:Database#class", edgeType: "CALLS" })
-```
-
-**Use when:** "Tell me everything about this entity", "Show me its relationships"
-
-Returns: node info, source code, ALL incoming/outgoing edges with code context.
-Use after `find_nodes` to deep-dive into a specific result.
-
-### trace_dataflow — Trace data flow
+### trace — Trace relationships transitively
 
 ```json
-trace_dataflow({ source: "userInput", file: "src/handler.ts", direction: "forward" })
-trace_dataflow({ source: "dbResult", file: "src/query.ts", direction: "backward" })
-trace_dataflow({ source: "config", direction: "both", max_depth: 5 })
+trace({ source: "userInput", along: "data", direction: "forward" })
+trace({ source: "dbResult", along: "data", direction: "backward" })
+trace({ source: "handleRequest", along: "calls", direction: "backward" })
+trace({ source: "processOrder", along: "effects" })
 ```
 
 **Use when:** "Where does this value end up?", "Where does this data come from?",
+"Who calls this / what does it call?", "What side effects does this trigger?",
 "Is user input reaching the database unsanitized?"
 
-Directions: `forward` (where does it go?), `backward` (where did it come from?), `both`.
+One tool replaces trace_dataflow / trace_calls / trace_effects / trace_alias /
+traverse_graph. Pick what to follow with `along`: `data`, `calls`, `effects`,
+`alias` (requires `file`), or `edges` (generic BFS over `edge_types`).
+Directions: `forward` (default), `backward`, `both` (data/calls/edges).
 
 ## Decision Tree
 
@@ -128,33 +127,32 @@ START: What do you need?
 |
 |-- "Find who calls function X"
 |   -> find_calls({ name: "X" })
-|   -> For full details: get_function_details({ name: "X" })
+|   -> For full details: get_node({ target: "X", detail: "full" })
 |
 |-- "Understand a specific entity deeply"
 |   -> First: find_nodes to get its semantic ID
-|   -> Then: get_context({ semanticId: "..." })
+|   -> Then: get_node({ target: "..." })
 |
 |-- "Trace data flow"
-|   -> trace_dataflow({ source, file, direction })
+|   -> trace({ source, along: "data", direction })
 |
 |-- "Understand a file's structure"
-|   -> get_file_overview({ file: "path/to/file.ts" })
+|   -> get_node({ target: "path/to/file.ts" })   (file path ⇒ file overview)
 |
 |-- "Trace an alias/re-export chain"
-|   -> trace_alias({ variableName: "alias", file: "path.ts" })
+|   -> trace({ source: "alias", along: "alias", file: "path.ts" })
 |
 |-- "Check a code rule/invariant"
-|   -> check_invariant({ rule: "violation(X) :- ..." })
+|   -> query_graph({ query: "violation(X) :- ..." })   (datalog; the rule IS the check)
 |
 |-- "Custom complex query"
 |   -> query_graph({ query: "violation(X) :- ..." })
 |   -> See references/query-patterns.md for Datalog syntax
 |
 |-- "Explore unknown codebase"
-|   -> get_stats() for high-level overview
-|   -> get_schema() for available node/edge types
+|   -> get_stats() for high-level overview + available node/edge types (include: ["schema"])
 |   -> find_nodes({ type: "MODULE" }) for module list
-|   -> get_file_overview for specific files
+|   -> get_node for specific files
 ```
 
 ## Common Workflows
@@ -162,16 +160,16 @@ START: What do you need?
 ### 1. Impact Analysis: "What breaks if I change function X?"
 
 ```
-get_function_details({ name: "X", transitive: true })
+get_node({ target: "X", detail: "full" })
 -> Check calledBy array for all callers (direct + transitive)
--> For critical callers: get_context({ semanticId }) for full picture
+-> For critical callers: get_node({ target: "..." }) for full picture
 ```
 
 ### 2. Security Audit: "Does user input reach the database?"
 
 ```
 find_nodes({ type: "http:request" })
--> For each route, trace_dataflow({ source: requestParam, direction: "forward" })
+-> For each route, trace({ source: requestParam, along: "data", direction: "forward" })
 -> Check if flow reaches db:query nodes
 -> Use find_guards to check for sanitization
 ```
@@ -181,16 +179,16 @@ find_nodes({ type: "http:request" })
 ```
 get_stats()                              -> Node/edge counts by type
 find_nodes({ type: "MODULE" })           -> All modules
-get_file_overview({ file: "src/index.ts" })  -> Entry point structure
+get_node({ target: "src/index.ts" })     -> Entry point structure (file overview)
 find_nodes({ type: "http:request" })     -> All API endpoints
 ```
 
 ### 4. Dependency Analysis: "What does module X depend on?"
 
 ```
-get_file_overview({ file: "src/service.ts" })
+get_node({ target: "src/service.ts" })
 -> Check imports section for dependencies
--> For each import: get_context for deeper relationships
+-> For each import: get_node for deeper relationships
 ```
 
 ### 5. Find Dead Code: "What functions have no callers?"
@@ -207,14 +205,14 @@ query_graph({
 the entire codebase, including indirect references you'd miss by grepping.
 
 **Don't use `query_graph` for simple lookups.** `find_nodes`, `find_calls`, and
-`get_function_details` are optimized for common queries. Reserve Datalog for
+`get_node` are optimized for common queries. Reserve Datalog for
 complex patterns (joins, transitive closure, invariant checks).
 
 **Don't skip analysis status.** If you just ran `analyze_project`, check
 `get_analysis_status` before querying — partial results are misleading.
 
-**Don't request excessive depth.** `get_context` with no filters returns everything.
-Use `edgeType` filter to focus on specific relationships (e.g., `"CALLS,ASSIGNED_FROM"`).
+**Don't request excessive depth.** `get_node` with no filters returns everything.
+Use the `edge_types` filter to focus on specific relationships (e.g., `["CALLS","ASSIGNED_FROM"]`).
 
 **Don't use Grafema for single-file questions.** If you only need to read one file,
 use your editor. Grafema shines for cross-file relationships.
@@ -236,22 +234,26 @@ query_graph({
 Available predicates: `node(Id, Type)`, `edge(Src, Dst, Type)`, `attr(Id, Name, Value)`.
 Must define `violation/1` predicate for results. Use `explain: true` to debug empty results.
 
-### get_file_overview — File-level structure
+### get_node (file overview / shape) — File and type structure
 
-Structured overview of imports, exports, classes, functions, variables with relationships.
-Recommended first step when exploring a specific file before using `get_context`.
+A file-path / MODULE target gives a structured overview of imports, exports, classes,
+functions, variables; a CLASS / typed VARIABLE target gives its shape (methods +
+properties). Recommended first step when exploring a specific file or type.
 
-### trace_alias — Resolve alias chains
+### trace (along: "alias") — Resolve alias chains
 
-For code like `const alias = obj.method; alias()` — traces "alias" back to "obj.method".
+For code like `const alias = obj.method; alias()` — traces "alias" back to
+"obj.method". Requires `file`.
 
-### get_schema — Available types
+### get_stats (include: ["schema"]) — Available types
 
-Returns all node and edge types in the graph. Use when you need exact type names.
+Returns all node and edge types in the graph (plus counts). Use when you need exact
+type names before writing a query.
 
-### check_invariant — Code rule checking
+### query_graph (datalog violation/1) — Code rule checking
 
-Check if a Datalog rule has violations. For persistent rules, use `create_guarantee`.
+Run a Datalog `violation/1` rule — the rule IS the check; there is no separate
+check_invariant tool. For persistent rules, use `create_guarantee`.
 
 ## Specialized Tools (Tier 3)
 
@@ -269,20 +271,25 @@ Check if a Datalog rule has violations. For persistent rules, use `create_guaran
 | get_analysis_status | Check analysis progress |
 | read_project_structure | Directory tree |
 | write_config | Update .grafema/config.yaml |
-| get_documentation | Grafema usage docs |
+| get_docs | Grafema usage docs |
 | report_issue | Report bugs |
+| explain_datalog | Why / why-not / what-if for derived (Datalog) facts |
+| find_shared_behaviors | Cross-modality duplicate behavior clusters |
+| assert / retract / recall | Knowledge-graph write / delete / retrieval |
+| crawl_entity / save_document | Code→knowledge bridge / document storage |
+| query_registry | Query the effects/contract registry |
 
 ## Troubleshooting
 
 **Query returns nothing?**
 1. Check analysis ran: `get_analysis_status`
-2. Check type names: `get_schema` for available types
+2. Check type names: `get_stats({ include: ["schema"] })` for available types
 3. Use `explain: true` in `query_graph` to debug
 4. Check file paths match (relative to project root)
 
 **Need help with Datalog syntax?**
 - See [references/query-patterns.md](references/query-patterns.md)
-- Use `get_documentation({ topic: "queries" })` for inline help
+- Use `get_docs({ topic: "queries" })` for inline help
 
 **Graph seems incomplete?**
 - Run `get_coverage({ path: "src/" })` to check coverage

@@ -51,17 +51,25 @@ queries).
 }
 ```
 
-After restart, the agent gains 44 tools grouped into:
+After restart, the agent gains 27 focused tools grouped into:
 
-- **Graph queries** — find_nodes, find_calls, get_neighbors, query_graph, query_graphql, get_stats, get_schema
-- **Navigation** — get_context, get_file_overview, get_function_details, find_guards, read_project_structure
-- **Data flow** — trace_alias, trace_dataflow, trace_calls, trace_effects, traverse_graph
-- **Analysis** — analyze_project, get_analysis_status, get_coverage, discover_services, get_shape
-- **Knowledge base** — add_knowledge, query_knowledge, query_decisions, get_knowledge_stats, supersede_fact
-- **Git history** — git_archaeology, git_churn, git_cochange, git_ownership
-- **Guarantees** — check_invariant, check_guarantees, create_guarantee, list_guarantees, delete_guarantee
+- **Graph queries** — query_graph (datalog/cypher/graphql), find_nodes, find_calls, get_stats
+- **Navigation** — get_node (the unified node inspector), find_guards, read_project_structure
+- **Traversal & flow** — trace (along data/calls/effects/alias/edges)
+- **Provenance** — explain_datalog (why / why-not / what-if)
+- **Analysis** — analyze_project, get_analysis_status, get_coverage, discover_services
+- **Knowledge graph** — assert, retract, recall, crawl_entity, save_document
+- **Guarantees** — check_guarantees, create_guarantee, list_guarantees, delete_guarantee
 - **Cross-modality** — find_shared_behaviors
-- **Utilities** — get_documentation, report_issue, write_config, query_registry, describe, explain
+- **Utilities** — get_docs, report_issue, write_config, query_registry
+
+> **One engine, two namespaces.** Grafema's code graph and the project
+> knowledge graph are the same engine. Most query/navigation tools
+> (`query_graph`, `find_nodes`, `get_node`, `trace`, `get_stats`) take an
+> optional `graph: "code" | "knowledge"` param — default `"code"`. The
+> knowledge-graph write tools (`assert`, `retract`, …) are the verb-named
+> surface of the **Enox assertion protocol** Grafema supports; there is no
+> `enox_` tool prefix.
 
 ---
 
@@ -71,8 +79,7 @@ After restart, the agent gains 44 tools grouped into:
 ```
 find_nodes(name="UserService", type="CLASS")
   → returns semantic ID
-get_context(nodeId="…")
-  → source snippet + neighborhood
+get_node(target="…")            # detail="context" (default): source + neighborhood
 ```
 
 ### "Who calls this function?"
@@ -83,14 +90,14 @@ find_calls(name="handleRequest")
 
 ### "Where does data come from / go?"
 ```
-trace_dataflow(source="userInput", file="src/api.ts", direction="forward")
-trace_dataflow(source="response",  file="src/api.ts", direction="backward")
+trace(source="userInput", along="data", direction="forward")
+trace(source="response",  along="data", direction="backward")
 ```
 
 ### "What's in this file?"
 ```
-get_file_overview(file="packages/cli/src/cli.ts")
-  → all exports / classes / functions / constants
+get_node(target="packages/cli/src/cli.ts")
+  → a file path / MODULE defaults to a file overview (exports / classes / functions / constants)
 ```
 
 ### "What architectural rules apply here?"

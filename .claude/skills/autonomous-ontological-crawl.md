@@ -50,21 +50,22 @@ curl -s http://localhost:11434/api/generate -d '{
 
 ### 3. Verify Each Hypothesis (Grafema MCP)
 For each hypothesis:
-- **DEP**: `find_calls(name=X)` or `get_neighbors(id=Y)` in code graph
+- **DEP**: `find_calls(name=X)` or `get_node(target=Y, detail="neighbors")` in code graph
 - **FRAGILE**: check if removal path exists, count dependents
 - **CONCEPT**: `recall(query=concept_name)` in knowledge graph
 - **PATTERN**: compare with class signatures of similar entities
 
 ### 4. Classify
-- **Confirmed**: evidence found → `add_assertion` in Enox
-- **Gap**: expected but not found → `remember` as gap, add to investigation backlog
+- **Confirmed**: evidence found → `assert` in the knowledge graph
+- **Gap**: expected but not found → `assert` as a gap, add to investigation backlog
 - **Unexpected**: found something different → high priority, investigate immediately
 - **Serendipitous**: new entity discovered → push to backlog
 
 ### 5. Record
 ```
-remember(subject=entity, fact=finding, domain=domain)
-add_assertion(from=entity, relation=type, to=target, context=evidence)
+assert(assertions=[
+  { from: entity, relation: type, to: target, context: evidence, domain: domain }
+])
 ```
 
 ### 6. Meta-check (every 10 entities)

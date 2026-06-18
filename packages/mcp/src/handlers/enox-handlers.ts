@@ -271,18 +271,32 @@ export async function handleRemember(args: RememberArgs): Promise<ToolResult> {
 export interface RecallArgs {
   query: string;
   depth?: number;
+  /** Maximum number of matched seed nodes to expand (default 10). */
+  top_k?: number;
+  /** Filter results to a specific knowledge domain (stored in the node's file field). */
+  domain?: string;
 }
 
 export async function handleRecall(args: RecallArgs): Promise<ToolResult> {
   try {
     const client = await getKnowledgeClient();
     const depth = args.depth ?? 2;
+    const topK = args.top_k ?? 10;
+    const domain = args.domain;
+
+    const inDomain = (n: WireNode): boolean => {
+      if (!domain) return true;
+      // domain is stored in the node's `file` field, also mirrored in metadata.domain
+      if (n.file === domain) return true;
+      const meta = parseMeta(n);
+      return meta.domain === domain;
+    };
 
     // Find entities: try full query first, then individual words
-    let nodes = await collectNodes(client, {
+    let nodes = (await collectNodes(client, {
       name: args.query.toLowerCase(),
       substringMatch: true,
-    });
+    })).filter(inDomain);
 
     if (nodes.length === 0) {
       const words = args.query.toLowerCase().split(/\s+/).filter(w => w.length > 3);
@@ -290,12 +304,12 @@ export async function handleRecall(args: RecallArgs): Promise<ToolResult> {
       for (const word of words.sort((a, b) => b.length - a.length)) {
         const matches = await collectNodes(client, { name: word, substringMatch: true });
         for (const m of matches) {
-          if (!seen.has(m.id) && m.nodeType !== 'NPM_SYMBOL' && m.nodeType !== 'NPM_PACKAGE') {
+          if (!seen.has(m.id) && m.nodeType !== 'NPM_SYMBOL' && m.nodeType !== 'NPM_PACKAGE' && inDomain(m)) {
             seen.add(m.id);
             nodes.push(m);
           }
         }
-        if (nodes.length >= 10) break;
+        if (nodes.length >= topK) break;
       }
     }
 
@@ -305,7 +319,7 @@ export async function handleRecall(args: RecallArgs): Promise<ToolResult> {
 
     const lines: string[] = [];
 
-    for (const node of nodes.slice(0, 10)) {
+    for (const node of nodes.slice(0, topK)) {
       const meta = parseMeta(node);
       lines.push(`## ${node.name} [${node.nodeType}]`);
       if (meta.domain) lines.push(`Domain: ${meta.domain}`);
@@ -646,6 +660,131 @@ export async function handleDeleteAssertion(args: DeleteAssertionArgs): Promise<
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     return errorResult(`Failed to delete assertion: ${msg}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Batch knowledge writes: assert / retract
+// ---------------------------------------------------------------------------
+
+export interface AssertionInput {
+  from: string;
+  relation: string;
+  to: string;
+  context?: string;
+  confidence?: number;
+  domain?: string;
+  note?: string;
+  condition?: string;
+}
+
+export interface AssertArgs {
+  assertions: AssertionInput[];
+}
+
+/**
+ * Batch-native knowledge write. Writes one or more relation edges into the
+ * knowledge graph in a single flush. This is the SINGLE assertion-write
+ * surface — `remember`/`add_assertion`/`update_assertion`/`supersede` all route
+ * here (a single fact is an array of one). Re-asserting the same
+ * {from, relation, to} upserts the edge (RFDB addEdges upserts).
+ */
+export async function handleAssert(args: AssertArgs): Promise<ToolResult> {
+  try {
+    const assertions = Array.isArray(args.assertions) ? args.assertions : [];
+    if (assertions.length === 0) {
+      return errorResult('assert requires a non-empty `assertions` array (a single fact is an array of one).');
+    }
+
+    const client = await getKnowledgeClient();
+    const lines: string[] = [`Asserted ${assertions.length} fact(s):`];
+
+    for (const a of assertions) {
+      if (!a || !a.from || !a.relation || !a.to) {
+        return errorResult('each assertion requires `from`, `relation`, and `to`.');
+      }
+      const domain = a.domain || 'general';
+      const fromId = await ensureEntity(client, a.from, 'ENTITY', domain);
+      const toId = await ensureEntity(client, a.to, 'ENTITY', domain);
+      const factId = computeFactId(fromId, a.relation, toId);
+
+      const edgeMeta: Record<string, unknown> = {
+        fact_id: factId,
+        domain,
+        created_at: nowISO(),
+      };
+      if (a.context) edgeMeta.context = a.context;
+      if (a.confidence !== undefined) edgeMeta.confidence = a.confidence;
+      if (a.note) edgeMeta.note = a.note;
+      if (a.condition) edgeMeta.condition = a.condition;
+
+      await client.addEdges([{
+        src: fromId,
+        dst: toId,
+        edgeType: a.relation as EdgeType,
+        metadata: JSON.stringify(edgeMeta),
+      }]);
+
+      lines.push(
+        `  ${fromId} -[${a.relation}]-> ${toId}  (fact_id: ${factId}, domain: ${domain}` +
+        (a.confidence !== undefined ? `, confidence: ${a.confidence}` : '') + ')'
+      );
+    }
+
+    await client.flush();
+    return textResult(lines.join('\n'));
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return errorResult(`Failed to assert: ${msg}`);
+  }
+}
+
+export interface RetractArgs {
+  fact_ids: string[];
+}
+
+/**
+ * Batch delete of knowledge edges by fact_id. Scans all edges once and removes
+ * every edge whose metadata.fact_id is in the requested set.
+ */
+export async function handleRetract(args: RetractArgs): Promise<ToolResult> {
+  try {
+    const ids = Array.isArray(args.fact_ids) ? args.fact_ids : [];
+    if (ids.length === 0) {
+      return errorResult('retract requires a non-empty `fact_ids` array.');
+    }
+    const wanted = new Set(ids);
+
+    const client = await getKnowledgeClient();
+    const allEdges = await client.getAllEdges();
+
+    const removed: string[] = [];
+    const foundIds = new Set<string>();
+    for (const edge of allEdges) {
+      const meta = parseEdgeMeta(edge);
+      const fid = meta.fact_id as string | undefined;
+      if (fid && wanted.has(fid)) {
+        await client.deleteEdge(edge.src, edge.dst, edge.edgeType as EdgeType);
+        removed.push(`  ${fid}: ${edge.src} -[${edge.edgeType}]-> ${edge.dst}`);
+        foundIds.add(fid);
+      }
+    }
+
+    if (removed.length === 0) {
+      return errorResult(`No assertions found for fact_ids: ${ids.join(', ')}.`);
+    }
+
+    await client.flush();
+
+    const missing = ids.filter(id => !foundIds.has(id));
+    const lines = [`Retracted ${removed.length} fact(s):`, ...removed];
+    if (missing.length > 0) {
+      lines.push(`Not found (skipped): ${missing.join(', ')}`);
+    }
+    return textResult(lines.join('\n'));
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return errorResult(`Failed to retract: ${msg}`);
   }
 }
 

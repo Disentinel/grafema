@@ -4,6 +4,54 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### ⚠️ BREAKING — MCP tool surface consolidated (52 → 27)
+
+The advertised MCP tool surface is consolidated from **52 to 27 focused tools**.
+Old tool names are kept as **deprecated hidden aliases for one minor** (they still
+dispatch, with arg translation + a deprecation log) but are no longer advertised
+in `ListTools` / `mcp-schema` and should not be used in new integrations.
+
+What changed:
+
+- **Merged clusters into param-driven tools.** Instead of many near-duplicate
+  tools, a few tools take a mode param:
+  - `get_node` — unified node inspector (`detail: record|neighbors|context|full`,
+    `format: json|dsl`, optional `perspective`).
+  - `trace` — unified traversal (`along: data|calls|effects|alias|edges`).
+  - `explain_datalog` — provenance/what-if (`mode: fact|gap|sim`).
+  - `query_graph` — one query tool (`language: datalog|cypher|graphql`; one-off
+    invariant/violation checks are just a Datalog `violation/1` rule).
+  - `get_stats` — counts and/or schema (`include`).
+- **Batch-native `assert`.** A single knowledge-write tool taking an array of
+  assertions (`{ assertions: [{ from, relation, to, context, confidence, domain }] }`);
+  one fact is an array of one. Relation-expressed facts like *supersede* are just
+  `assert` with `relation: "supersedes"`. Deletes go through `retract({ fact_ids })`.
+- **Code & knowledge graphs unified.** Grafema's code graph and project knowledge
+  graph are one engine, two namespaces — most query/navigation tools take an
+  optional `graph: "code" | "knowledge"` param (default `"code"`).
+- **Dropped the `enox_` prefix.** Enox is the assertion *protocol* Grafema supports,
+  not a tool namespace — knowledge tools use neutral verbs (`assert`, `retract`,
+  `recall`, …), not `enox_*` names.
+- **Param canon is snake_case** across tools: `graph`, `max_depth`, `edge_types`,
+  `context_lines`, `node_id`.
+
+Old → new mapping (old names still work as deprecated hidden aliases):
+
+| Old tool(s) | New tool | How |
+|-------------|----------|-----|
+| `get_neighbors`, `get_context`, `get_function_details`, `get_file_overview`, `get_shape`, `describe`, `enox_explore` | `get_node` | `detail`/`format`/`perspective`; `enox_explore` → `graph="knowledge"` |
+| `trace_dataflow`, `trace_calls`, `trace_effects`, `trace_alias`, `traverse_graph`, `enox_traverse` | `trace` | `along: data\|calls\|effects\|alias\|edges`, `direction`, `max_depth`, `graph` |
+| `explain_fact`, `explain_gap`, `sim_datalog` | `explain_datalog` | `mode: fact\|gap\|sim` |
+| `query_graphql`, `check_invariant`, `enox_query` | `query_graph` | `language: datalog\|cypher\|graphql`; invariant = a `violation/1` rule; `enox_query` → `graph="knowledge"` (or `find_nodes`) |
+| `get_schema`, `enox_stats` | `get_stats` | `include`, `graph` |
+| `get_documentation` | `get_docs` | — |
+| `remember`, `add_assertion`, `update_assertion`, `supersede`, `supersede_fact` | `assert` | batch array; supersede = `relation:"supersedes"` |
+| `delete_assertion` | `retract` | `{ fact_ids: [...] }` |
+| `semantic_search` | `recall` | folded into combined retrieval |
+
+Dropped from the advertised surface entirely (no replacement; remain as hidden
+aliases only): `explain`, `recent_activity`, `update_node`.
+
 ## [0.4.1] - 2026-06-14
 
 ### Highlights

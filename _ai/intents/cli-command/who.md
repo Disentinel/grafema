@@ -11,7 +11,7 @@ seeAlso:
   - mcp:tool:find_calls
 gotchas:
   - Calls through aliases (`const fn = obj.method`) are resolved via
-    the trace_alias chain — they show up correctly, unlike a plain
+    the alias chain (trace along="alias") — they show up correctly, unlike a plain
     grep.
   - Method names common to many classes (`get`, `parse`) return many
     matches; filter with `--type METHOD` and `--in <file>` to narrow.

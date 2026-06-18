@@ -80,46 +80,32 @@ Call this periodically after analyze_project to monitor progress.`,
   },
   {
     name: 'get_stats',
-    description: `Get graph statistics: node and edge counts by type.
+    description: `Get graph statistics and/or schema — counts and the available node/edge type vocabulary.
 
 Use this to:
-- Verify analysis completed: nodeCount > 0 means the graph is loaded
-- Understand graph size before running expensive queries
-- See what node/edge types exist in this particular codebase
-- Debug empty results: check if expected node types are present
+- Verify analysis completed: nodeCount > 0 means the graph is loaded (call BEFORE querying).
+- Understand graph size before running expensive queries.
+- Discover the type vocabulary before writing Datalog/Cypher (e.g. "http:route" not "HTTP_ROUTE").
+- Debug empty results: check if expected node/edge types are present.
 
-Returns:
-- nodeCount, edgeCount: Total counts
-- nodesByType: {FUNCTION: 1234, CLASS: 56, ...}
-- edgesByType: {CALLS: 5678, CONTAINS: 3456, ...}
+Set \`include\` (array, default both):
+- "counts" — nodeCount, edgeCount, nodesByType, edgesByType, shard diagnostics.
+- "schema" — the node and edge type names with counts (the query vocabulary).
 
-Use BEFORE querying an unfamiliar graph to understand what data is available.`,
-    inputSchema: {
-      type: 'object',
-      properties: {},
-    },
-  },
-  {
-    name: 'get_schema',
-    description: `Get the graph schema: available node and edge types with counts.
-
-Use this to:
-- Discover what types exist: "What node types does this graph have?"
-- Validate edge types before traverse_graph or get_neighbors
-- Understand graph structure before writing Datalog queries
-- Find correct type names (e.g., "http:route" not "HTTP_ROUTE")
-
-Options:
-- type: "nodes" (node types only), "edges" (edge types only), "all" (default)
-
-Tip: Run this first when exploring a new graph to learn the available vocabulary.`,
+Set \`graph\` to "knowledge" for the project knowledge graph instead of the code graph
+(default "code").`,
     inputSchema: {
       type: 'object',
       properties: {
-        type: {
+        graph: {
           type: 'string',
-          description: 'nodes, edges, or all (default: all)',
-          enum: ['nodes', 'edges', 'all'],
+          description: 'Which graph: "code" (default) or "knowledge".',
+          enum: ['code', 'knowledge'],
+        },
+        include: {
+          type: 'array',
+          items: { type: 'string', enum: ['counts', 'schema'] },
+          description: 'What to include: "counts" and/or "schema" (default: both).',
         },
       },
     },

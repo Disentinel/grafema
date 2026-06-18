@@ -59,7 +59,7 @@ Show what changed:
 ```
 "After [Pattern] plugin:
  +[N] edges, CogLoad for [module] dropped [X] → [Y]
- trace_dataflow now works through [Pattern] calls.
+ trace(along="data") now works through [Pattern] calls.
  
  New finding: [something interesting the new edges revealed]"
 ```

@@ -94,7 +94,7 @@ Add to `.mcp.json` in your project root:
 }
 ```
 
-Now Claude Code (or any MCP client) can query your codebase graph instead of reading files. Available tools include `find_nodes`, `find_calls`, `trace_dataflow`, `get_file_overview`, `describe`, and 30+ more.
+Now Claude Code (or any MCP client) can query your codebase graph instead of reading files. Available tools include `find_nodes`, `find_calls`, `trace`, `get_node`, `query_graph`, and 27 focused tools in total. Most query/navigation tools also reach the project knowledge graph via an optional `graph: "knowledge"` param.
 
 ## Step 5: Health Check
 

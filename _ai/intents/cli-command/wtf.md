@@ -9,7 +9,7 @@ whenToUse: |
 seeAlso:
   - cli:command:trace
   - cli:command:who
-  - mcp:tool:trace_dataflow
+  - mcp:tool:trace
 gotchas:
   - Symbol resolution falls back to fuzzy match if the literal name
     doesn't exist. Quote the symbol or pass `--no-fuzzy` for strict.

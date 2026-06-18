@@ -6,7 +6,7 @@ whenToUse: |
   API, before changing a protected method's signature.
 seeAlso:
   - cli:command:who
-  - mcp:tool:trace_dataflow
+  - mcp:tool:trace
 gotchas:
   - Reports nodes, not callers — use `who` if you want the call-site
     list. `impact` is about "what data depends on this", `who` is

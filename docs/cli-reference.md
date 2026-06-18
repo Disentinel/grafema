@@ -192,7 +192,7 @@ Running 7 guarantees from .grafema/guarantees.yaml:
   ✓ public-api-no-private-deps  (0 violations)
   ✗ effects-declared            (3 violations)
     - cli:command 'analyze'      declares no effects but PRODUCES_EFFECT FS_WRITE
-    - mcp:tool   'add_knowledge' declares no effects but PRODUCES_EFFECT FS_WRITE
+    - mcp:tool   'assert'        declares no effects but PRODUCES_EFFECT FS_WRITE
     - http:route 'POST /save'    declares no effects but PRODUCES_EFFECT DB_WRITE
   ✓ no-direct-fs-imports        (0 violations)
   ✓ test-coverage-gate          (84.2 %, threshold 80 %)
@@ -330,7 +330,7 @@ grafema describe handleRequest --depth 2
 
 - `cli:command:tldr`
 - `cli:command:get`
-- `mcp:tool:describe`
+- `mcp:tool:get_node`
 
 ## `cli:command` `doctor`
 
@@ -739,7 +739,7 @@ No node "handleRequest" found
 ### See also
 
 - `cli:command:who`
-- `mcp:tool:trace_dataflow`
+- `mcp:tool:trace`
 
 ## `cli:command` `init`
 
@@ -1275,7 +1275,7 @@ grafema tldr packages/cli/src/commands/doctor.ts
 
 - `cli:command:describe`
 - `cli:command:file`
-- `mcp:tool:get_file_overview`
+- `mcp:tool:get_node`
 
 ## `cli:command` `trace`
 
@@ -1336,8 +1336,7 @@ grafema trace "featureId from collectFeatureSnapshots"
 ### See also
 
 - `cli:command:wtf`
-- `mcp:tool:trace_dataflow`
-- `mcp:tool:trace_calls`
+- `mcp:tool:trace`
 
 ## `cli:command` `types`
 
@@ -1412,7 +1411,7 @@ grafema who handleRequest --json
 
 ### Gotchas
 
-- Calls through aliases (`const fn = obj.method`) are resolved via the trace_alias chain — they show up correctly, unlike a plain grep.
+- Calls through aliases (`const fn = obj.method`) are resolved via the alias chain (`trace(along="alias")`) — they show up correctly, unlike a plain grep.
 - Method names common to many classes (`get`, `parse`) return many matches; filter with `--type METHOD` and `--in <file>` to narrow.
 
 ### See also
@@ -1432,8 +1431,8 @@ grafema who handleRequest --json
 knowledge base for decisions, facts, and historical reasoning
 attached to a code area. Returns DECISION / FACT / SESSION nodes
 linked via `applies_to` to the queried entity. The KB grows over
-time as Claude / agents annotate the codebase via `add_knowledge`
-and `extract-knowledge`.
+time as Claude / agents annotate the codebase via the `assert`
+MCP tool and `extract-knowledge`.
 
 ### Contract — commander
 
@@ -1457,7 +1456,7 @@ grafema why authMiddleware
 No knowledge found for: "authMiddleware"
 
 No decisions or facts recorded matching this query.
-Use `add_knowledge` MCP tool to capture architectural decisions.
+Use the `assert` MCP tool to capture architectural decisions.
 ```
 *Captured 2026-04-27.*
 
@@ -1480,9 +1479,8 @@ grafema why authMiddleware --json
 
 ### See also
 
-- `mcp:tool:query_decisions`
-- `mcp:tool:query_knowledge`
-- `mcp:tool:add_knowledge`
+- `mcp:tool:recall`
+- `mcp:tool:assert`
 
 ## `cli:command` `wtf`
 
@@ -1570,4 +1568,4 @@ grafema wtf featureId --depth 15
 
 - `cli:command:trace`
 - `cli:command:who`
-- `mcp:tool:trace_dataflow`
+- `mcp:tool:trace`

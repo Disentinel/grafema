@@ -8,8 +8,7 @@ whenToUse: |
   when you need precision.
 seeAlso:
   - cli:command:wtf
-  - mcp:tool:trace_dataflow
-  - mcp:tool:trace_calls
+  - mcp:tool:trace
 gotchas:
   - Cross-language traces depend on bridge detection (the analyzer
     knows about specific HTTP / queue / RPC libraries). Bridges that

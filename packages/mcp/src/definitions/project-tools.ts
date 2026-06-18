@@ -114,7 +114,7 @@ Use AFTER analyze_project when queries return unexpected empty results.`,
     },
   },
   {
-    name: 'get_documentation',
+    name: 'get_docs',
     description: `Get documentation about Grafema usage and query syntax.
 
 Topics available:
