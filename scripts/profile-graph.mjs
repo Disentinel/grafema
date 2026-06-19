@@ -35,9 +35,16 @@ function parseArgs(argv) {
   return opts;
 }
 
-/** Run a Datalog query, returning rows as plain {var: value} objects. */
+/** Run a Datalog query (rule form `head :- body.`), returning rows as plain
+ *  {var: value} objects. Uses executeDatalog, which accepts the rule form.
+ *
+ *  NOTE: the derive-query engine binds top-level node fields (name/type) and
+ *  matches metadata attrs by CONSTANT value, but does NOT enumerate a metadata
+ *  value into an unbound variable. So we Datalog-query for node IDS + edges and
+ *  read the numeric measures (wall_ms / edges_produced / …) off the node via
+ *  getNode(), where metadata keys are spread as top-level fields. */
 async function dl(backend, query) {
-  const rows = await backend.datalogQuery(query);
+  const rows = await backend.executeDatalog(query);
   return rows.map((r) => {
     const o = {};
     for (const b of r.bindings) o[b.name] = b.value;
@@ -58,24 +65,20 @@ async function main() {
   await backend.connect();
 
   try {
-    // The run (most recent total_ms / ts).
-    const runs = await dl(
-      backend,
-      'r(R, Ts, Total) :- node(R, "profile:run"), attr(R, "ts", Ts), attr(R, "total_ms", Total).'
-    );
+    // The run node id (metadata read via getNode below).
+    const runRows = await dl(backend, 'r(R) :- node(R, "profile:run").');
+    const runNode = runRows.length ? await backend.getNode(runRows[0].R) : null;
+    const runs = runNode
+      ? [{ Ts: runNode.ts, Total: runNode.total_ms }]
+      : [];
 
-    // Every stage with its measures + phase/kind, straight from node metadata.
-    const stages = await dl(
-      backend,
-      's(S, Name, Ms, Edges, Phase, Kind) :- node(S, "profile:stage"), ' +
-        'attr(S, "name", Name), attr(S, "wall_ms", Ms), attr(S, "edges_produced", Edges), ' +
-        'attr(S, "phase", Phase), attr(S, "kind", Kind).'
-    );
+    // Stage node ids (measures read off the node via getNode).
+    const stageRows = await dl(backend, 's(S) :- node(S, "profile:stage").');
 
     // The PRECEDES route (stage execution order edges).
     const precedes = await dl(backend, 'p(A, B) :- edge(A, B, "PRECEDES").');
 
-    if (stages.length === 0) {
+    if (stageRows.length === 0) {
       console.error(
         'No profile:stage nodes found. Either analyze has not run with the ' +
           'profile subgraph enabled, or GRAFEMA_PROFILE_SUBGRAPH=0 was set.'
@@ -84,14 +87,16 @@ async function main() {
     }
 
     const byId = new Map();
-    for (const s of stages) {
-      byId.set(s.S, {
-        id: s.S,
-        name: s.Name,
-        phase: s.Phase,
-        kind: s.Kind,
-        wall_ms: Number(s.Ms) || 0,
-        edges_produced: Number(s.Edges) || 0,
+    for (const row of stageRows) {
+      const n = await backend.getNode(row.S);
+      if (!n) continue;
+      byId.set(row.S, {
+        id: row.S,
+        name: n.name,
+        phase: n.phase,
+        kind: n.kind,
+        wall_ms: Number(n.wall_ms) || 0,
+        edges_produced: Number(n.edges_produced) || 0,
       });
     }
 
