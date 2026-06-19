@@ -1860,6 +1860,7 @@ pub async fn analyze_beam_files_parallel_pooled(
     let pool_config = PoolConfig {
         command: analyzers.beam_path(),
         args: vec!["--daemon".to_string()],
+        extra_env: crate::config::beam_utf8_env(),
         ..PoolConfig::default()
     };
 

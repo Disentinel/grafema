@@ -42,6 +42,17 @@ pub struct PoolConfig {
     /// effective set (built-in retired steps ∪ user env) and pins it on the child,
     /// overriding plain env inheritance. `None` = inherit the parent env untouched.
     pub skip_resolve_steps: Option<String>,
+    /// Extra environment variables pinned on every worker child, overriding plain
+    /// env inheritance. Used to harden analyzer daemons against host-environment
+    /// quirks that corrupt the length-prefixed binary IPC framing — notably the
+    /// BEAM (Erlang/Elixir) escript, which runs with `latin1` native name encoding
+    /// when the host locale is not UTF-8. Under latin1 the Elixir VM mangles the
+    /// framed stdin protocol, the daemon never replies, and EVERY per-file request
+    /// burns the full `request_timeout` (120s) before the pool gives up — measured
+    /// at ~120s × 25 `.ev`/`.ex` files = ~3000s of wasted analysis-phase work on
+    /// grafema's own monorepo. Pinning `ELIXIR_ERL_OPTIONS=+fnu` (force UTF-8) makes
+    /// the daemon correct regardless of the host locale.
+    pub extra_env: Vec<(String, String)>,
 }
 
 impl Default for PoolConfig {
@@ -53,6 +64,7 @@ impl Default for PoolConfig {
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
             effects_db_path: None,
             skip_resolve_steps: None,
+            extra_env: Vec::new(),
         }
     }
 }
@@ -122,6 +134,13 @@ fn spawn_worker(config: &PoolConfig) -> Result<Worker> {
 
     if let Some(ref steps) = config.skip_resolve_steps {
         cmd.env("GRAFEMA_SKIP_RESOLVE_STEPS", steps);
+    }
+
+    // Pin any caller-supplied env (e.g. ELIXIR_ERL_OPTIONS=+fnu for the BEAM
+    // daemon) AFTER the named vars above so a deliberate override always wins
+    // over inherited host env.
+    for (k, v) in &config.extra_env {
+        cmd.env(k, v);
     }
 
     let mut child = cmd
@@ -471,6 +490,7 @@ mod tests {
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
             effects_db_path: None,
             skip_resolve_steps: None,
+            extra_env: Vec::new(),
         };
         let result = ProcessPool::new(config, 0);
         match result {
@@ -510,6 +530,7 @@ while True:
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
             effects_db_path: None,
             skip_resolve_steps: None,
+            extra_env: Vec::new(),
         };
 
         let pool = match ProcessPool::new(config, 2) {
@@ -559,6 +580,7 @@ while True:
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
             effects_db_path: None,
             skip_resolve_steps: None,
+            extra_env: Vec::new(),
         };
 
         let pool = match ProcessPool::new(config, 3) {
@@ -610,6 +632,7 @@ if len(hdr) == 4:
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
             effects_db_path: None,
             skip_resolve_steps: None,
+            extra_env: Vec::new(),
         };
 
         let pool = match ProcessPool::new(config, 1) {
@@ -657,6 +680,7 @@ while True:
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
             effects_db_path: None,
             skip_resolve_steps: None,
+            extra_env: Vec::new(),
         };
 
         let pool = match ProcessPool::new(config, 1) {
