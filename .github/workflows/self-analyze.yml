@@ -1,0 +1,177 @@
+# Grafema self-analyze regression guard
+#
+# WHY THIS EXISTS
+# ---------------
+# Grafema's CI runs CodeQL "Analyze" jobs — it does NOT run *Grafema's own*
+# `grafema analyze` against this repo. That gap is exactly what let a whole class
+# of self-scale bugs ship silently: a derive-phase SIGSEGV (compaction vs.
+# parallel-derive heap corruption) plus several conservative planner/eval caps
+# (max_intermediate_results, MAX_MATERIALIZED_FACTS) that only bite when grafema
+# analyzes its OWN ~714k-node / 1.33M-edge monorepo. None of that is reachable by
+# the unit/integration tests, which run on tiny fixture graphs. See
+# fix/derive-batch-cap (Disentinel/grafema#469).
+#
+# WHAT THIS JOB DOES
+# ------------------
+#   1. Builds grafema as it ships: pnpm build (TS) + cargo --release for the two
+#      native binaries the analyze pipeline spawns (rfdb-server + orchestrator).
+#   2. Runs `grafema analyze` against this repo using the checked-in dogfooding
+#      config (.grafema/config.yaml), with the env that makes self-analyze pass.
+#   3. Asserts the run reached exit 0 AND the JS enrichers actually fired — the
+#      graph must contain `mcp:tool` nodes (produced by the behavior enricher on
+#      packages/mcp/src/server.ts). A green exit with an empty graph is a silent
+#      failure we explicitly catch.
+#
+# RUNNER / SCOPE CHOICE
+# ---------------------
+# Runs the FULL monorepo self-analyze (not a scoped subset) so it exercises all
+# ~40 derive packs — including the ones that triggered the SIGSEGV
+# (@stdlib/js_local_refs) and the cap rejects (js_property_access_full). A scoped
+# single-package analyze would NOT reproduce those cross-package derive paths, so
+# scoping was rejected in favor of the full run.
+# Runner: ubuntu-latest (GitHub-hosted: 16 GB RAM / 4 vCPU). A full self-analyze
+# peaks ~7.5 GB RAM and ~14 min wall — it fits in 16 GB with headroom. The job
+# timeout covers the Rust release build (~10-15 min, cached after the first run)
+# plus the analyze. If a future graph outgrows 16 GB, switch `runs-on` to a larger
+# GitHub-hosted runner label, or scope the analyze via `--service mcp --service
+# cli` (note: --service currently takes a single name; would need a small CLI
+# change or a per-service loop).
+#
+# NON-BLOCKING — READ BEFORE MAKING REQUIRED
+# ------------------------------------------
+# This job is intentionally NON-BLOCKING (continue-on-error: true) and is NOT a
+# required status check. As of fix/derive-batch-cap the derive phase completes
+# with 0 SIGSEGV, but the run still fails LATE on an enricher RPC 60s client
+# timeout (being fixed separately on fix/enricher-rpc-timeout). Until a full
+# self-analyze is green end-to-end, this job RUNS and SURFACES the result without
+# blocking PRs.
+#
+# TODO(make-required): once fix/enricher-rpc-timeout lands and a full self-analyze
+# reaches exit 0 with mcp:tool > 0 reliably, remove `continue-on-error: true`
+# below AND add `self-analyze` to the branch-protection required checks for `main`
+# so this class of bug can never regress silently again.
+
+name: Self-Analyze
+
+on:
+  # Run on PRs so regressions surface in review, and on the fix branch itself.
+  # Deliberately NOT wired into every push to main yet (it's non-blocking and
+  # still fails late — see header). Flip this on when made required.
+  pull_request:
+    branches: [main, ai-dev]
+  push:
+    branches: [fix/derive-batch-cap, fix/ci-self-analyze]
+  workflow_dispatch: {}
+
+env:
+  NODE_VERSION: '22'
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+  # Self-analyze env from fix/derive-batch-cap — lifts the interactive deadline
+  # and the planner fact-guard so the full 40-pack derive completes at self-scale.
+  RFDB_MATERIALIZE_DEADLINE_SECS: '3600'
+  RFDB_MAX_MATERIALIZED_FACTS: '200000000'
+
+jobs:
+  self-analyze:
+    name: grafema analyze (self, non-blocking)
+    runs-on: ubuntu-latest
+    # Non-blocking: surface the result, never block a PR — see header TODO.
+    continue-on-error: true
+    # Generous: Rust release build (~10-15 min cold) + ~14 min analyze.
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            packages/rfdb-server -> target
+            packages/grafema-orchestrator -> target
+          key: self-analyze
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build TS packages
+        run: pnpm build
+
+      # The analyze pipeline spawns two native binaries; the CLI auto-detects them
+      # from packages/<pkg>/target/release/ (findRfdbBinary / findOrchestratorBinary).
+      - name: Build rfdb-server (release)
+        working-directory: packages/rfdb-server
+        run: cargo build --release
+
+      - name: Build grafema-orchestrator (release)
+        working-directory: packages/grafema-orchestrator
+        run: cargo build --release
+
+      - name: Show free memory before analyze
+        run: free -h || true
+
+      # The repo ships .grafema/config.yaml (dogfooding config, full monorepo).
+      # --clear rebuilds from scratch; --no-auto-start is NOT used so the CLI
+      # brings up the freshly-built rfdb-server itself.
+      - name: Run grafema self-analyze
+        id: analyze
+        run: |
+          set -o pipefail
+          node packages/cli/dist/cli.js analyze --clear --verbose 2>&1 | tee /tmp/self-analyze.log
+          echo "Analyze exited 0."
+
+      # Assert the JS enrichers fired: the behavior enricher emits mcp:tool nodes
+      # for packages/mcp/src/server.ts. A clean exit with an empty graph is the
+      # silent-failure mode this guard exists to catch.
+      - name: Assert JS enrichers fired (mcp:tool nodes present)
+        run: |
+          set -o pipefail
+          node packages/cli/dist/cli.js query --type "mcp:tool" "" --json -l 100000 2>/dev/null > /tmp/mcp-tool.json
+          COUNT=$(node -e "const a=JSON.parse(require('fs').readFileSync('/tmp/mcp-tool.json','utf8')); console.log(Array.isArray(a)?a.length:0)")
+          echo "mcp:tool node count: $COUNT"
+          echo "mcp:tool nodes: $COUNT" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$COUNT" -lt 1 ]; then
+            echo "::error::self-analyze produced 0 mcp:tool nodes — JS enrichers did not fire (graph is empty/incomplete)."
+            exit 1
+          fi
+          echo "OK: JS enrichers fired ($COUNT mcp:tool nodes)."
+
+      # Best-effort SIGSEGV / derive-reject canary. The derive phase must finish
+      # without a segfault or plan rejects; flag them loudly even though the job
+      # is non-blocking for now.
+      - name: Check derive phase for SIGSEGV / plan rejects
+        if: always()
+        run: |
+          if grep -qiE "SIGSEGV|signal: 11|segmentation fault" /tmp/self-analyze.log 2>/dev/null; then
+            echo "::error::SIGSEGV detected in self-analyze — derive-phase heap corruption regressed."
+            grep -iE "SIGSEGV|signal: 11|segmentation fault" /tmp/self-analyze.log | head >> "$GITHUB_STEP_SUMMARY" || true
+            exit 1
+          fi
+          if grep -qiE "plan reject|rejected by planner|MAX_MATERIALIZED_FACTS guard" /tmp/self-analyze.log 2>/dev/null; then
+            echo "::warning::Derive plan rejects present in self-analyze log (planner cap hit)."
+          fi
+          echo "No SIGSEGV in derive phase."
+
+      - name: Upload self-analyze log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: self-analyze-log
+          path: |
+            /tmp/self-analyze.log
+            /tmp/mcp-tool.json
+          retention-days: 14
