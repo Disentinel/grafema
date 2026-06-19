@@ -777,6 +777,69 @@ async fn run_stdlib_rule_packs(
     Ok(())
 }
 
+/// Build the ordered pipeline-stage list (resolve cmds + derive packs) from the
+/// profiler's in-memory event stream. This is the data behind the **profile
+/// subgraph** — derive packs in particular were previously invisible (only a
+/// "Rule pack materialized" log line). See `analyzer::profile_subgraph_to_wire`.
+fn build_profile_stages(events: &[profiler::ProfileEvent]) -> Vec<analyzer::ProfileStage> {
+    let mut stages: Vec<analyzer::ProfileStage> = Vec::new();
+    let num = |e: &profiler::ProfileEvent, k: &str| -> u64 {
+        e.field(k).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0)
+    };
+    for e in events {
+        match e.event.as_str() {
+            // Per-cmd resolver leaves (haskell/rust/java/kotlin/python/go/swift/
+            // apple-cross/jvm-cross/cpp/beam each emit one per resolve command).
+            "resolve_cmd_complete" => {
+                let name = e
+                    .field("cmd")
+                    .map(str::to_string)
+                    .unwrap_or_else(|| "resolve".to_string());
+                stages.push(analyzer::ProfileStage {
+                    phase: "resolve",
+                    kind: "resolver",
+                    name,
+                    wall_ms: num(e, "duration_ms"),
+                    edges_produced: num(e, "edges"),
+                    nodes_produced: num(e, "nodes"),
+                    order: e.elapsed_ms,
+                });
+            }
+            // JS and Ruby have no per-cmd events — their *_resolve_complete IS the leaf.
+            "js_resolve_complete" | "ruby_resolve_complete" => {
+                let name = e.event.trim_end_matches("_complete").to_string();
+                stages.push(analyzer::ProfileStage {
+                    phase: "resolve",
+                    kind: "resolver",
+                    name,
+                    wall_ms: num(e, "duration_ms"),
+                    edges_produced: num(e, "edges"),
+                    nodes_produced: num(e, "nodes"),
+                    order: e.elapsed_ms,
+                });
+            }
+            // Derive-pack stages — THE BLIND SPOT. One per @stdlib/* pack.
+            "rule_pack_complete" => {
+                let name = e
+                    .field("pack")
+                    .map(str::to_string)
+                    .unwrap_or_else(|| "pack".to_string());
+                stages.push(analyzer::ProfileStage {
+                    phase: "derive",
+                    kind: "derive_pack",
+                    name,
+                    wall_ms: num(e, "ms"),
+                    edges_produced: num(e, "edges"),
+                    nodes_produced: 0,
+                    order: e.elapsed_ms,
+                });
+            }
+            _ => {}
+        }
+    }
+    stages
+}
+
 /// Validate, stamp, tag virtual nodes, and commit a resolution output to RFDB.
 async fn commit_resolve_output(
     output: &mut plugin::PluginOutput,
@@ -2411,6 +2474,50 @@ async fn main() -> Result<()> {
                 "compact_ms" => compact_ms,
                 "total_ms" => total_ms
             );
+
+            // 10b. Emit the PROFILE SUBGRAPH (pipeline profiling as a queryable
+            // subgraph). profile:run / profile:phase / profile:stage + METRIC
+            // nodes with PART_OF / PRECEDES / OBSERVES edges, built from the
+            // profiler's in-memory event stream. The derive packs — previously
+            // visible only as a "Rule pack materialized" log line — become graph
+            // facts here, so the critical path and dead stages are GRAPH QUERIES.
+            //
+            // On by default (cheap: a few hundred nodes). Disable with
+            // GRAFEMA_PROFILE_SUBGRAPH=0.
+            let emit_profile_subgraph = std::env::var("GRAFEMA_PROFILE_SUBGRAPH")
+                .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+                .unwrap_or(true);
+            if emit_profile_subgraph {
+                if let Some(ref p) = prof {
+                    let stages = build_profile_stages(&p.events());
+                    let run = analyzer::ProfileRunSummary {
+                        total_ms,
+                        ts: profiler::iso_now(),
+                    };
+                    let (mut prof_nodes, prof_edges) =
+                        analyzer::profile_subgraph_to_wire(&run, &stages, &authority);
+                    for node in &mut prof_nodes {
+                        gc::stamp_node_metadata(&mut node.metadata, generation, "profile-subgraph");
+                    }
+                    if !prof_nodes.is_empty() {
+                        let prof_files: Vec<String> = prof_nodes
+                            .iter()
+                            .filter_map(|n| n.file.clone())
+                            .collect::<HashSet<_>>()
+                            .into_iter()
+                            .collect();
+                        match rfdb.commit_batch(&prof_files, &prof_nodes, &prof_edges, false).await {
+                            Ok(_) => tracing::info!(
+                                nodes = prof_nodes.len(),
+                                edges = prof_edges.len(),
+                                stages = stages.len(),
+                                "Profile subgraph committed (profile:run/phase/stage + METRIC)"
+                            ),
+                            Err(e) => tracing::warn!(error = %e, "Failed to commit profile subgraph (non-fatal)"),
+                        }
+                    }
+                }
+            }
 
             // 11. Summary
             println!(

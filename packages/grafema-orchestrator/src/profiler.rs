@@ -130,10 +130,38 @@ fn linux_stats() -> ProcessStats {
     ProcessStats { rss_bytes, cpu_seconds }
 }
 
+/// A captured profiler event, retained in memory so the profile subgraph
+/// (profile:run / profile:phase / profile:stage + METRIC nodes) can be built
+/// at `analysis_complete` from the same stream that is written to the JSONL.
+#[derive(Debug, Clone)]
+pub struct ProfileEvent {
+    /// Event name (e.g. `rule_pack_complete`, `resolve_cmd_complete`).
+    pub event: String,
+    /// Milliseconds since profiler creation when the event was recorded.
+    pub elapsed_ms: u128,
+    /// The key/value fields attached to the event.
+    pub fields: Vec<(String, String)>,
+}
+
+impl ProfileEvent {
+    /// Look up a field value by key.
+    pub fn field(&self, key: &str) -> Option<&str> {
+        self.fields
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+    }
+}
+
 /// JSONL profiler that writes events incrementally to a file.
+///
+/// In addition to the durable JSONL stream, the profiler keeps every event in
+/// memory (`events`) so the orchestrator can build a queryable **profile
+/// subgraph** at the end of the run — see [`Profiler::events`].
 pub struct Profiler {
     file: Mutex<File>,
     start: Instant,
+    events: Mutex<Vec<ProfileEvent>>,
 }
 
 impl Profiler {
@@ -148,7 +176,16 @@ impl Profiler {
         Ok(Self {
             file: Mutex::new(file),
             start: Instant::now(),
+            events: Mutex::new(Vec::new()),
         })
+    }
+
+    /// Snapshot of every event recorded so far, in capture order.
+    ///
+    /// The orchestrator consumes this at `analysis_complete` to build the
+    /// profile subgraph (the route + jams as graph facts, not log lines).
+    pub fn events(&self) -> Vec<ProfileEvent> {
+        self.events.lock().map(|e| e.clone()).unwrap_or_default()
     }
 
     /// Write a profiling event with arbitrary key-value fields.
@@ -181,6 +218,18 @@ impl Profiler {
             let _ = f.write_all(json.as_bytes());
             let _ = f.flush();
         }
+
+        // Retain the event in memory for profile-subgraph emission.
+        if let Ok(mut ev) = self.events.lock() {
+            ev.push(ProfileEvent {
+                event: event_name.to_string(),
+                elapsed_ms: elapsed.as_millis(),
+                fields: fields
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect(),
+            });
+        }
     }
 }
 
@@ -189,6 +238,12 @@ fn escape_json(s: &str) -> String {
     s.replace('\\', "\\\\")
         .replace('"', "\\\"")
         .replace('\n', "\\n")
+}
+
+/// Current UTC timestamp in ISO 8601 format (public wrapper, used by the
+/// orchestrator to stamp the profile:run node).
+pub fn iso_now() -> String {
+    chrono_now()
 }
 
 /// Current UTC timestamp in ISO 8601 format without external crate.

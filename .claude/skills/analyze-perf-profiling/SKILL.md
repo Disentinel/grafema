@@ -49,11 +49,28 @@ grep "Rule pack materialized" analyze.log   # per-pack: pack="@stdlib/..." ms=N 
 grep -E "Analysis complete|enricher|timed out" analyze.log
 ```
 
-Future fix (worth doing): emit the pipeline as a **profile subgraph** — `PHASE`/`STAGE` nodes +
-`METRIC` nodes (`wall_ms`, `edges_produced`, `intermediate_count`, `cap_hit`) + `PRECEDES` edges, in a
-separate profile namespace. Then critical path = a Datalog query (longest `PRECEDES` chain by `wall_ms`),
-dead stages = `wall_ms` high AND `edges_produced=0`, and limit-hits become standing graph facts +
-a CI regression gate. The `METRIC`/`OBSERVES` node+edge types already exist (per-file `parse_ms` today).
+**DONE — the profile subgraph:** `grafema analyze` now emits the pipeline as a **profile subgraph** in
+the `profile:` namespace (under synthetic file `__grafema_profile/<run_ts>`): `profile:run` /
+`profile:phase` / `profile:stage` nodes + `METRIC` nodes (`wall_ms`, `edges_produced`, `nodes_produced`)
++ `PART_OF` / `PRECEDES` / `OBSERVES` edges. The **derive packs are now stages too** — the blind spot is
+closed (no more `Rule pack materialized` log-grep). On by default (`GRAFEMA_PROFILE_SUBGRAPH=0` to
+disable). Read the route + jams + dead stages straight from the GRAPH:
+
+```bash
+node scripts/profile-graph.mjs --project .            # critical path + jams + dead stages
+node scripts/profile-graph.mjs --json
+```
+
+Critical path = longest `PRECEDES` chain by summed `wall_ms` (the helper walks it). Dead stages =
+`wall_ms` high AND `edges_produced=0` — a pure Datalog query (the CI-gate candidate):
+
+```
+dead(S, Name, Ms) :- node(S, "profile:stage"), attr(S, "edges_produced", "0"),
+                     attr(S, "wall_ms", Ms), gt(Ms, "1000"), attr(S, "name", Name).
+```
+
+Full schema + queries: `_ai/profile-subgraph.md`. The `METRIC`/`OBSERVES` node+edge types are reused
+(same as per-file `parse_ms` today).
 
 ## 4. KNOWN artificial limits — check these BEFORE assuming a real bottleneck
 

@@ -796,6 +796,225 @@ pub fn phase_metrics_to_wire(
 }
 
 // ---------------------------------------------------------------------------
+// Profile subgraph → wire nodes  (pipeline profiling as a queryable subgraph)
+// ---------------------------------------------------------------------------
+
+/// A single pipeline stage extracted from the profiler event stream: an
+/// analyzer / resolver-cmd / derive-pack / enricher with its measured wall time
+/// and edge/node production. Stages are ordered by `elapsed_ms` (execution
+/// order) within their phase; consecutive stages get a `PRECEDES` edge so the
+/// "route" can be walked, and the critical path = the longest `PRECEDES` chain
+/// summed by `wall_ms`.
+#[derive(Debug, Clone)]
+pub struct ProfileStage {
+    /// Phase this stage belongs to: "analysis" | "resolve" | "derive" | "enrich".
+    pub phase: &'static str,
+    /// Stage kind, recorded as `kind` metadata: "resolver" | "derive_pack" | "enricher".
+    pub kind: &'static str,
+    /// Stage name (e.g. "@stdlib/depends", "js-resolution").
+    pub name: String,
+    /// Wall time in ms.
+    pub wall_ms: u64,
+    /// Edges this stage produced (the dead-stage signal: high wall + 0 edges).
+    pub edges_produced: u64,
+    /// Nodes this stage produced (may be 0 / unknown for some stages).
+    pub nodes_produced: u64,
+    /// Order key — profiler `elapsed_ms` at completion (execution order).
+    pub order: u128,
+}
+
+/// Pipeline-level summary used to fill the profile:run node.
+#[derive(Debug, Clone)]
+pub struct ProfileRunSummary {
+    /// Wall-clock total for the whole analyze, ms.
+    pub total_ms: u64,
+    /// ISO timestamp of the run.
+    pub ts: String,
+}
+
+/// Build the **profile subgraph** from collected pipeline stages:
+///
+/// - one `profile:run` node (attrs `ts`, `total_ms`)
+/// - one `profile:phase` node per distinct phase, `PART_OF` → run
+/// - one `profile:stage` node per stage, `PART_OF` → its phase, with a
+///   `PRECEDES` edge to the next stage in the same phase (execution order)
+/// - `METRIC` nodes (REUSING the existing METRIC node type + `OBSERVES` edge):
+///   one per measure (`wall_ms`, `edges_produced`, `nodes_produced`) `OBSERVES`
+///   → its stage. Per-phase `wall_ms` METRIC `OBSERVES` → the phase.
+///
+/// All graph ids live under the synthetic `__grafema_profile/{run_ts}` file so
+/// they tombstone cleanly and never collide with code nodes. Node types are
+/// `profile:*` so code queries that filter by `FUNCTION`/`MODULE`/… ignore them.
+pub fn profile_subgraph_to_wire(
+    run: &ProfileRunSummary,
+    stages: &[ProfileStage],
+    authority: &str,
+) -> (Vec<WireNode>, Vec<WireEdge>) {
+    let mut nodes = Vec::new();
+    let mut edges = Vec::new();
+
+    // Stable-but-unique-per-run namespace. Using the timestamp keeps the run id
+    // deterministic within a run and tombstonable on the next analyze.
+    let run_key = run.ts.replace([':', '-'], "");
+    let synthetic_file = format!("__grafema_profile/{run_key}");
+
+    let run_id = compact_to_uri(&format!("{synthetic_file}->profile:run->{run_key}"), authority);
+
+    // --- profile:run ---
+    {
+        let mut meta = HashMap::new();
+        meta.insert("ts".to_string(), serde_json::json!(run.ts));
+        meta.insert("total_ms".to_string(), serde_json::json!(run.total_ms));
+        meta.insert("source".to_string(), serde_json::json!("profiler"));
+        nodes.push(WireNode {
+            id: run_id.clone(),
+            semantic_id: Some(run_id.clone()),
+            node_type: Some("profile:run".to_string()),
+            name: Some(format!("analyze@{}", run.ts)),
+            file: Some(synthetic_file.clone()),
+            exported: false,
+            metadata: Some(serde_json::to_string(&meta).unwrap()),
+        });
+    }
+
+    // Helper: build a METRIC node + OBSERVES edge to `observed`.
+    let push_metric =
+        |nodes: &mut Vec<WireNode>, edges: &mut Vec<WireEdge>, observed: &str, slug: &str,
+         measure: &str, value: u64, unit: &str| {
+            let metric_id = compact_to_uri(
+                &format!("{synthetic_file}->METRIC->{slug}::{measure}"),
+                authority,
+            );
+            let mut meta = HashMap::new();
+            meta.insert("value".to_string(), serde_json::json!(value));
+            meta.insert("unit".to_string(), serde_json::json!(unit));
+            meta.insert("source".to_string(), serde_json::json!("profiler"));
+            nodes.push(WireNode {
+                id: metric_id.clone(),
+                semantic_id: Some(metric_id.clone()),
+                node_type: Some("METRIC".to_string()),
+                name: Some(measure.to_string()),
+                file: Some(synthetic_file.clone()),
+                exported: false,
+                metadata: Some(serde_json::to_string(&meta).unwrap()),
+            });
+            edges.push(WireEdge {
+                src: metric_id,
+                dst: observed.to_string(),
+                edge_type: "OBSERVES".to_string(),
+                metadata: None,
+            });
+        };
+
+    // Distinct phases in first-seen order.
+    let mut phase_order: Vec<&'static str> = Vec::new();
+    for s in stages {
+        if !phase_order.contains(&s.phase) {
+            phase_order.push(s.phase);
+        }
+    }
+
+    // --- profile:phase nodes + PART_OF run ---
+    let mut phase_ids: HashMap<&'static str, String> = HashMap::new();
+    for phase in &phase_order {
+        let phase_id =
+            compact_to_uri(&format!("{synthetic_file}->profile:phase->{phase}"), authority);
+        let phase_wall: u64 = stages.iter().filter(|s| s.phase == *phase).map(|s| s.wall_ms).sum();
+        let mut meta = HashMap::new();
+        meta.insert("phase".to_string(), serde_json::json!(phase));
+        meta.insert("source".to_string(), serde_json::json!("profiler"));
+        nodes.push(WireNode {
+            id: phase_id.clone(),
+            semantic_id: Some(phase_id.clone()),
+            node_type: Some("profile:phase".to_string()),
+            name: Some(phase.to_string()),
+            file: Some(synthetic_file.clone()),
+            exported: false,
+            metadata: Some(serde_json::to_string(&meta).unwrap()),
+        });
+        edges.push(WireEdge {
+            src: phase_id.clone(),
+            dst: run_id.clone(),
+            edge_type: "PART_OF".to_string(),
+            metadata: None,
+        });
+        push_metric(&mut nodes, &mut edges, &phase_id, &format!("phase::{phase}"), "wall_ms", phase_wall, "ms");
+        phase_ids.insert(phase, phase_id);
+    }
+
+    // --- profile:stage nodes per phase, in execution order, with PRECEDES ---
+    for phase in &phase_order {
+        let mut phase_stages: Vec<&ProfileStage> =
+            stages.iter().filter(|s| s.phase == *phase).collect();
+        phase_stages.sort_by_key(|s| s.order);
+
+        let phase_id = phase_ids.get(phase).cloned().unwrap_or_default();
+        let mut prev_stage_id: Option<String> = None;
+
+        for (i, st) in phase_stages.iter().enumerate() {
+            // Slug must be unique within the run; include phase + index since a
+            // pack/cmd name could repeat across phases.
+            let slug = format!("{phase}.{i}.{}", sanitize_stage(&st.name));
+            let stage_id =
+                compact_to_uri(&format!("{synthetic_file}->profile:stage->{slug}"), authority);
+
+            let mut meta = HashMap::new();
+            meta.insert("phase".to_string(), serde_json::json!(st.phase));
+            meta.insert("kind".to_string(), serde_json::json!(st.kind));
+            meta.insert("wall_ms".to_string(), serde_json::json!(st.wall_ms));
+            meta.insert("edges_produced".to_string(), serde_json::json!(st.edges_produced));
+            meta.insert("nodes_produced".to_string(), serde_json::json!(st.nodes_produced));
+            meta.insert("order".to_string(), serde_json::json!(i));
+            meta.insert("source".to_string(), serde_json::json!("profiler"));
+
+            nodes.push(WireNode {
+                id: stage_id.clone(),
+                semantic_id: Some(stage_id.clone()),
+                node_type: Some("profile:stage".to_string()),
+                name: Some(st.name.clone()),
+                file: Some(synthetic_file.clone()),
+                exported: false,
+                metadata: Some(serde_json::to_string(&meta).unwrap()),
+            });
+
+            // PART_OF → phase
+            edges.push(WireEdge {
+                src: stage_id.clone(),
+                dst: phase_id.clone(),
+                edge_type: "PART_OF".to_string(),
+                metadata: None,
+            });
+
+            // METRIC nodes OBSERVES → stage
+            push_metric(&mut nodes, &mut edges, &stage_id, &slug, "wall_ms", st.wall_ms, "ms");
+            push_metric(&mut nodes, &mut edges, &stage_id, &slug, "edges_produced", st.edges_produced, "count");
+            push_metric(&mut nodes, &mut edges, &stage_id, &slug, "nodes_produced", st.nodes_produced, "count");
+
+            // PRECEDES from previous stage in this phase (the route).
+            if let Some(prev) = prev_stage_id.take() {
+                edges.push(WireEdge {
+                    src: prev,
+                    dst: stage_id.clone(),
+                    edge_type: "PRECEDES".to_string(),
+                    metadata: None,
+                });
+            }
+            prev_stage_id = Some(stage_id);
+        }
+    }
+
+    (nodes, edges)
+}
+
+/// Make a stage name safe for use inside a compact semantic id (no `->`, `/`,
+/// `:` that would confuse `compact_to_uri`'s file/type split).
+fn sanitize_stage(name: &str) -> String {
+    name.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
 // Workspace packages → wire nodes (Wave 3c)
 // ---------------------------------------------------------------------------
 
@@ -7266,6 +7485,61 @@ mod tests {
         assert_eq!(meta["phase"], "analysis");
         assert_eq!(meta["value"], 5000);
         assert_eq!(meta["unit"], "ms");
+    }
+
+    // profile_subgraph_to_wire tests
+
+    fn sample_stages() -> Vec<ProfileStage> {
+        vec![
+            ProfileStage { phase: "resolve", kind: "resolver", name: "js_resolve".into(), wall_ms: 11000, edges_produced: 5000, nodes_produced: 100, order: 10 },
+            ProfileStage { phase: "resolve", kind: "resolver", name: "rust-cross-method-calls".into(), wall_ms: 52000, edges_produced: 3000, nodes_produced: 0, order: 20 },
+            ProfileStage { phase: "derive", kind: "derive_pack", name: "@stdlib/depends".into(), wall_ms: 8000, edges_produced: 4000, nodes_produced: 0, order: 30 },
+            // a DEAD stage: high wall, zero edges
+            ProfileStage { phase: "derive", kind: "derive_pack", name: "@stdlib/type_inference".into(), wall_ms: 72000, edges_produced: 0, nodes_produced: 0, order: 40 },
+        ]
+    }
+
+    #[test]
+    fn profile_subgraph_emits_run_phase_stage_metric() {
+        let run = ProfileRunSummary { total_ms: 143000, ts: "2026-06-19T12:00:00Z".into() };
+        let (nodes, edges) = profile_subgraph_to_wire(&run, &sample_stages(), "example.com/repo");
+
+        let count_type = |t: &str| nodes.iter().filter(|n| n.node_type.as_deref() == Some(t)).count();
+        assert_eq!(count_type("profile:run"), 1);
+        assert_eq!(count_type("profile:phase"), 2, "resolve + derive phases");
+        assert_eq!(count_type("profile:stage"), 4);
+        // 3 stage METRICs each (wall_ms/edges_produced/nodes_produced) + 1 per-phase wall_ms.
+        assert_eq!(count_type("METRIC"), 4 * 3 + 2);
+
+        let edge_count = |t: &str| edges.iter().filter(|e| e.edge_type == t).count();
+        // PART_OF: 2 phases->run + 4 stages->phase
+        assert_eq!(edge_count("PART_OF"), 6);
+        // OBSERVES: one per METRIC
+        assert_eq!(edge_count("OBSERVES"), 4 * 3 + 2);
+        // PRECEDES: 1 within resolve (2 stages) + 1 within derive (2 stages)
+        assert_eq!(edge_count("PRECEDES"), 2);
+    }
+
+    #[test]
+    fn profile_subgraph_stage_metadata_has_dead_signal() {
+        let run = ProfileRunSummary { total_ms: 1000, ts: "2026-06-19T12:00:00Z".into() };
+        let (nodes, _) = profile_subgraph_to_wire(&run, &sample_stages(), "example.com/repo");
+        let dead = nodes.iter().find(|n| n.name.as_deref() == Some("@stdlib/type_inference")).unwrap();
+        let meta: HashMap<String, serde_json::Value> =
+            serde_json::from_str(dead.metadata.as_ref().unwrap()).unwrap();
+        assert_eq!(meta["wall_ms"], 72000);
+        assert_eq!(meta["edges_produced"], 0);
+        assert_eq!(meta["kind"], "derive_pack");
+        assert_eq!(meta["phase"], "derive");
+    }
+
+    #[test]
+    fn profile_subgraph_empty_stages_still_emits_run() {
+        let run = ProfileRunSummary { total_ms: 100, ts: "2026-06-19T12:00:00Z".into() };
+        let (nodes, edges) = profile_subgraph_to_wire(&run, &[], "example.com/repo");
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].node_type.as_deref(), Some("profile:run"));
+        assert!(edges.is_empty());
     }
 
     #[test]
