@@ -9,6 +9,7 @@
 
 use anyhow::{bail, Context, Result};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
@@ -16,6 +17,20 @@ use tokio::sync::{mpsc, Mutex};
 
 /// Maximum message size (100 MB), matching RFDB client.
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 100 * 1024 * 1024;
+
+/// Circuit-breaker threshold: once this many requests have timed out on a pool
+/// with NO successful request in between, the daemon is judged non-responsive
+/// and every subsequent `request()` fails IMMEDIATELY instead of paying the
+/// full `request_timeout` again.
+///
+/// Why: a hung analyzer daemon (e.g. the BEAM escript that never replies on
+/// this host) otherwise costs `request_timeout` (120 s) PER FILE — measured at
+/// ~25 × 120 s ≈ the entire 241 s analysis phase of grafema's self-analyze. With
+/// the breaker the damage is bounded to `threshold × request_timeout` total; the
+/// remaining files fail fast and the language is simply skipped (the same
+/// outcome it had after burning 120 s each, but in seconds). A single success
+/// resets the counter, so a merely-slow daemon never trips it.
+const TIMEOUT_CIRCUIT_BREAKER_THRESHOLD: usize = 3;
 
 /// Default per-request timeout (120 seconds).
 /// If a worker takes longer than this, the request is aborted
@@ -86,6 +101,10 @@ pub struct ProcessPool {
     workers: Vec<Mutex<Option<Worker>>>,
     available_rx: Mutex<mpsc::Receiver<usize>>,
     return_tx: mpsc::Sender<usize>,
+    /// Consecutive request timeouts with no intervening success. Drives the
+    /// non-responsive-daemon circuit breaker (see
+    /// [`TIMEOUT_CIRCUIT_BREAKER_THRESHOLD`]). Reset to 0 by any success.
+    consecutive_timeouts: AtomicUsize,
 }
 
 /// Write a length-prefixed frame to the given writer.
@@ -190,6 +209,7 @@ impl ProcessPool {
             workers,
             available_rx: Mutex::new(available_rx),
             return_tx,
+            consecutive_timeouts: AtomicUsize::new(0),
         })
     }
 
@@ -202,6 +222,22 @@ impl ProcessPool {
     /// retry also fails, the error is propagated (the worker slot is still
     /// returned to the pool).
     pub async fn request(&self, payload: &[u8]) -> Result<Vec<u8>> {
+        // Circuit breaker: a daemon that has already timed out
+        // `TIMEOUT_CIRCUIT_BREAKER_THRESHOLD` times in a row (no success between)
+        // is non-responsive. Fail this request IMMEDIATELY rather than paying the
+        // full `request_timeout` again — bounds a dead daemon's total cost to
+        // `threshold × request_timeout` instead of `num_requests × request_timeout`.
+        if self.consecutive_timeouts.load(Ordering::Relaxed)
+            >= TIMEOUT_CIRCUIT_BREAKER_THRESHOLD
+        {
+            bail!(
+                "pool circuit-open: {} consecutive {}s timeouts — daemon judged non-responsive, \
+                 failing fast (no further worker will be probed for this pool)",
+                self.consecutive_timeouts.load(Ordering::Relaxed),
+                self.config.request_timeout.as_secs()
+            );
+        }
+
         let idx = self
             .available_rx
             .lock()
@@ -214,10 +250,13 @@ impl ProcessPool {
         let result = match tokio::time::timeout(timeout, self.do_request(idx, payload)).await {
             Ok(r) => r,
             Err(_) => {
-                // Timeout: kill the stuck worker and respawn
+                // Timeout: kill the stuck worker and respawn. Count it toward the
+                // non-responsive-daemon circuit breaker.
+                let n = self.consecutive_timeouts.fetch_add(1, Ordering::Relaxed) + 1;
                 tracing::error!(
                     worker = idx,
                     timeout_secs = timeout.as_secs(),
+                    consecutive_timeouts = n,
                     "worker timed out — killing and respawning"
                 );
                 let _ = self.respawn_worker(idx).await;
@@ -228,6 +267,8 @@ impl ProcessPool {
 
         match result {
             Ok(response) => {
+                // A success proves the daemon is alive — reset the breaker.
+                self.consecutive_timeouts.store(0, Ordering::Relaxed);
                 let _ = self.return_tx.send(idx).await;
                 Ok(response)
             }
@@ -243,6 +284,7 @@ impl ProcessPool {
                         {
                             Ok(r) => r,
                             Err(_) => {
+                                self.consecutive_timeouts.fetch_add(1, Ordering::Relaxed);
                                 let _ = self.respawn_worker(idx).await;
                                 let _ = self.return_tx.send(idx).await;
                                 bail!(
@@ -253,6 +295,9 @@ impl ProcessPool {
                                 );
                             }
                         };
+                        if retry_result.is_ok() {
+                            self.consecutive_timeouts.store(0, Ordering::Relaxed);
+                        }
                         let _ = self.return_tx.send(idx).await;
                         retry_result.with_context(|| {
                             format!("retry after respawn also failed (original: {})", first_err)
@@ -552,6 +597,67 @@ while True:
         let payload2 = b"second request";
         let response2 = pool.request(payload2).await.unwrap();
         assert_eq!(response2, payload2);
+
+        pool.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_fails_fast_on_dead_daemon() {
+        // A daemon that reads the request but NEVER replies (the BEAM-escript
+        // failure mode). Every request hits the per-request timeout. After
+        // TIMEOUT_CIRCUIT_BREAKER_THRESHOLD consecutive timeouts the pool must
+        // fail subsequent requests IMMEDIATELY rather than paying the timeout.
+        let hang_script = r#"
+import sys
+# Drain stdin so the parent's write_frame completes, then hang forever.
+while True:
+    chunk = sys.stdin.buffer.read(65536)
+    if not chunk:
+        break
+"#;
+        let request_timeout = Duration::from_millis(300);
+        let config = PoolConfig {
+            command: "python3".to_string(),
+            args: vec!["-c".to_string(), hang_script.to_string()],
+            max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
+            request_timeout,
+            effects_db_path: None,
+            skip_resolve_steps: None,
+            extra_env: Vec::new(),
+        };
+
+        let pool = match ProcessPool::new(config, 1) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("Skipping test (python3 not available): {}", e);
+                return;
+            }
+        };
+
+        // The first THRESHOLD requests each pay ~request_timeout and increment
+        // the breaker.
+        for _ in 0..TIMEOUT_CIRCUIT_BREAKER_THRESHOLD {
+            let r = pool.request(b"req").await;
+            assert!(r.is_err(), "a hung daemon request must time out");
+        }
+
+        // The next request must trip the breaker and return ALMOST INSTANTLY,
+        // well under a single request_timeout.
+        let start = std::time::Instant::now();
+        let r = pool.request(b"req").await;
+        let elapsed = start.elapsed();
+        assert!(r.is_err(), "circuit-open request must fail");
+        assert!(
+            r.unwrap_err().to_string().contains("circuit-open"),
+            "expected circuit-open error after threshold timeouts"
+        );
+        assert!(
+            elapsed < request_timeout,
+            "circuit-open request should fail fast ({:?}) — much faster than the \
+             {:?} per-request timeout",
+            elapsed,
+            request_timeout
+        );
 
         pool.shutdown().await;
     }

@@ -47,12 +47,49 @@ The `--daemon` never replies, so **every** per-file request burns the full
 The same `.ex` file analyzed in single-shot (non-daemon) mode runs in **309 ms**,
 confirming the cost is the daemon-encoding hang, not BEAM parsing.
 
-**Fix (this branch):** new `PoolConfig.extra_env` pinned on the BEAM analyzer
-and resolve pools, setting `ELIXIR_ERL_OPTIONS=+fnu` (force UTF-8) +
-`LANG`/`LC_ALL=C.UTF-8`. This makes the daemon correct **regardless of host
-locale**, eliminating the 120 s-per-file timeout. The fix is portable (it does
-not depend on the operator's locale being right) and zero-risk for non-BEAM
-analyzers (the env is only applied to the BEAM pools).
+### What this branch lands
+
+1. **`PoolConfig.extra_env`** pinned on the BEAM analyzer and resolve pools,
+   setting `ELIXIR_ERL_OPTIONS=+fnu` (force UTF-8) + `LANG`/`LC_ALL=C.UTF-8`.
+   This removes the `latin1` mis-encoding (verified: 0 latin1 warnings after).
+   NOTE — on grafema-dev the daemon STILL fails to reply even with UTF-8 (it
+   raises `{:error, :enxio}`, a deeper escript-daemon problem independent of
+   locale), so on THIS host the encoding fix alone does not recover the time.
+   It is still correct and portable: on a host where the daemon's only problem
+   is the locale, it fully fixes the 120 s/file timeout.
+
+2. **Pool circuit breaker** (`TIMEOUT_CIRCUIT_BREAKER_THRESHOLD`, tested):
+   after N consecutive request timeouts with no success, a pool fails every
+   further `request()` IMMEDIATELY instead of paying `request_timeout` again. A
+   single success resets it. This bounds a dead daemon to `N × request_timeout`
+   on any **serial** daemon request stream — i.e. the resolve daemons (JS
+   per-file `resolve-file`, the single-worker Haskell/Rust/Java/BEAM resolve
+   pools — exactly the REG-1128 N+1 hot path). Zero-risk: a merely-slow daemon
+   never trips it.
+
+   LIMITATION (measured): the breaker does NOT help the **parallel analysis
+   fan-out**. `analyze_*_files_parallel_pooled` dispatches all files
+   concurrently, so every request passes the breaker check at t≈0 (counter
+   still 0) and they all time out together at t=120 s — the counter climbs
+   1→2→…→N but no request arrives AFTER the trip point. Confirmed on the BEAM
+   analysis fan-out: counter reached 17, 0 circuit-open events, analysis still
+   241 s.
+
+### Precise plan for the parallel analysis fan-out (deferred, larger change)
+
+Add a **sequential liveness probe** at the top of each
+`analyze_<lang>_files_parallel_pooled` (there are ~3 structurally-identical
+fan-out blocks — BEAM, and the Java/Kotlin/Go/Swift/ObjC parser+analyzer pools):
+analyze `files[0]` synchronously BEFORE fanning out the rest. A healthy daemon
+answers in <1 s and the normal parallel path proceeds (re-using the probe's
+result for file 0). A dead daemon fails the probe in ONE `request_timeout` and
+the remaining files are returned failed-fast — bounding a dead daemon to a
+single 120 s timeout instead of `ceil(N / jobs)` waves of it (25 `.ex` files:
+241 s → ~120 s, and with a shorter probe timeout, → seconds). RISK: the
+fan-out blocks are shared across languages; the probe must be added carefully
+(unique per-call-site context) and must re-use `files[0]`'s result so file 0
+is not double-analyzed. Each call site needs its own before/after timing check.
+Effort: medium; reward: removes the analysis phase's single largest sink.
 
 ## Derive phase (180 s / 40 packs) — DOCUMENTED PLAN, not landed here
 
