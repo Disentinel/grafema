@@ -943,6 +943,8 @@ pub fn profile_subgraph_to_wire(
     }
 
     // --- profile:stage nodes per phase, in execution order, with PRECEDES ---
+    // Collected for the REQUIRES/headroom pass below: (phase, kind, name, wall_ms, id).
+    let mut stage_index: Vec<(&'static str, &'static str, String, u64, String)> = Vec::new();
     for phase in &phase_order {
         let mut phase_stages: Vec<&ProfileStage> =
             stages.iter().filter(|s| s.phase == *phase).collect();
@@ -999,8 +1001,138 @@ pub fn profile_subgraph_to_wire(
                     metadata: None,
                 });
             }
+            stage_index.push((st.phase, st.kind, st.name.clone(), st.wall_ms, stage_id.clone()));
             prev_stage_id = Some(stage_id);
         }
+    }
+
+    // ===== REQUIRES edges (true data dependencies) + parallelism headroom =====
+    // PRECEDES (above) is the ACTUAL sequential execution order. REQUIRES is the
+    // SUBSET of it that is a real data dependency. A PRECEDES edge with no REQUIRES
+    // backing it = ran sequentially but DIDN'T NEED TO = parallelism headroom.
+    //
+    // Dependency model (CONSERVATIVE — over-approximates deps, so headroom is a
+    // floor, never an over-promise):
+    //   * resolver / enrich_step stages  → independent (no REQUIRES) — fully parallel
+    //   * derive language verticals       → internal chain (consecutive same-vertical
+    //                                        packs); feature-detect packs (http_routes,
+    //                                        entrypoint_features, axum) chain only their
+    //                                        own nodes->edges
+    //   * derive shared sinks (depends / method_calls / shape_verifier) → require the
+    //     LAST pack of every language vertical; shape_verifier also requires method_calls
+    //   * enrich shape-tracker            → requires type-inference (declared depends_on)
+    // headroom(phase) = Σ wall_ms − critical path (longest REQUIRES-weighted chain).
+    fn derive_group(name: &str) -> &'static str {
+        let n = name.strip_prefix("@stdlib/").unwrap_or(name);
+        if n.starts_with("js_http_routes")
+            || n.starts_with("js_entrypoint_features")
+            || n == "axum_routes"
+        {
+            return "featuredetect";
+        }
+        match n {
+            "depends" | "method_calls" | "shape_verifier" => "sink",
+            _ if n.starts_with("js") => "js",
+            _ if n.starts_with("rust") => "rust",
+            _ if n.starts_with("haskell") => "haskell",
+            _ if n.starts_with("java") => "java",
+            _ if n.starts_with("kotlin") => "kotlin",
+            _ if n.starts_with("go") => "go",
+            _ => "other",
+        }
+    }
+
+    let mut total_headroom: u64 = 0;
+    for phase in &phase_order {
+        let idxs: Vec<usize> = stage_index
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.0 == *phase)
+            .map(|(i, _)| i)
+            .collect();
+        if idxs.is_empty() {
+            continue;
+        }
+        // requires[k] = positions (within idxs) that stage k depends on.
+        let mut requires: Vec<Vec<usize>> = vec![Vec::new(); idxs.len()];
+        let mut vertical_last: HashMap<&'static str, usize> = HashMap::new();
+        let mut prev_in_group: HashMap<&'static str, usize> = HashMap::new();
+        let mut method_calls_pos: Option<usize> = None;
+        for (k, &gi) in idxs.iter().enumerate() {
+            let kind = stage_index[gi].1;
+            let name = stage_index[gi].2.clone();
+            match kind {
+                "derive_pack" => {
+                    let g = derive_group(&name);
+                    if g == "sink" {
+                        let mut deps: Vec<usize> = vertical_last.values().copied().collect();
+                        deps.sort_unstable();
+                        requires[k].extend(deps);
+                        let n = name.strip_prefix("@stdlib/").unwrap_or(&name);
+                        if n == "method_calls" {
+                            method_calls_pos = Some(k);
+                        }
+                        if n == "shape_verifier" {
+                            if let Some(mk) = method_calls_pos {
+                                requires[k].push(mk);
+                            }
+                        }
+                    } else {
+                        if let Some(&pk) = prev_in_group.get(g) {
+                            requires[k].push(pk);
+                        }
+                        prev_in_group.insert(g, k);
+                        vertical_last.insert(g, k);
+                    }
+                }
+                "enrich_plugin" => {
+                    if name == "shape-tracker" {
+                        if let Some((tk, _)) = idxs
+                            .iter()
+                            .enumerate()
+                            .find(|(_, &gj)| stage_index[gj].2 == "type-inference")
+                        {
+                            requires[k].push(tk);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        // critical path (idxs in execution order; REQUIRES only points backward).
+        let mut cp: Vec<u64> = vec![0; idxs.len()];
+        let mut total: u64 = 0;
+        for k in 0..idxs.len() {
+            let w = stage_index[idxs[k]].3;
+            total += w;
+            let dep_max = requires[k].iter().map(|&d| cp[d]).max().unwrap_or(0);
+            cp[k] = w + dep_max;
+        }
+        let critical = cp.iter().copied().max().unwrap_or(0);
+        let headroom = total.saturating_sub(critical);
+        total_headroom += headroom;
+        // emit REQUIRES edges (consumer --REQUIRES--> producer).
+        for k in 0..idxs.len() {
+            let consumer = stage_index[idxs[k]].4.clone();
+            for &d in &requires[k] {
+                let producer = stage_index[idxs[d]].4.clone();
+                edges.push(WireEdge {
+                    src: consumer.clone(),
+                    dst: producer,
+                    edge_type: "REQUIRES".to_string(),
+                    metadata: None,
+                });
+            }
+        }
+        if let Some(pid) = phase_ids.get(phase).cloned() {
+            push_metric(&mut nodes, &mut edges, &pid, &format!("phase::{phase}"), "critical_path_ms", critical, "ms");
+            push_metric(&mut nodes, &mut edges, &pid, &format!("phase::{phase}"), "parallelism_headroom_ms", headroom, "ms");
+        }
+    }
+    // run-level total: how much wall-clock the whole pipeline could shed if every
+    // independent stage that ran sequentially ran in parallel instead.
+    if !stages.is_empty() {
+        push_metric(&mut nodes, &mut edges, &run_id, "run", "parallelism_headroom_ms", total_headroom, "ms");
     }
 
     (nodes, edges)
@@ -7493,9 +7625,10 @@ mod tests {
         vec![
             ProfileStage { phase: "resolve", kind: "resolver", name: "js_resolve".into(), wall_ms: 11000, edges_produced: 5000, nodes_produced: 100, order: 10 },
             ProfileStage { phase: "resolve", kind: "resolver", name: "rust-cross-method-calls".into(), wall_ms: 52000, edges_produced: 3000, nodes_produced: 0, order: 20 },
-            ProfileStage { phase: "derive", kind: "derive_pack", name: "@stdlib/depends".into(), wall_ms: 8000, edges_produced: 4000, nodes_produced: 0, order: 30 },
-            // a DEAD stage: high wall, zero edges
-            ProfileStage { phase: "derive", kind: "derive_pack", name: "@stdlib/type_inference".into(), wall_ms: 72000, edges_produced: 0, nodes_produced: 0, order: 40 },
+            // a DEAD stage: high wall, zero edges (a producer vertical)
+            ProfileStage { phase: "derive", kind: "derive_pack", name: "@stdlib/type_inference".into(), wall_ms: 72000, edges_produced: 0, nodes_produced: 0, order: 30 },
+            // depends is a SINK — runs last, consumes the verticals above
+            ProfileStage { phase: "derive", kind: "derive_pack", name: "@stdlib/depends".into(), wall_ms: 8000, edges_produced: 4000, nodes_produced: 0, order: 40 },
         ]
     }
 
@@ -7508,16 +7641,41 @@ mod tests {
         assert_eq!(count_type("profile:run"), 1);
         assert_eq!(count_type("profile:phase"), 2, "resolve + derive phases");
         assert_eq!(count_type("profile:stage"), 4);
-        // 3 stage METRICs each (wall_ms/edges_produced/nodes_produced) + 1 per-phase wall_ms.
-        assert_eq!(count_type("METRIC"), 4 * 3 + 2);
+        // 3 stage METRICs each (wall_ms/edges_produced/nodes_produced) + 1 per-phase
+        // wall_ms + 2 per-phase headroom (critical_path_ms/parallelism_headroom_ms)
+        // + 1 run-level parallelism_headroom_ms.
+        assert_eq!(count_type("METRIC"), 4 * 3 + 2 + 2 * 2 + 1);
 
         let edge_count = |t: &str| edges.iter().filter(|e| e.edge_type == t).count();
         // PART_OF: 2 phases->run + 4 stages->phase
         assert_eq!(edge_count("PART_OF"), 6);
         // OBSERVES: one per METRIC
-        assert_eq!(edge_count("OBSERVES"), 4 * 3 + 2);
+        assert_eq!(edge_count("OBSERVES"), 4 * 3 + 2 + 2 * 2 + 1);
         // PRECEDES: 1 within resolve (2 stages) + 1 within derive (2 stages)
         assert_eq!(edge_count("PRECEDES"), 2);
+        // REQUIRES: depends (sink) requires the last vertical pack (type_inference);
+        // the two resolvers are independent (no REQUIRES) — that IS the headroom.
+        assert_eq!(edge_count("REQUIRES"), 1);
+    }
+
+    #[test]
+    fn profile_subgraph_emits_parallelism_headroom() {
+        let run = ProfileRunSummary { total_ms: 143000, ts: "2026-06-19T12:00:00Z".into() };
+        let (nodes, _) = profile_subgraph_to_wire(&run, &sample_stages(), "example.com/repo");
+        let metric_val = |id_frag: &str| -> u64 {
+            let n = nodes.iter().find(|n|
+                n.node_type.as_deref() == Some("METRIC")
+                && n.id.contains(id_frag)).expect("metric exists");
+            let m: HashMap<String, serde_json::Value> =
+                serde_json::from_str(n.metadata.as_ref().unwrap()).unwrap();
+            m["value"].as_u64().unwrap()
+        };
+        // resolve: js_resolve 11s ∥ rust 52s — independent → headroom = 63−52 = 11s.
+        assert_eq!(metric_val("phase::resolve::parallelism_headroom_ms"), 11000);
+        // derive: depends REQUIRES type_inference (sink) → sequential → headroom 0.
+        assert_eq!(metric_val("phase::derive::parallelism_headroom_ms"), 0);
+        // run-level total = 11000 + 0.
+        assert_eq!(metric_val("run::parallelism_headroom_ms"), 11000);
     }
 
     #[test]
