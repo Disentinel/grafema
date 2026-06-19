@@ -517,6 +517,29 @@ impl AnalyzerBinaries {
     }
 }
 
+/// Environment pinned on BEAM (Erlang/Elixir) daemon workers so they run with
+/// UTF-8 native name encoding regardless of the host locale.
+///
+/// `beam-analyzer` / `beam-resolve` are escripts; the Erlang VM picks its native
+/// name encoding from the locale at startup and falls back to `latin1` when the
+/// locale is not UTF-8. Under latin1 the Elixir VM mangles the length-prefixed
+/// binary stdin protocol the [`crate::process_pool::ProcessPool`] speaks, the
+/// daemon stops replying, and every per-file request burns the full pool
+/// `request_timeout` (120s) before being abandoned — measured at ~120s × 25 BEAM
+/// files = ~3000s of wasted analysis-phase work on grafema's own monorepo (the
+/// analysis phase's single largest sink there). `+fnu` forces UTF-8 unconditionally;
+/// we also pin the standard env vars so any child shelling out inherits a sane
+/// locale. Set on BOTH the analyzer and resolve BEAM pools. Caller-supplied
+/// `ELIXIR_ERL_OPTIONS` in the host env is intentionally overridden — correctness
+/// of the IPC framing is non-negotiable.
+pub fn beam_utf8_env() -> Vec<(String, String)> {
+    vec![
+        ("ELIXIR_ERL_OPTIONS".to_string(), "+fnu".to_string()),
+        ("LANG".to_string(), "C.UTF-8".to_string()),
+        ("LC_ALL".to_string(), "C.UTF-8".to_string()),
+    ]
+}
+
 /// Plugin configuration.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PluginConfig {

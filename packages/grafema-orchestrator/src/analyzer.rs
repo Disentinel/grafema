@@ -1860,6 +1860,13 @@ pub async fn analyze_beam_files_parallel_pooled(
     let pool_config = PoolConfig {
         command: analyzers.beam_path(),
         args: vec!["--daemon".to_string()],
+        extra_env: crate::config::beam_utf8_env(),
+        // A single `.ex`/`.erl` file analyzes in ~300ms (measured single-shot),
+        // so the 120s default per-request timeout is far too generous for BEAM —
+        // it only ever bites when the daemon is hung. A 30s ceiling keeps a
+        // large/pathological file safe while making both the liveness probe
+        // below and any per-file timeout fail ~4x faster on a dead daemon.
+        request_timeout: std::time::Duration::from_secs(30),
         ..PoolConfig::default()
     };
 
@@ -1873,8 +1880,54 @@ pub async fn analyze_beam_files_parallel_pooled(
         }
     };
 
-    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
     let total = files.len();
+
+    // ── Liveness gate (perf/self-analyze) ────────────────────────────────────
+    // The parallel fan-out below dispatches every file concurrently, so the
+    // pool's request-level circuit breaker cannot help: all requests pass the
+    // breaker check at t≈0 (counter still 0) and only time out together at
+    // `request_timeout` (120s). A genuinely-non-responsive beam-analyzer daemon
+    // (the escript fails to reply on hosts with a broken Elixir/Erlang runtime)
+    // therefore costs ~120s × ceil(files/jobs) waves — measured at ~241s for
+    // grafema's 25 `.ex` files, the analysis phase's single largest sink.
+    //
+    // Probe ONE file FIRST, sequentially. A healthy daemon answers in <1s and we
+    // fall through to the normal parallel path (file[0] is re-analyzed by the
+    // fan-out — one extra sub-second analysis, negligible). A dead daemon fails
+    // the probe in one `request_timeout` and we short-circuit ALL files as
+    // failed-fast, bounding total damage to a single timeout instead of N. The
+    // fan-out loop below is intentionally left untouched (lowest-risk shape).
+    if let Err(probe_err) = analyze_beam_file_pooled(&pool, &files[0]).await {
+        tracing::error!(
+            file = %files[0].display(),
+            error = %format!("{probe_err:#}"),
+            "beam-analyzer daemon failed its liveness probe — non-responsive; \
+             skipping {} remaining BEAM file(s) instead of paying the per-file \
+             timeout for each (fix the beam-analyzer daemon: ensure a UTF-8 \
+             locale and a working Elixir/Erlang runtime)",
+            total.saturating_sub(1)
+        );
+        let mut out = Vec::with_capacity(total);
+        for file in files {
+            let file_size_bytes = std::fs::metadata(file).map(|m| m.len()).unwrap_or(0);
+            out.push(AnalysisResult {
+                file: file.clone(),
+                analysis: None,
+                errors: vec![format!(
+                    "beam-analyzer daemon non-responsive (liveness probe failed: {probe_err})"
+                )],
+                issues: vec![],
+                metrics: FileMetrics {
+                    file_size_bytes,
+                    ..FileMetrics::default()
+                },
+            });
+        }
+        pool.shutdown().await;
+        return out;
+    }
+
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
 
     let handles: Vec<_> = files
         .iter()
