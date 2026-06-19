@@ -10,7 +10,7 @@ edges=M` log line (the blind spot) — are now graph facts.
 | Node type       | One per                                   | Attrs (metadata)                                          |
 |-----------------|-------------------------------------------|-----------------------------------------------------------|
 | `profile:run`   | `grafema analyze`                         | `ts`, `total_ms`                                          |
-| `profile:phase` | phase (`resolve`, `derive`, …)            | `phase`                                                   |
+| `profile:phase` | phase (`resolve`, `derive`, `enrich`, …)  | `phase`                                                   |
 | `profile:stage` | resolver-cmd / derive-pack / enricher     | `phase`, `kind`, `wall_ms`, `edges_produced`, `nodes_produced`, `order` |
 | `METRIC`        | one measure                               | `value`, `unit` — REUSES the existing METRIC node type    |
 
@@ -22,11 +22,30 @@ Edges:
 
 Stages are extracted from the profiler's in-memory event stream
 (`rule_pack_complete`, `resolve_cmd_complete`, `js_resolve_complete`,
-`ruby_resolve_complete`). All ids live under the synthetic file
+`ruby_resolve_complete`, `enrich_plugin_complete`). All ids live under the synthetic file
 `__grafema_profile/<run_ts>` so they tombstone on the next analyze and never
 collide with code nodes.
 
-`kind` ∈ `resolver` | `derive_pack` | `enricher`.
+`kind` ∈ `resolver` | `derive_pack` | `enrich_plugin` | `enrich_step`.
+
+## The enrich phase (closing the second blind spot)
+
+Enrichment runs in two places, both previously invisible:
+
+- **Rust plugins** (`type-inference`, `shape-tracker`) run inside the
+  orchestrator. They used to be folded into `resolve_ms` (mis-attributed as
+  resolution — ~90s of it on the grafema monorepo). They now emit one
+  `enrich_plugin_complete` event each, are subtracted from `resolve_ms` into a
+  dedicated `enrich_ms`, and appear as `phase=enrich` stages in the subgraph.
+- **TS enrichers** (`mcp-tool`, `contract`, `speced-contract`, `behavior`,
+  `package-api`, `library-callback`) run in the CLI **after** the orchestrator
+  process exits, so they append `enrich_step_complete` events to the same
+  `analysis-profile.jsonl` (see `packages/cli/src/utils/profileAppend.ts`).
+  They are in the JSONL profiler and the route view today; they enter the
+  *subgraph* only once it is rebuilt from the full JSONL file after enrich
+  (the orchestrator commits the subgraph from its in-memory stream, which
+  predates the TS phase — the `enrich_step_complete` arm in
+  `build_profile_stages` is ready for that rebuild).
 
 ## On by default
 

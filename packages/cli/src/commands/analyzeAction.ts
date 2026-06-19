@@ -34,6 +34,7 @@ import { commanderExtractor } from '@grafema/util/enrichers/extractors/commander
 import { mcpInputSchemaExtractor } from '@grafema/util/enrichers/extractors/mcpInputSchemaExtractor';
 import { vscodeContributesExtractor } from '@grafema/util/enrichers/extractors/vscodeContributesExtractor';
 import { httpRouteExtractor } from '@grafema/util/enrichers/extractors/httpRouteExtractor';
+import { appendProfileEvent } from '../utils/profileAppend.js';
 import type { LogLevel } from '@grafema/util';
 import { scanExtensions, generateSmartConfig, writeConfig, updateGitignore, formatDetected } from '../utils/quickstart.js';
 
@@ -419,6 +420,26 @@ export async function analyzeAction(path: string, options: { service?: string; e
       info(`  Nodes: ${stats.nodeCount}`);
       info(`  Edges: ${stats.edgeCount}`);
 
+      // Profile the TS enrich phase into the same JSONL the orchestrator writes,
+      // so the ~90s enrich tail (which runs after the orchestrator exits) stops
+      // being a blind spot. enrichStep times each enricher — including ones that
+      // SKIP on an RPC timeout — via finally, and records duration_ms as an
+      // `enrich_step_complete` event (→ profile:stage phase=enrich).
+      const profilePath = join(grafemaDir, 'analysis-profile.jsonl');
+      const enrichStep = async (step: string, fn: () => Promise<void>): Promise<void> => {
+        const t0 = Date.now();
+        try {
+          await fn();
+        } catch (err) {
+          debug(`${step} enricher skipped: ${err instanceof Error ? err.message : String(err)}`);
+        } finally {
+          appendProfileEvent(profilePath, startTime, 'enrich_step_complete', {
+            step,
+            duration_ms: Date.now() - t0,
+          });
+        }
+      };
+
       // Run library-callback enricher before manifest generation.
       // Creates domain nodes (cli:command, mcp:tool, ...) and HANDLES edges
       // for callbacks passed to library entry points (Commander, MCP SDK, ...).
@@ -427,7 +448,7 @@ export async function analyzeAction(path: string, options: { service?: string; e
       const effectsLookup = effectsDbPath
         ? EffectsLookup.load(effectsDbPath)
         : EffectsLookup.empty();
-      try {
+      await enrichStep('library-callbacks', async () => {
         // RFDBServerBackend's RFDBClient field is private at compile time but
         // accessible at runtime; the enricher only needs the wire-level client.
         const client = (backend as unknown as { client: Parameters<typeof enrichLibraryCallbacks>[0] }).client;
@@ -435,16 +456,14 @@ export async function analyzeAction(path: string, options: { service?: string; e
           const result = await enrichLibraryCallbacks(client, effectsLookup);
           info(`  Library callbacks: ${result.domainNodesCreated} domain nodes, ${result.handlesEdgesCreated} HANDLES edges (unresolved: ${result.unresolvedCalls})`);
         }
-      } catch (err) {
-        debug(`Library callback enricher skipped: ${err instanceof Error ? err.message : String(err)}`);
-      }
+      });
 
       // MCP tool definition enricher — scans `packages/mcp/src/definitions/*-tools.ts`
       // (or any matching tree under projectPath) and creates `mcp:tool` nodes for
       // each defined tool. Complements libraryCallbackEnricher: that one captures
       // the high-level setRequestHandler calls; this one captures the ~30+ tools
       // dispatched by the switch statement inside the CallTool handler.
-      try {
+      await enrichStep('mcp-tool-defs', async () => {
         const client = (backend as unknown as { client: Parameters<typeof enrichMcpToolDefinitions>[0] }).client;
         if (client) {
           const definitionsDir = join(projectPath, 'packages/mcp/src/definitions');
@@ -453,9 +472,7 @@ export async function analyzeAction(path: string, options: { service?: string; e
             info(`  MCP tool defs: ${result.toolNodesCreated} mcp:tool nodes, ${result.handlesEdgesCreated} HANDLES edges (unresolved: ${result.unresolvedHandlers.length})`);
           }
         }
-      } catch (err) {
-        debug(`MCP tool definition enricher skipped: ${err instanceof Error ? err.message : String(err)}`);
-      }
+      });
 
       // Contract enricher — for every FEATURE-class node (cli:command, mcp:tool,
       // vscode:command) created by the L0 entry-point enrichers above, walk the
@@ -464,22 +481,20 @@ export async function analyzeAction(path: string, options: { service?: string; e
       // creators (enrichLibraryCallbacks, enrichMcpToolDefinitions) so HANDLES
       // edges already exist, and BEFORE generateManifest so contracts can flow
       // into the manifest if needed.
-      try {
+      await enrichStep('contracts', async () => {
         const client = (backend as unknown as { client: Parameters<typeof enrichContracts>[0] }).client;
         if (client) {
           const result = await enrichContracts(client);
           info(`  Contracts: ${result.contractsCreated} contracts (${result.inputsTotal} inputs, ${result.outputsTotal} outputs, ${result.errorsTotal} errors); ${result.featuresWithoutEntry} features lacked HANDLES edge`);
         }
-      } catch (err) {
-        debug(`Contract enricher skipped: ${err instanceof Error ? err.message : String(err)}`);
-      }
+      });
 
       // Speced-contract enricher — for every FEATURE node, run the registered
       // per-category extractors (commander spec strings, MCP inputSchema, …)
       // to produce SPECED_CONTRACT nodes carrying the user-facing interface.
       // Distinct from the existing CONTRACT (handler signature scrape) which
       // is implementation-side. See `_ai/research/feature-taxonomy.md` §1.3.
-      try {
+      await enrichStep('speced-contracts', async () => {
         const client = (backend as unknown as { client: Parameters<typeof enrichSpecedContracts>[0] }).client;
         if (client) {
           const result = await enrichSpecedContracts(client, [
@@ -490,24 +505,20 @@ export async function analyzeAction(path: string, options: { service?: string; e
           ]);
           info(`  Speced contracts: ${result.contractsCreated} (${result.inputsTotal} inputs); byCategory=${JSON.stringify(result.byCategory)}; missingExtractor=${result.featuresWithoutExtractor}, missingSpec=${result.featuresWithoutSpec}`);
         }
-      } catch (err) {
-        debug(`Speced contract enricher skipped: ${err instanceof Error ? err.message : String(err)}`);
-      }
+      });
 
       // Behavior enricher — for every FEATURE-class node, walk the HANDLES
       // edge to the entry function and compute a transitive CALLS closure.
       // Stores BEHAVIOR with hash + effects + summary (no COMPRISES edges —
       // see skill `materialize-only-what-queries-need`). Pass 2 emits
       // SHARES_BEHAVIOR_WITH between behaviors with identical hash.
-      try {
+      await enrichStep('behaviors', async () => {
         const client = (backend as unknown as { client: Parameters<typeof enrichBehaviors>[0] }).client;
         if (client) {
           const result = await enrichBehaviors(client, effectsLookup);
           info(`  Behaviors: ${result.behaviorsCreated} BEHAVIOR nodes, ${result.sharesBehaviorEdges} SHARES_BEHAVIOR_WITH edges (totalCoreNodes=${result.totalCoreNodes}, missingEntry=${result.featuresWithoutEntry})`);
         }
-      } catch (err) {
-        debug(`Behavior enricher skipped: ${err instanceof Error ? err.message : String(err)}`);
-      }
+      });
 
       // Package API enricher — for every monorepo package barrel
       // (`packages/<pkg>/src/index.ts`), emit a `package:export` FEATURE node
@@ -515,7 +526,7 @@ export async function analyzeAction(path: string, options: { service?: string; e
       // Surfaces inter-package public-API surfaces so the contract enricher
       // (run already) can wire contracts onto these on the next pass; the
       // benefit is realised by downstream consumers (manifest, GUI, agents).
-      try {
+      await enrichStep('package-apis', async () => {
         const client = (backend as unknown as { client: Parameters<typeof enrichPackageApis>[0] }).client;
         if (client) {
           const result = await enrichPackageApis(client);
@@ -523,9 +534,7 @@ export async function analyzeAction(path: string, options: { service?: string; e
             info(`  Package APIs: ${result.apiNodesCreated} package:export nodes, ${result.handlesEdgesCreated} HANDLES edges across ${result.packagesScanned} barrels (unresolved: ${result.exportsWithoutHandler})`);
           }
         }
-      } catch (err) {
-        debug(`Package API enricher skipped: ${err instanceof Error ? err.message : String(err)}`);
-      }
+      });
 
       // Generate manifest after successful analysis
       try {
