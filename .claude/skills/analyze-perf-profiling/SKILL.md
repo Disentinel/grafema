@@ -61,16 +61,16 @@ node scripts/profile-graph.mjs --project .            # critical path + jams + d
 node scripts/profile-graph.mjs --json
 ```
 
-Critical path = longest `PRECEDES` chain by summed `wall_ms` (the helper walks it). Dead stages =
-`wall_ms` high AND `edges_produced=0` — a pure Datalog query (the CI-gate candidate):
+Critical path = longest `PRECEDES` chain by summed `wall_ms` (the helper walks it; the engine can't
+enumerate a metadata value into a var, so the helper reads `wall_ms` via `getNode`). Dead stages =
+produced 0 edges — a pure Datalog query (constant-value match; the CI-gate candidate):
 
 ```
-dead(S, Name, Ms) :- node(S, "profile:stage"), attr(S, "edges_produced", "0"),
-                     attr(S, "wall_ms", Ms), gt(Ms, "1000"), attr(S, "name", Name).
+dead(S, Name) :- node(S, "profile:stage"), attr(S, "edges_produced", "0"), attr(S, "name", Name).
 ```
 
-Full schema + queries: `_ai/profile-subgraph.md`. The `METRIC`/`OBSERVES` node+edge types are reused
-(same as per-file `parse_ms` today).
+Full schema + queries + the engine binding semantics: `_ai/profile-subgraph.md`. The `METRIC`/`OBSERVES`
+node+edge types are reused (same as per-file `parse_ms` today).
 
 ## 4. KNOWN artificial limits — check these BEFORE assuming a real bottleneck
 

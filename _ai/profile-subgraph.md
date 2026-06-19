@@ -46,24 +46,35 @@ node scripts/profile-graph.mjs --dead-threshold-ms 5000
 It walks the `PRECEDES` chains, sums `wall_ms`, and prints the critical path
 (longest chain by summed wall_ms), the top jams, and the dead stages.
 
-### Raw Datalog (`grafema query --raw`)
+### Raw Datalog (`grafema query --raw` / `executeDatalog`)
 
-All stages ranked by wall time (the jams):
+> **Engine binding semantics (verified on grafema-dev).** `node(X, "TYPE")` and
+> `edge(A, B, "TYPE")` enumerate freely, and `attr(X, "name", N)` binds `N`
+> (top-level node field). But for a **metadata** key (`wall_ms`,
+> `edges_produced`, `phase`, `kind`, `total_ms`), the derive-query engine only
+> matches by **constant** value — `attr(S, "edges_produced", "0")` works;
+> `attr(S, "wall_ms", Ms)` with `Ms` unbound returns nothing. To read numeric
+> measures, fetch the node (`getNode(id)` spreads metadata as top-level fields)
+> — that is exactly what `profile-graph.mjs` does. The constant-value queries
+> below are the pure-Datalog ones.
+
+**Dead stages** — produced 0 edges (the REG-1128 type-inference / shape-verifier
+class). Pure Datalog, constant-value match on `edges_produced`:
 
 ```
-stage(S, Name, Ms, E) :- node(S, "profile:stage"), attr(S, "name", Name),
-                         attr(S, "wall_ms", Ms), attr(S, "edges_produced", E).
+dead(S, Name) :- node(S, "profile:stage"),
+                 attr(S, "edges_produced", "0"),
+                 attr(S, "name", Name).
 ```
 
-**Dead stages** — high wall time AND zero edges produced (the REG-1128
-type-inference / shape-verifier class):
+(`profile-graph.mjs` additionally filters by a `wall_ms` threshold, read off the
+node, so a fast 0-edge pack isn't flagged. The `wall_ms >= N` clause is *not*
+expressible in this engine's Datalog, hence the helper.)
+
+All stage ids + names (then read measures via `getNode`):
 
 ```
-dead(S, Name, Ms) :- node(S, "profile:stage"),
-                     attr(S, "edges_produced", "0"),
-                     attr(S, "wall_ms", Ms),
-                     gt(Ms, "1000"),
-                     attr(S, "name", Name).
+stage(S, Name) :- node(S, "profile:stage"), attr(S, "name", Name).
 ```
 
 The PRECEDES route (stage order within phases):
@@ -72,15 +83,9 @@ The PRECEDES route (stage order within phases):
 route(A, B) :- edge(A, B, "PRECEDES").
 ```
 
-Per-phase totals:
-
-```
-phase_wall(P, Ms) :- node(P, "profile:phase"), node(M, "METRIC"),
-                     edge(M, P, "OBSERVES"), attr(M, "value", Ms).
-```
-
 > Note: the *critical path = longest PRECEDES chain by summed wall_ms* needs a
 > weighted longest-path walk, which pure Datalog does not express; the
-> `profile-graph.mjs` helper computes it from the `profile:stage` + `PRECEDES`
-> facts. The dead-stage query above is fully expressible in Datalog and is the
-> standing-fact CI-gate candidate.
+> `profile-graph.mjs` helper computes it from the `profile:stage` nodes (measures
+> via `getNode`) + the `PRECEDES` edges (via Datalog). The dead-stage edges=0
+> query above is fully expressible in Datalog and is the standing-fact CI-gate
+> candidate.
