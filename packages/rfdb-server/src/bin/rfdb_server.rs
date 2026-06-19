@@ -3045,10 +3045,31 @@ fn dispatch_materialize_datalog(
     limits.deadline =
         Some(std::time::Instant::now() + std::time::Duration::from_secs(materialize_deadline_secs));
 
+    // Same E-EXEC-001 reasoning as the deadline above: the 100k `max_intermediate_results` is an
+    // interactive-query bound and is WRONG for a batch full materialize. Intermediate relations of
+    // legitimate stdlib packs (e.g. js_local_refs scope-walk: ref_scope/inner_of/chain_declares)
+    // scale ~linearly with reference count, so a cold materialize over a non-trivial graph routinely
+    // exceeds 100k rows in a single stratum (the ~21k-node mcp graph already produces ~141k). The
+    // batch path is build-step-like; its real guards are the deadline + cancellation + memory, NOT a
+    // fixed row count. Lift it (default: unbounded). Tunable via `RFDB_MATERIALIZE_MAX_INTERMEDIATE`.
+    let materialize_max_intermediate = std::env::var("RFDB_MATERIALIZE_MAX_INTERMEDIATE")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(usize::MAX);
+    limits.max_intermediate_results = materialize_max_intermediate;
+
     // Empty source ⇒ the canonical bundled depends.dl; "@stdlib/<name>" ⇒ a named bundled
     // pack (E-MAT-007 when unknown); anything else ⇒ explicit program text. The single
     // source of truth is `resolve_pack_source` — no drift between dispatchers.
     let program = resolve_pack_source(source)?;
+
+    // Suppress auto-compaction for the duration of this materialize: committing derived edges would
+    // otherwise auto-trigger compaction, which (rayon, memmap2) rewrites/unmaps segments while this
+    // same materialize's `par_join_rows` rayon tasks read them → use-after-unmap heap corruption →
+    // SIGSEGV (confirmed root cause of the parallel-derive crash, 2026-06-19). Deferred compaction
+    // runs at the natural barrier (end_bulk_load / explicit Compact) under the exclusive write lock.
+    let _compaction_guard =
+        rfdb::storage_v2::compaction::coordinator::AutoCompactionSuppressGuard::new();
 
     // Gate D2: the cached entry MAINTAINS the derived relations across calls against this
     // long-lived per-database engine (work-proportional on the 2nd+ run) and commits only the

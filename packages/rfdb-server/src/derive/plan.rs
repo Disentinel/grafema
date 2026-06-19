@@ -40,7 +40,23 @@ use super::stratify::Stratification;
 
 /// Per-rule materialization ceiling (spec §3): a rule whose plan-time output estimate
 /// exceeds this is rejected with `E-PLAN-003`. Ten million facts.
+///
+/// This is the DEFAULT — a conservative guard against cross-join blow-ups whose plan-time
+/// estimate is also q-error-prone (often an OVERestimate). For a large batch self-analyze the
+/// 10M default is too low (a legitimate per-rule output like js property-access READS_FROM on a
+/// ~700k-node graph estimates ~11.7M), so the effective ceiling is env-overridable via
+/// [`max_materialized_facts`] / `RFDB_MAX_MATERIALIZED_FACTS`.
 pub const MAX_MATERIALIZED_FACTS: u64 = 10_000_000;
+
+/// The effective per-rule materialization ceiling: `RFDB_MAX_MATERIALIZED_FACTS` if set and
+/// parseable, else [`MAX_MATERIALIZED_FACTS`]. Read per check (cheap); lets a batch analyze raise
+/// the guard without recompiling.
+pub fn max_materialized_facts() -> u64 {
+    std::env::var("RFDB_MAX_MATERIALIZED_FACTS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(MAX_MATERIALIZED_FACTS)
+}
 
 
 // ── Error taxonomy (invariant I5) ──────────────────────────────────
@@ -361,13 +377,14 @@ fn plan_rule_with(
     }
 
     // §3 per-rule materialization guard.
-    if rule_estimate > MAX_MATERIALIZED_FACTS {
+    let guard = max_materialized_facts();
+    if rule_estimate > guard {
         return Err(PlanError {
             code: PlanCode::GuardRejected,
             head: head.clone(),
             detail: format!(
                 "per-rule output estimate {} exceeds max_materialized_facts {}",
-                rule_estimate, MAX_MATERIALIZED_FACTS
+                rule_estimate, guard
             ),
         });
     }

@@ -23,6 +23,38 @@ use crate::storage_v2::shard::{Shard, TombstoneSet};
 use crate::storage_v2::types::{SegmentMeta, SegmentType};
 use crate::storage_v2::writer::{EdgeSegmentWriter, NodeSegmentWriter};
 
+// ── Auto-compaction suppression during derive/materialize ───────────
+//
+// A derive/materialize handler holds a `db.engine.read()` lock but internally commits derived
+// edges across many rule packs; those commits would auto-trigger compaction. Compaction (rayon,
+// memmap2) rewrites/unmaps segments while the SAME materialize's `par_join_rows` rayon tasks read
+// them → use-after-unmap / heap corruption → SIGSEGV (confirmed by isolation test 2026-06-19).
+// While a materialize is in progress we SUPPRESS auto-compaction; the deferred compaction runs at
+// the natural barrier (end_bulk_load / explicit Compact) under the exclusive write lock.
+static AUTO_COMPACTION_SUPPRESSED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Suppress (or re-enable) automatic compaction. Set while a derive/materialize is in progress.
+pub fn set_auto_compaction_suppressed(suppressed: bool) {
+    AUTO_COMPACTION_SUPPRESSED.store(suppressed, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// RAII guard: suppresses auto-compaction for its lifetime, restoring on drop (even on panic).
+pub struct AutoCompactionSuppressGuard;
+
+impl AutoCompactionSuppressGuard {
+    pub fn new() -> Self {
+        set_auto_compaction_suppressed(true);
+        AutoCompactionSuppressGuard
+    }
+}
+
+impl Drop for AutoCompactionSuppressGuard {
+    fn drop(&mut self) {
+        set_auto_compaction_suppressed(false);
+    }
+}
+
 // ── Policy ──────────────────────────────────────────────────────────
 
 /// Check if a shard should be compacted based on L0 segment count.
@@ -32,6 +64,14 @@ use crate::storage_v2::writer::{EdgeSegmentWriter, NodeSegmentWriter};
 ///
 /// Complexity: O(1)
 pub fn should_compact(shard: &Shard, config: &CompactionConfig) -> bool {
+    // Suppressed while a derive/materialize is in progress (see AUTO_COMPACTION_SUPPRESSED) — the
+    // confirmed fix for the parallel-derive SIGSEGV (compaction unmapping segments under parallel
+    // reads). RFDB_DISABLE_COMPACTION=1 is a manual override for diagnostics.
+    if AUTO_COMPACTION_SUPPRESSED.load(std::sync::atomic::Ordering::SeqCst)
+        || std::env::var_os("RFDB_DISABLE_COMPACTION").is_some()
+    {
+        return false;
+    }
     let total_l0 = shard.l0_node_segment_count() + shard.l0_edge_segment_count();
     total_l0 >= config.segment_threshold
 }
