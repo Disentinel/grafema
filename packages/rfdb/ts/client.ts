@@ -9,6 +9,7 @@ import { createConnection, Socket } from 'net';
 import { encode, decode } from '@msgpack/msgpack';
 import { StreamQueue } from './stream-queue.js';
 import { BaseRFDBClient } from './base-client.js';
+import { resolveTimeoutMs, getBulkTimeoutMs } from './timeout-config.js';
 
 import type {
   RFDBCommand,
@@ -269,12 +270,17 @@ export class RFDBClient extends BaseRFDBClient {
     const existing = this._streamTimers.get(id);
     if (existing) clearTimeout(existing);
 
+    // Streaming waits for the FIRST chunk; on a large graph (e.g. the ~714k-node
+    // self graph) the initial scan can exceed the interactive ceiling before any
+    // chunk arrives. Use the longer bulk ceiling here, configurable via
+    // RFDB_RPC_BULK_TIMEOUT_MS (see timeout-config.ts).
+    const streamTimeoutMs = getBulkTimeoutMs();
     const timer = setTimeout(() => {
       this._cleanupStream(id);
       streamQueue.fail(new Error(
-        `RFDB queryNodesStream timed out after ${RFDBClient.DEFAULT_TIMEOUT_MS}ms (no chunk received)`
+        `RFDB queryNodesStream timed out after ${streamTimeoutMs}ms (no chunk received)`
       ));
-    }, RFDBClient.DEFAULT_TIMEOUT_MS);
+    }, streamTimeoutMs);
 
     this._streamTimers.set(id, timer);
   }
@@ -295,19 +301,23 @@ export class RFDBClient extends BaseRFDBClient {
     return Number.isNaN(num) ? null : num;
   }
 
-  private static readonly DEFAULT_TIMEOUT_MS = 60_000;
-
   /**
-   * Send a request and wait for response with timeout
+   * Send a request and wait for response with timeout.
+   *
+   * The timeout ceiling is env-configurable and tiered per operation
+   * (interactive vs bulk/streaming/drop) — see timeout-config.ts. Callers may
+   * still pass an explicit `timeoutMs` to override.
    */
   protected async _send(
     cmd: RFDBCommand,
     payload: Record<string, unknown> = {},
-    timeoutMs: number = RFDBClient.DEFAULT_TIMEOUT_MS,
+    timeoutMs?: number,
   ): Promise<RFDBResponse> {
     if (!this.connected || !this.socket) {
       throw new Error('Not connected to RFDB server');
     }
+
+    const effectiveTimeoutMs = resolveTimeoutMs(cmd, timeoutMs);
 
     return new Promise((resolve, reject) => {
       const id = this.reqId++;
@@ -316,8 +326,8 @@ export class RFDBClient extends BaseRFDBClient {
 
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`RFDB ${cmd} timed out after ${timeoutMs}ms. Server may be unresponsive or dbPath may be invalid.`));
-      }, timeoutMs);
+        reject(new Error(`RFDB ${cmd} timed out after ${effectiveTimeoutMs}ms. Server may be unresponsive or dbPath may be invalid.`));
+      }, effectiveTimeoutMs);
 
       const errorHandler = (err: NodeJS.ErrnoException) => {
         this.pending.delete(id);

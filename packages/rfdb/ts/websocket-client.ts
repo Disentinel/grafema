@@ -12,6 +12,7 @@
 
 import { encode, decode } from '@msgpack/msgpack';
 import { BaseRFDBClient } from './base-client.js';
+import { resolveTimeoutMs } from './timeout-config.js';
 
 import type {
   RFDBCommand,
@@ -23,8 +24,6 @@ interface PendingRequest {
   resolve: (value: RFDBResponse) => void;
   reject: (error: Error) => void;
 }
-
-const DEFAULT_TIMEOUT_MS = 60_000;
 
 export class RFDBWebSocketClient extends BaseRFDBClient {
   readonly socketPath: string;
@@ -121,11 +120,13 @@ export class RFDBWebSocketClient extends BaseRFDBClient {
   protected async _send(
     cmd: RFDBCommand,
     payload: Record<string, unknown> = {},
-    timeoutMs: number = DEFAULT_TIMEOUT_MS,
+    timeoutMs?: number,
   ): Promise<RFDBResponse> {
     if (!this.connected || !this.ws) {
       throw new Error('Not connected to RFDB server');
     }
+
+    const effectiveTimeoutMs = resolveTimeoutMs(cmd, timeoutMs);
 
     return new Promise((resolve, reject) => {
       const id = this.reqId++;
@@ -134,8 +135,8 @@ export class RFDBWebSocketClient extends BaseRFDBClient {
 
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`Request timed out: ${cmd} (${timeoutMs}ms)`));
-      }, timeoutMs);
+        reject(new Error(`Request timed out: ${cmd} (${effectiveTimeoutMs}ms)`));
+      }, effectiveTimeoutMs);
 
       this.pending.set(id, {
         resolve: (value) => {
