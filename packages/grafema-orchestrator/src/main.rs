@@ -834,6 +834,41 @@ fn build_profile_stages(events: &[profiler::ProfileEvent]) -> Vec<analyzer::Prof
                     order: e.elapsed_ms,
                 });
             }
+            // Enrichment plugins (Rust: type-inference, shape-tracker) — run in
+            // the orchestrator after resolve; de-conflated from resolve_ms.
+            "enrich_plugin_complete" => {
+                let name = e
+                    .field("plugin")
+                    .map(str::to_string)
+                    .unwrap_or_else(|| "enrich".to_string());
+                stages.push(analyzer::ProfileStage {
+                    phase: "enrich",
+                    kind: "enrich_plugin",
+                    name,
+                    wall_ms: num(e, "duration_ms"),
+                    edges_produced: num(e, "edges"),
+                    nodes_produced: num(e, "nodes"),
+                    order: e.elapsed_ms,
+                });
+            }
+            // Enrichment steps (TS: mcp-tool, contract, behavior, package-api…) —
+            // appended to the JSONL by the CLI after the orchestrator exits. Picked
+            // up only when the subgraph is (re)built from the full JSONL file.
+            "enrich_step_complete" => {
+                let name = e
+                    .field("step")
+                    .map(str::to_string)
+                    .unwrap_or_else(|| "enrich".to_string());
+                stages.push(analyzer::ProfileStage {
+                    phase: "enrich",
+                    kind: "enrich_step",
+                    name,
+                    wall_ms: num(e, "duration_ms"),
+                    edges_produced: num(e, "edges"),
+                    nodes_produced: num(e, "nodes"),
+                    order: e.elapsed_ms,
+                });
+            }
             _ => {}
         }
     }
@@ -2203,6 +2238,7 @@ async fn main() -> Result<()> {
                 })
                 .cloned()
                 .collect();
+            let mut enrich_ms: u64 = 0;
             if !user_plugins.is_empty() {
                 tracing::info!(count = user_plugins.len(), "Running user-defined plugins");
 
@@ -2236,10 +2272,25 @@ async fn main() -> Result<()> {
                     pool.shutdown().await;
                 }
 
-                dag_result?;
+                let plugin_results = dag_result?;
+                // De-conflate enrichment from resolve: type-inference and
+                // shape-tracker are an ENRICH phase, not resolution. Emit one
+                // profiler event per plugin (→ profile:stage phase=enrich) and
+                // accumulate enrich_ms so the ~90s tail stops hiding in resolve_ms.
+                for r in &plugin_results {
+                    profile!("enrich_plugin_complete",
+                        "plugin" => r.plugin_name,
+                        "duration_ms" => r.duration.as_millis() as u64,
+                        "nodes" => r.nodes_emitted,
+                        "edges" => r.edges_emitted);
+                    enrich_ms += r.duration.as_millis() as u64;
+                }
             }
 
-            let resolve_ms = resolve_timer.elapsed().as_millis() as u64;
+            // resolve_ms EXCLUDES the enrich plugins above (summed into enrich_ms):
+            // they are an enrichment phase, not resolution.
+            let resolve_ms =
+                (resolve_timer.elapsed().as_millis() as u64).saturating_sub(enrich_ms);
 
 
 
@@ -2431,6 +2482,7 @@ async fn main() -> Result<()> {
                     ("rfdb_commit",  "p99_ms",       p99_ms,                     "ms"),
                     ("rfdb_commit",  "batches",      batch_count,                "count"),
                     ("resolve",      "duration_ms",  resolve_ms,                 "ms"),
+                    ("enrich",       "duration_ms",  enrich_ms,                  "ms"),
                     ("diagnostics",  "duration_ms",  diagnostics_ms,             "ms"),
                     ("depends_on",   "duration_ms",  depends_on_ms,              "ms"),
                     ("compact",      "duration_ms",  compact_ms as u64,          "ms"),
@@ -2469,6 +2521,7 @@ async fn main() -> Result<()> {
                 "analysis_ms" => analysis_ms,
                 "rfdb_commit_ms" => rfdb_commit_total_ms,
                 "resolve_ms" => resolve_ms,
+                "enrich_ms" => enrich_ms,
                 "diagnostics_ms" => diagnostics_ms,
                 "depends_on_ms" => depends_on_ms,
                 "compact_ms" => compact_ms,

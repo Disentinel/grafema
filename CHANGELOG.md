@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Features
+
+- feat(profiling): **parallelism headroom on the profile subgraph**. `profile:stage` nodes now carry `REQUIRES` edges (true data dependencies — the subset of `PRECEDES` that is load-bearing); each `profile:phase` gets `critical_path_ms` + `parallelism_headroom_ms` METRICs and `profile:run` a run-level total. "What could run in parallel" = `total_work − critical_path` is now a graph query. Derive model: independent language verticals → shared sinks (`depends`/`method_calls`/`shape_verifier`); resolvers are fully independent (their sequential execution is pure headroom).
+- feat(profiling): the **enrich phase is now profiled**. The Rust enrichment
+  plugins (`type-inference`, `shape-tracker`) were silently folded into
+  `resolve_ms` (~90s of it on the grafema monorepo, mis-labeled as resolution);
+  they are now de-conflated into a dedicated `enrich_ms`, emit one
+  `enrich_plugin_complete` profiler event each, and appear as `phase=enrich`
+  stages in the profile subgraph. The TS enrichers (`mcp-tool`, `contract`,
+  `behavior`, `package-api`, …) run after the orchestrator exits and now append
+  `enrich_step_complete` events to `analysis-profile.jsonl` (timed across
+  success *and* RPC-timeout skips), so the enrich tail is no longer a blind spot
+  in the JSONL profiler and the route view.
+
 ## [0.4.1] - 2026-06-14
 
 ### Highlights
