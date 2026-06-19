@@ -75,21 +75,32 @@ confirming the cost is the daemon-encoding hang, not BEAM parsing.
    analysis fan-out: counter reached 17, 0 circuit-open events, analysis still
    241 s.
 
-### Precise plan for the parallel analysis fan-out (deferred, larger change)
+### LANDED: liveness probe for the BEAM analysis fan-out
 
-Add a **sequential liveness probe** at the top of each
-`analyze_<lang>_files_parallel_pooled` (there are ~3 structurally-identical
-fan-out blocks — BEAM, and the Java/Kotlin/Go/Swift/ObjC parser+analyzer pools):
-analyze `files[0]` synchronously BEFORE fanning out the rest. A healthy daemon
-answers in <1 s and the normal parallel path proceeds (re-using the probe's
-result for file 0). A dead daemon fails the probe in ONE `request_timeout` and
-the remaining files are returned failed-fast — bounding a dead daemon to a
-single 120 s timeout instead of `ceil(N / jobs)` waves of it (25 `.ex` files:
-241 s → ~120 s, and with a shorter probe timeout, → seconds). RISK: the
-fan-out blocks are shared across languages; the probe must be added carefully
-(unique per-call-site context) and must re-use `files[0]`'s result so file 0
-is not double-analyzed. Each call site needs its own before/after timing check.
-Effort: medium; reward: removes the analysis phase's single largest sink.
+`analyze_beam_files_parallel_pooled` now analyzes `files[0]` **synchronously**
+before fanning out the rest. A healthy daemon answers in <1 s and the normal
+parallel path proceeds (file 0 is re-analyzed by the fan-out — one extra
+sub-second analysis, negligible; the fan-out loop is left untouched, the
+lowest-risk shape). A dead daemon fails the probe in ONE `request_timeout` and
+ALL files are returned failed-fast. The BEAM pool's `request_timeout` is also
+lowered from the 120 s default to **30 s** (a real `.ex` file analyzes in ~300 ms,
+so 30 s is generous yet ~4× faster to abandon a hung daemon).
+
+**Measured (grafema self-analyze, grafema-dev, dead BEAM daemon):**
+
+| | analysis phase | BEAM file-work | BEAM timeouts |
+|--|---|---|---|
+| before | **241.7 s** | 3001 s (120 s × 25 files) | 25 |
+| after  | **37.3 s**  | 0 s (24 files skipped after 1 probe) | 1 |
+
+→ **analysis phase 241.7 s → 37.3 s, a 6.5× speedup (−204 s)** off the total
+self-analyze. The remaining 37 s is the legitimate TS/Rust/Haskell analysis plus
+the single 30 s BEAM probe. (On a host where BEAM works, the probe passes in <1 s
+and nothing changes.)
+
+The same probe pattern would extend the win to the other ~3 structurally
+identical analyzer fan-outs (Java/Kotlin/Go/Swift/ObjC) — deferred, not needed
+for grafema's own monorepo (no such files there).
 
 ## Derive phase (180 s / 40 packs) — DOCUMENTED PLAN, not landed here
 
