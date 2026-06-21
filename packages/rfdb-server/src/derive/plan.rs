@@ -40,7 +40,23 @@ use super::stratify::Stratification;
 
 /// Per-rule materialization ceiling (spec §3): a rule whose plan-time output estimate
 /// exceeds this is rejected with `E-PLAN-003`. Ten million facts.
+///
+/// This is the DEFAULT — a conservative guard against cross-join blow-ups whose plan-time
+/// estimate is also q-error-prone (often an OVERestimate). For a large batch self-analyze the
+/// 10M default is too low (a legitimate per-rule output like js property-access READS_FROM on a
+/// ~700k-node graph estimates ~11.7M), so the effective ceiling is env-overridable via
+/// [`max_materialized_facts`] / `RFDB_MAX_MATERIALIZED_FACTS`.
 pub const MAX_MATERIALIZED_FACTS: u64 = 10_000_000;
+
+/// The effective per-rule materialization ceiling: `RFDB_MAX_MATERIALIZED_FACTS` if set and
+/// parseable, else [`MAX_MATERIALIZED_FACTS`]. Read per check (cheap); lets a batch analyze raise
+/// the guard without recompiling.
+pub fn max_materialized_facts() -> u64 {
+    std::env::var("RFDB_MAX_MATERIALIZED_FACTS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(MAX_MATERIALIZED_FACTS)
+}
 
 
 // ── Error taxonomy (invariant I5) ──────────────────────────────────
@@ -347,7 +363,31 @@ fn plan_rule_with(
         // guard (observed: function-has-contains estimated 52,970,680 vs actual 1,747).
         let provided = provided_vars(atom, &bound);
         if lit.is_positive() && !provided.is_empty() {
-            rule_estimate = rule_estimate.saturating_mul(estimate.max(1));
+            // SELECTIVITY-AWARE FAN-OUT (spec §7 / the §3 q-error fix). A generator's raw
+            // magnitude is the fan-out only when its introduced key is UNCONSTRAINED. When a
+            // LATER body leg applies an EQUALITY selection on that key against a value already
+            // bound by a prior leg — a shared-variable equality JOIN KEY — the generator is in
+            // truth a keyed probe, not a full scan: its surviving fan-out is the relation over
+            // its key's distinct population (a 1:1-ish join), NOT the whole relation. The
+            // existing forward loop multiplies the generator's RAW magnitude in BEFORE it ever
+            // sees those downstream equality filters, cross-producting magnitudes the join keys
+            // make nearly 1:1 (observed live 2026-06-12: the stdlib `static_member` rule —
+            // node(Cls,"CLASS") · attr(Cls,"file",F) · attr(Cls,"name",BaseN) ·
+            // edge(Cls,T,"HAS_METHOD") · attr(T,"name",N) — estimated 11 667 968 vs an ACTUAL
+            // 811 materialized edges, a ~14000× over-estimate that spuriously tripped
+            // E-PLAN-003). Reduce the generator's contribution by a key-narrowing factor for
+            // each introduced variable a downstream leg equality-pins. The reduction is
+            // CONSERVATIVE (it never goes below a keyed √-fan-out, and a key with NO downstream
+            // equality is unreduced) so a GENUINE cross-product — whose legs share no pinning
+            // equality — keeps its full magnitude and still trips the guard (I1: ordering /
+            // sizing can only let more rules pass, never change WHICH facts derive).
+            let mut effective = estimate.max(1);
+            for v in &provided {
+                if downstream_equality_pins(v, idx, &ordered, &bound, &provided) {
+                    effective = narrowed_fanout(effective);
+                }
+            }
+            rule_estimate = rule_estimate.saturating_mul(effective);
         }
 
         bound.extend(provided);
@@ -361,13 +401,14 @@ fn plan_rule_with(
     }
 
     // §3 per-rule materialization guard.
-    if rule_estimate > MAX_MATERIALIZED_FACTS {
+    let guard = max_materialized_facts();
+    if rule_estimate > guard {
         return Err(PlanError {
             code: PlanCode::GuardRejected,
             head: head.clone(),
             detail: format!(
                 "per-rule output estimate {} exceeds max_materialized_facts {}",
-                rule_estimate, MAX_MATERIALIZED_FACTS
+                rule_estimate, guard
             ),
         });
     }
@@ -838,6 +879,97 @@ fn leg_estimate(
             derived_estimate(name, *recursive, pattern, stats, estimates, self_base)
         }
     }
+}
+
+/// Whether a variable `v` — freshly introduced by the generator leg at position `idx` — is
+/// EQUALITY-PINNED by some LATER body leg (a shared-variable equality join key), so the
+/// generator is in truth a keyed probe and its fan-out must be key-narrowed, not the full
+/// relation magnitude (the §3 q-error fix; see the call site in `plan_rule_with`).
+///
+/// A later leg pins `v` when it is a positive base-relation EQUALITY selection that references
+/// `v` and whose OTHER variable positions are ALL already-bound at the time it runs — i.e. it
+/// contributes fan-out ≤ 1 and acts purely as `v = <bound value>`:
+///
+///   • `attr(v, "key", BoundOrConstVal)` — a point column read keyed by `v` whose value side is
+///     pinned to an already-bound variable/const (e.g. `attr(Cls,"name",BaseN)` with BaseN bound
+///     from `uc_pa`): an exact equality on the class node `Cls`.
+///   • `attr(BoundId, "key", v)` — the reverse: `v` is the value read off an already-bound id,
+///     an equality that pins `v` to that one node's attribute.
+///   • `edge(v, BoundDst, _)` / `edge(BoundSrc, v, _)` — an adjacency existence check on a bound
+///     endpoint, an equality on `v` against that neighbour.
+///   • `node(v, "T")` is NOT a pin — it only type-restricts, it does not equality-join `v` to a
+///     value a prior leg bound.
+///
+/// `at_run` is the set of variables bound up to and including the generator at `idx` (`bound`
+/// ∪ the generator's freshly-`provided` set), so a later leg's "other positions" are judged
+/// against what is genuinely bound before it. Pure function; never changes which facts derive.
+fn downstream_equality_pins(
+    v: &str,
+    idx: usize,
+    ordered: &[Literal],
+    bound: &HashSet<String>,
+    provided: &HashSet<String>,
+) -> bool {
+    // Variables bound by the time the generator at `idx` finishes. As we walk the LATER legs
+    // (already in bound-first execution order) we fold in each leg's freshly-provided vars, so
+    // an equality filter is judged against everything bound BY THE TIME IT RUNS — including a
+    // binding introduced by an INTERVENING leg between the generator and the filter (e.g. the
+    // class generator runs, a sibling driver then binds the name, and only THEN does the
+    // `attr(Cls,"name",Name)` equality pin the class).
+    let mut run: HashSet<String> = bound.clone();
+    run.extend(provided.iter().cloned());
+
+    for later in ordered.iter().skip(idx + 1) {
+        // Only positive legs can be equality selections.
+        let Literal::Positive(atom) = later else {
+            // A negative leg binds nothing; skip without advancing `run`.
+            continue;
+        };
+        let args = atom.args();
+        // The leg must REFERENCE `v`.
+        let refs_v = args.iter().any(|t| matches!(t, Term::Var(name) if name == v));
+        // A position is "settled" if it is `v` itself, a const/wildcard, or an already-bound
+        // variable. An equality pin requires every position to be settled — the leg then binds
+        // no NEW free variable beyond `v` and is a pure selection on `v`.
+        let other_settled = args.iter().all(|t| match t {
+            Term::Var(name) => name == v || run.contains(name),
+            Term::Const(_) | Term::Lit(_) | Term::Wildcard => true,
+        });
+        // Advance the running bind set with this leg's provided vars BEFORE moving on, so a
+        // downstream filter sees a binding this leg introduced.
+        let provides = positive_can_place_and_provides(atom, &run).1;
+        run.extend(provides);
+        if !refs_v || !other_settled {
+            continue;
+        }
+        match atom.predicate() {
+            // attr(...): an equality selection on `v` only when `v` is the id (point read keyed
+            // by v) or the value (read off a bound id) — NOT when v is merely the key name.
+            "attr" if args.len() >= 3 => {
+                let v_is_id = matches!(&args[0], Term::Var(n) if n == v);
+                let v_is_value = matches!(&args[2], Term::Var(n) if n == v);
+                if v_is_id || v_is_value {
+                    return true;
+                }
+            }
+            // edge(Src, Dst, T): an adjacency equality on `v` when v is an endpoint and the
+            // OTHER endpoint is already bound (the leg is a bound-endpoint existence probe).
+            "edge" | "incoming" if args.len() >= 2 => {
+                let v_is_src = matches!(&args[0], Term::Var(n) if n == v);
+                let v_is_dst = matches!(&args[1], Term::Var(n) if n == v);
+                let other_endpoint = if v_is_src { &args[1] } else { &args[0] };
+                let other_bound = match other_endpoint {
+                    Term::Var(n) => run.contains(n),
+                    _ => true,
+                };
+                if (v_is_src || v_is_dst) && other_bound {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 /// The cardinality estimate of a base-relation leg under its current bind pattern (spec §7).
@@ -1343,6 +1475,124 @@ mod tests {
             .expect_err("estimate guard fires");
         assert_eq!(err.code, PlanCode::GuardRejected, "{}", err);
         assert!(err.detail.contains("max_materialized_facts"), "{}", err.detail);
+    }
+
+    // ── selectivity-aware shared-variable equality joins (the §3 q-error fix) ──
+
+    /// The stdlib `static_member` shape (js_property_access_full.dl): a derived driver binds
+    /// (F, N, BaseN); a `node(Cls,"CLASS")` generator introduces Cls; two `attr(Cls,...)`
+    /// equality filters PIN Cls to the (file, name) class; `edge(Cls,T,"HAS_METHOD")` fans to
+    /// the method; `attr(T,"name",N)` pins it. The class+method are equality-keyed nearly 1:1,
+    /// so the real output is tiny (~811 on the live graph). The pre-fix estimator cross-
+    /// producted |uc_pa|·|CLASS|·avg_degree ≈ 11.7M and spuriously tripped E-PLAN-003. With the
+    /// selectivity reduction the pinned `node(Cls,"CLASS")` generator is key-narrowed, so the
+    /// rule plans and its estimate is realistic (well under the 10M default guard).
+
+    #[test]
+    fn selective_equality_join_estimate_is_realistic_static_member_shape() {
+        // realistic dogfood magnitudes: ~413k nodes, ~1.2M edges, 12k CLASS nodes.
+        let st = stats_typed(413_000, 1_200_000, &[("CLASS", 12_000)]);
+        let strat = empty_strat();
+        // static_member(PA, T) :- uc_pa(PA,F,N,BaseN), node(Cls,"CLASS"),
+        //   attr(Cls,"file",F), attr(Cls,"name",BaseN), edge(Cls,T,"HAS_METHOD"),
+        //   attr(T,"name",N).
+        // (`uc_pa` is an UNKNOWN predicate to a bare `plan_rule` — it has no stratum, so it is
+        // treated as a derived leg sized at the whole-graph None-fallback magnitude, the same
+        // conservative driver size the live planner saw. The fix must still bring the product
+        // under the guard.)
+        let rule = Rule::new(
+            Atom::new("static_member", vec![v("PA"), v("T")]),
+            vec![
+                pos("uc_pa", vec![v("PA"), v("F"), v("N"), v("BaseN")]),
+                pos("node", vec![v("Cls"), c("CLASS")]),
+                pos("attr", vec![v("Cls"), c("file"), v("F")]),
+                pos("attr", vec![v("Cls"), c("name"), v("BaseN")]),
+                pos("edge", vec![v("Cls"), v("T"), c("HAS_METHOD")]),
+                pos("attr", vec![v("T"), c("name"), v("N")]),
+            ],
+        );
+        let plan = plan_rule(&rule, &strat, &st)
+            .expect("selective equality joins must plan — not a real 11.7M explosion");
+        assert!(
+            plan.estimate <= MAX_MATERIALIZED_FACTS,
+            "static_member estimate {} must drop under the 10M default guard (was ~11.7M)",
+            plan.estimate
+        );
+        // The class generator IS key-narrowed: the estimate is far below the raw
+        // |CLASS|·avg_degree·driver cross-product (≥ tens of millions). A few hundred k is a
+        // safe over-estimate of the true ~811; the point is it no longer trips the guard.
+        assert!(
+            plan.estimate < 1_000_000,
+            "pinned class+method join should collapse to a small keyed estimate, got {}",
+            plan.estimate
+        );
+    }
+
+    /// The selectivity reduction must NOT fire on a GENUINE cross-product: a two-hop generator
+    /// join whose shared variable is NOT equality-pinned by any downstream selection keeps its
+    /// full magnitude and still trips E-PLAN-003. Here `edge(X,Y,"T"), edge(Y,Z,"T")` — Y is the
+    /// join variable but the second leg is itself a GENERATOR over a free Z (it introduces a new
+    /// tuple, it does not equality-pin Y against a bound value), so no key-narrowing applies.
+    #[test]
+    fn genuine_cross_join_without_selective_key_still_trips_guard() {
+        let rule = Rule::new(
+            Atom::new("h", vec![v("X"), v("Y"), v("Z")]),
+            vec![
+                pos("edge", vec![v("X"), v("Y"), c("T")]),
+                pos("edge", vec![v("Y"), v("Z"), c("T")]),
+            ],
+        );
+        let strat = empty_strat();
+        let err = plan_rule(&rule, &strat, &stats(1_000, 100_000_000))
+            .expect_err("a real two-hop explosion must still be rejected");
+        assert_eq!(err.code, PlanCode::GuardRejected, "{}", err);
+        assert!(err.detail.contains("max_materialized_facts"), "{}", err.detail);
+    }
+
+    /// Direct discrimination unit on the pin detector itself. A generator that introduces `Cls`
+    /// is pinned by a downstream `attr(Cls,"name",Name)` equality whose value side is already
+    /// bound (Name bound by an intervening driver) — but NOT by a bare `node(Cls,"CLASS")`
+    /// type-restriction, nor by an `edge(Cls,T,_)` whose other endpoint is itself free (a
+    /// generator hop, not a bound-endpoint probe). This is the discrimination that keeps a
+    /// genuine cross-join from being spuriously reduced.
+    #[test]
+    fn downstream_equality_pin_detection_discriminates() {
+        let bound: HashSet<String> = HashSet::new();
+        let provided: HashSet<String> = ["Cls".to_string()].into_iter().collect();
+
+        // PINNED: drv binds Name (idx1), then attr(Cls,"name",Name) equality-pins Cls (idx2).
+        let pinned = vec![
+            pos("node", vec![v("Cls"), c("CLASS")]),
+            pos("drv", vec![v("Name")]),
+            pos("attr", vec![v("Cls"), c("name"), v("Name")]),
+        ];
+        assert!(
+            downstream_equality_pins("Cls", 0, &pinned, &bound, &provided),
+            "attr(Cls,\"name\",Name) with Name bound downstream must pin Cls"
+        );
+
+        // NOT pinned: only a type-restriction and a HAS_METHOD edge whose dst T is FREE (a
+        // generator hop) — no equality selection on Cls against a bound value.
+        let unpinned = vec![
+            pos("node", vec![v("Cls"), c("CLASS")]),
+            pos("edge", vec![v("Cls"), v("T"), c("HAS_METHOD")]),
+        ];
+        assert!(
+            !downstream_equality_pins("Cls", 0, &unpinned, &bound, &provided),
+            "a free-endpoint HAS_METHOD hop must NOT pin Cls (it is a generator, not an equality)"
+        );
+
+        // NOT pinned: an attr leg keyed on Cls whose VALUE is a fresh free variable (a value
+        // read, not an equality against a bound value) does not pin Cls's identity. (`name` here
+        // is the bound key; the free V is what the leg generates.)
+        let value_read = vec![
+            pos("node", vec![v("Cls"), c("CLASS")]),
+            pos("attr", vec![v("Cls"), c("name"), v("V")]),
+        ];
+        assert!(
+            !downstream_equality_pins("Cls", 0, &value_read, &bound, &provided),
+            "attr(Cls,\"name\",V) with V free is a value read, not an equality pin"
+        );
     }
 
     // ── recursive derived leg → hash-on-delta ───────────────────────

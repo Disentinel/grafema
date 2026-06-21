@@ -1561,6 +1561,7 @@ async fn main() -> Result<()> {
                     request_timeout: std::time::Duration::from_secs(300),
                     effects_db_path: effects_db_path.clone(),
                     skip_resolve_steps: resolve_skips_env.clone(),
+                    extra_env: Vec::new(),
                 };
 
                 match process_pool::ProcessPool::new(resolve_pool_config, 1) {
@@ -2042,6 +2043,7 @@ async fn main() -> Result<()> {
                     command: cfg.analyzers.beam_resolve_path(),
                     args: vec!["--daemon".to_string()],
                     effects_db_path: effects_db_path.clone(),
+                    extra_env: config::beam_utf8_env(),
                     ..process_pool::PoolConfig::default()
                 };
                 match process_pool::ProcessPool::new(pool_cfg, 1) {
@@ -2547,6 +2549,7 @@ async fn main() -> Result<()> {
                     // GRAFEMA_SKIP_RESOLVE_STEPS from the parent env, which gates
                     // the remaining native step (runtime-globals).
                     skip_resolve_steps: None,
+                    extra_env: Vec::new(),
                 };
 
                 match process_pool::ProcessPool::new(resolve_pool_config, 1) {
@@ -2949,6 +2952,7 @@ async fn main() -> Result<()> {
                     command: cfg.analyzers.beam_resolve_path(),
                     args: vec!["--daemon".to_string()],
                     effects_db_path: effects_db_path.clone(),
+                    extra_env: config::beam_utf8_env(),
                     ..process_pool::PoolConfig::default()
                 };
                 match process_pool::ProcessPool::new(pool_cfg, 1) {

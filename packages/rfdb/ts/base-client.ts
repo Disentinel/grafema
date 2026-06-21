@@ -40,11 +40,9 @@ import type {
   CommitBatchResponse,
 } from '@grafema/types';
 
-/**
- * Default timeout for operations (60 seconds).
- * Flush/compact may take time for large graphs, but should not hang indefinitely.
- */
-const DEFAULT_TIMEOUT_MS = 60_000;
+// Per-operation timeout ceilings (interactive vs bulk/streaming/drop) are
+// env-configurable and resolved by the concrete transport's `_send`. See
+// ./timeout-config.ts (RFDB_RPC_TIMEOUT_MS / RFDB_RPC_BULK_TIMEOUT_MS).
 
 export abstract class BaseRFDBClient extends EventEmitter implements IRFDBClient {
   abstract readonly socketPath: string;
