@@ -133,6 +133,15 @@ encl_fn(C, Fn) :- encl(C, Fn), node(Fn, "FUNCTION").
 fn_owner(C, O)     :- encl_fn(C, Fn), edge(O, Fn, "CONTAINS").
 file_module(C, M)  :- rs_call(C, File, N), node(M, "MODULE"), attr(M, "file", File).
 
+% A method call carries a direct CALL -READS_FROM-> receiver (self / a variable);
+% a plain free-function call never does — the analyzer's method-call discriminator
+% (rust_analyzer.rs:1358-1370, the same signal rust_cross_methods_ctor DELTA 6
+% keys on). `self.foo()` resolves to the impl METHOD (the owner arm), NEVER to a
+% same-named file-level free fn, so the free-fn arm below is gated off method
+% calls. Without this, a file with both `impl T { fn parse }` and a free
+% `fn parse` over-resolves every `self.parse()` to BOTH (the parser.rs residual).
+has_receiver(C) :- rs_call(C, _, _), edge(C, _, "READS_FROM").
+
 % R1: scope-walk exact. The same-name FUNCTION must be lexically visible —
 % sharing the enclosing fn's owner (sibling method / sibling module fn), a
 % file-level free function (owned by the file MODULE), OR a nested local fn
@@ -142,8 +151,11 @@ file_module(C, M)  :- rs_call(C, File, N), node(M, "MODULE"), attr(M, "file", Fi
 % enclosing FUNCTION the other arms walk, and excludes the trivial self-edge
 % (neq(Fn, T)). Live-verified: recovers 28 (C,T) pairs the owner/file-MODULE arms
 % miss (nested `fn id_of` / `assert_invertible` test helpers), all ⊆ the flat set.
+% The file-MODULE free-fn arm is gated by \+ has_receiver: a `self.foo()` method
+% call is resolved by the owner arm to the impl method, not to a same-named free
+% fn (free-fn calls — the legitimate target of this arm — carry no receiver).
 exact_scoped(C, T) :- rs_call(C, File, N), rs_fn(File, N, T), fn_owner(C, O), edge(O, T, "CONTAINS").
-exact_scoped(C, T) :- rs_call(C, File, N), rs_fn(File, N, T), file_module(C, M), edge(M, T, "CONTAINS").
+exact_scoped(C, T) :- rs_call(C, File, N), rs_fn(File, N, T), file_module(C, M), edge(M, T, "CONTAINS"), \+ has_receiver(C).
 exact_scoped(C, T) :- rs_call(C, File, N), rs_fn(File, N, T), encl_fn(C, Fn), edge(Fn, T, "CONTAINS"), neq(Fn, T).
 has_scoped(C)      :- exact_scoped(C, T).
 

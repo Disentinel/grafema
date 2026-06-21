@@ -3069,6 +3069,68 @@ mod tests {
         );
     }
 
+    /// R1 method/free-fn name collision (the parser.rs residual). A file with both
+    /// a method `impl Parser { fn parse }` and a free `fn parse`: a `self.parse()`
+    /// method call (CALL with a READS_FROM receiver) must resolve to the METHOD
+    /// ONLY (owner arm), NOT also to the free fn (file-MODULE arm gated by
+    /// \+ has_receiver). A bare free call `parse()` (no receiver) still resolves
+    /// the free fn.
+    #[test]
+    fn rust_calls_r1_method_call_excludes_free_fn_of_same_name() {
+        let mut v = FixtureStorageView::new(1);
+        named_node(&mut v, "m_p", "p", "MODULE", "p.rs");
+
+        // impl Parser { fn parse(&self); fn run(&self) }  +  free fn parse()
+        named_node(&mut v, "ib_parser", "Parser", "IMPL_BLOCK", "p.rs");
+        edge(&mut v, "m_p", "ib_parser", "CONTAINS");
+        named_node(&mut v, "f_method_parse", "parse", "FUNCTION", "p.rs");
+        named_node(&mut v, "f_run", "run", "FUNCTION", "p.rs");
+        named_node(&mut v, "f_free_parse", "parse", "FUNCTION", "p.rs");
+        for (ib, f) in [("ib_parser", "f_method_parse"), ("ib_parser", "f_run")] {
+            edge(&mut v, ib, f, "HAS_METHOD");
+            edge(&mut v, ib, f, "CONTAINS");
+        }
+        edge(&mut v, "m_p", "f_free_parse", "CONTAINS");
+
+        // `self.parse()` inside run: CALL "parse" with a READS_FROM receiver.
+        named_node(&mut v, "c_self", "parse", "CALL", "p.rs");
+        named_node(&mut v, "ref_self", "self", "REFERENCE", "p.rs");
+        edge(&mut v, "f_run", "c_self", "CONTAINS");
+        edge(&mut v, "c_self", "ref_self", "READS_FROM"); // method-call discriminator
+
+        // A bare free call `parse()` at module level (no receiver).
+        named_node(&mut v, "c_free", "parse", "CALL", "p.rs");
+        edge(&mut v, "m_p", "c_free", "CONTAINS");
+
+        let (eval, _specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            RUST_CALLS_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("rust_calls.dl evaluates");
+
+        let edges: BTreeSet<(u128, u128, String)> = triples(&eval, "rust_call");
+        let expect: BTreeSet<(u128, u128, String)> = [
+            ("c_self", "f_method_parse"), // method call → impl method ONLY
+            ("c_free", "f_free_parse"),   // free call → free fn
+        ]
+        .iter()
+        .map(|(c, t)| (id_of(c), id_of(t), "rust-calls".to_string()))
+        .collect();
+        assert_eq!(
+            edges, expect,
+            "self.parse() (has receiver) resolves to Parser::parse ONLY; a bare \
+             parse() (no receiver) resolves the free fn"
+        );
+        assert!(
+            !edges.contains(&(id_of("c_self"), id_of("f_free_parse"), "rust-calls".to_string())),
+            "the method call self.parse() must NOT also resolve to the free fn parse \
+             (the parser.rs residual this fix removes)"
+        );
+    }
+
     /// Wave M (rust_calls DELTA 5): macro invocations — CALL nodes the analyzer
     /// stamps with metadata macro=true (rust_analyzer.rs:1433-1457, walk_macro;
     /// the name is the macro path WITHOUT '!') — are EXCLUDED from name
