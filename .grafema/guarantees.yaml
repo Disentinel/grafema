@@ -306,6 +306,56 @@ guarantees:
     severity: error
 
   # ============================================================
+  # TIER 1b: RESOLUTION SOUNDNESS (ERROR)
+  # A resolver maps each call to its target. For the resolvers that
+  # are designed to be FUNCTIONS — one target per call — emitting two
+  # distinct targets under the same resolvedVia tag is an
+  # over-resolution: an unsound name-match that fans a single call
+  # onto several look-alikes (the parser.rs `self.parse()` → method
+  # + free fn, or `IndexEntry::new` → every `fn new`, both now fixed
+  # in rust_calls). This guarantee mechanically locks that property.
+  #
+  # CARVE-OUTS (legitimately one-to-many at the local heuristic tier,
+  # NOT bugs — excluded by resolvedVia):
+  #   - rust-dyn-dispatch: a trait-object method call dispatches to
+  #     every impl of the trait method by design (semantic dispatch).
+  #   - rust-cross-method: cross-impl `x.len()` with no local receiver
+  #     type fans to every `len` impl — the parity ceiling of the
+  #     heuristic tier (precise resolution is the team-server SCIP
+  #     tier, see _ai/research/rfd-resolution-precision-and-team-server-tier.md).
+  #
+  # SCOPE / KNOWN GAP: verified GREEN for the rust resolvers (rust-calls
+  # is a function as of the #23 rework). The JS resolvers (runtime-globals
+  # residual, cross-file-calls, same-file-calls) have their own
+  # over-resolution not yet closed — on a graph where they fire, this
+  # rule reports them (correctly: they are real over-resolutions to fix,
+  # the JS analogue of the #23 rust work). `grafema check` is NOT run in
+  # CI, so this gate is opt-in enforcement, not a per-PR CI blocker.
+  # ============================================================
+
+  - name: calls-resolution-is-a-function
+    description: >
+      A CALL must not resolve to two distinct targets under the SAME
+      resolvedVia tag — resolution must be a function (one target per
+      (call, resolver)). Over-resolution is an unsound heuristic
+      name-match fanning one call onto multiple look-alikes. Excludes
+      the two resolvers that are one-to-many BY DESIGN: rust-dyn-dispatch
+      (trait-object semantic dispatch) and rust-cross-method (the
+      heuristic parity ceiling). Uses the derive builtin edge_attr to
+      read the CALLS edge's resolvedVia metadata.
+    check: datalog
+    rule: >-
+      violation(C) :-
+        edge(C, T1, "CALLS"),
+        edge(C, T2, "CALLS"),
+        neq(T1, T2),
+        edge_attr(C, T1, "CALLS", "resolvedVia", R),
+        edge_attr(C, T2, "CALLS", "resolvedVia", R),
+        neq(R, "rust-dyn-dispatch"),
+        neq(R, "rust-cross-method").
+    severity: error
+
+  # ============================================================
   # TIER 2: SEMANTIC INTEGRITY (WARNING)
   # Nodes that exist but miss the edge that gives them meaning.
   # The node is structurally connected but semantically hollow —
