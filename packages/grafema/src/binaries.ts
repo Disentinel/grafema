@@ -1,61 +1,40 @@
 /**
- * Unified binary lookup for Grafema native binaries.
+ * Binary lookup for the unified `grafema` package.
  *
- * Replaces 3 separate findOrchestratorBinary / findRfdbBinary implementations
- * with a single module. Search order:
+ * REG-1198: this file used to carry its own copy of the search order — the
+ * third one in the repo, next to `packages/util/src/utils/findRfdbBinary.ts`
+ * and an inlined one in `grafema doctor`. Three copies drifted: doctor put the
+ * monorepo builds first and never looked at the platform package, so it
+ * reported "monorepo (release)" while consumers were being handed
+ * rfdb-server 0.3.28 out of `@grafema/grafema-darwin-x64`.
  *
- * 1. Environment variable (GRAFEMA_RFDB_SERVER / GRAFEMA_ORCHESTRATOR)
- * 2. Platform package (@grafema/grafema-{os}-{arch})
- * 3. Monorepo target/release (development)
- * 4. Monorepo target/debug (development)
- * 5. System $PATH
- * 6. ~/.local/bin/
+ * The order now lives once, in @grafema/util. What legitimately differs here
+ * is only WHERE the platform package is resolved from: this package declares
+ * `@grafema/grafema-{os}-{arch}` among its own optional dependencies, so it
+ * must resolve it against ITS module location — @grafema/util cannot see it
+ * from inside the monorepo. That anchor is injected; the order is not.
  */
 
 import { existsSync } from 'fs';
-import { join, delimiter, dirname } from 'path';
+import { join } from 'path';
 import { createRequire } from 'module';
-import { fileURLToPath } from 'url';
+import {
+  listBinaryCandidates,
+  getPlatformPackageName,
+  type BinaryName,
+  type BinaryCandidate,
+} from '@grafema/util';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-export type BinaryName = 'rfdb-server' | 'grafema-orchestrator';
-
-interface BinaryConfig {
-  envVar: string;
-  monorepoPackage: string;
-}
-
-const BINARY_CONFIG: Record<BinaryName, BinaryConfig> = {
-  'rfdb-server': {
-    envVar: 'GRAFEMA_RFDB_SERVER',
-    monorepoPackage: 'rfdb-server',
-  },
-  'grafema-orchestrator': {
-    envVar: 'GRAFEMA_ORCHESTRATOR',
-    monorepoPackage: 'grafema-orchestrator',
-  },
-};
+export type { BinaryName };
+export { getPlatformPackageName };
 
 /**
- * Get platform package name for the current OS/arch.
- * E.g., "@grafema/grafema-darwin-arm64"
- */
-export function getPlatformPackageName(): string {
-  const platform = process.platform === 'darwin' ? 'darwin' : 'linux';
-  const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
-  return `@grafema/grafema-${platform}-${arch}`;
-}
-
-/**
- * Try to load the platform package and get binary paths from it.
+ * Resolve the platform package from THIS package's node_modules.
  */
 function tryPlatformPackage(binaryName: BinaryName): string | null {
   try {
     const require = createRequire(import.meta.url);
-    const pkgName = getPlatformPackageName();
-    const pkg = require(pkgName);
+    const pkg = require(getPlatformPackageName());
 
     if (binaryName === 'rfdb-server' && pkg.rfdbServerPath) {
       const p = pkg.rfdbServerPath;
@@ -78,29 +57,11 @@ function tryPlatformPackage(binaryName: BinaryName): string | null {
 }
 
 /**
- * Find monorepo root by looking for characteristic files.
+ * Every place this binary is findable from the unified package, in the shared
+ * resolution order.
  */
-function findMonorepoRoot(): string | null {
-  // Walk up from this file's location
-  let dir = __dirname;
-  for (let i = 0; i < 8; i++) {
-    const hasPackagesDir = existsSync(join(dir, 'packages', 'util'));
-    const hasPnpmWorkspace = existsSync(join(dir, 'pnpm-workspace.yaml'));
-    if (hasPackagesDir && hasPnpmWorkspace) {
-      return dir;
-    }
-    const parent = dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-
-  // Try GRAFEMA_ROOT env var
-  const envRoot = process.env.GRAFEMA_ROOT;
-  if (envRoot && existsSync(join(envRoot, 'packages', 'util'))) {
-    return envRoot;
-  }
-
-  return null;
+export function listBinaries(binaryName: BinaryName, explicitPath?: string): BinaryCandidate[] {
+  return listBinaryCandidates(binaryName, { explicitPath }, { platformPackagePath: tryPlatformPackage });
 }
 
 /**
@@ -111,48 +72,7 @@ function findMonorepoRoot(): string | null {
  * @returns Absolute path to the binary, or null if not found
  */
 export function findBinary(binaryName: BinaryName, explicitPath?: string): string | null {
-  // 0. Explicit path (from config/flag) — no fallback
-  if (explicitPath) {
-    return existsSync(explicitPath) ? explicitPath : null;
-  }
-
-  const config = BINARY_CONFIG[binaryName];
-
-  // 1. Environment variable
-  const envPath = process.env[config.envVar];
-  if (envPath && existsSync(envPath)) {
-    return envPath;
-  }
-
-  // 2. Platform package (@grafema/grafema-{os}-{arch})
-  const platformPath = tryPlatformPackage(binaryName);
-  if (platformPath) return platformPath;
-
-  // 3-4. Monorepo development builds
-  const monorepoRoot = findMonorepoRoot();
-  if (monorepoRoot) {
-    for (const profile of ['release', 'debug']) {
-      const p = join(monorepoRoot, 'packages', config.monorepoPackage, 'target', profile, binaryName);
-      if (existsSync(p)) return p;
-    }
-  }
-
-  // 5. System PATH
-  const pathDirs = (process.env.PATH || '').split(delimiter);
-  for (const dir of pathDirs) {
-    if (!dir) continue;
-    const p = join(dir, binaryName);
-    if (existsSync(p)) return p;
-  }
-
-  // 6. ~/.local/bin
-  const home = process.env.HOME || process.env.USERPROFILE || '';
-  if (home) {
-    const p = join(home, '.local', 'bin', binaryName);
-    if (existsSync(p)) return p;
-  }
-
-  return null;
+  return listBinaries(binaryName, explicitPath)[0]?.path ?? null;
 }
 
 /**
@@ -173,7 +93,8 @@ export function findOrchestratorBinary(explicitPath?: string): string | null {
  * Get human-readable error message when a binary is not found.
  */
 export function getBinaryNotFoundMessage(binaryName: BinaryName): string {
-  const config = BINARY_CONFIG[binaryName];
+  const envVar =
+    binaryName === 'rfdb-server' ? 'GRAFEMA_RFDB_SERVER' : 'GRAFEMA_ORCHESTRATOR';
   const pkgName = getPlatformPackageName();
 
   return `${binaryName} binary not found.
@@ -183,10 +104,10 @@ Options:
      npm install grafema
 
   2. Set environment variable:
-     export ${config.envVar}=/path/to/${binaryName}
+     export ${envVar}=/path/to/${binaryName}
 
   3. Build from source:
-     cd packages/${config.monorepoPackage} && cargo build --release
+     cd packages/${binaryName} && cargo build --release
 
   4. Install to PATH:
      cp target/release/${binaryName} ~/.local/bin/

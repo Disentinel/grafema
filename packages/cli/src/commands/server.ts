@@ -13,7 +13,15 @@ import { resolve, join, dirname } from 'path';
 import { existsSync, unlinkSync, readFileSync } from 'fs';
 import { setTimeout as sleep } from 'timers/promises';
 import { spawn } from 'child_process';
-import { RFDBClient, loadConfig, RFDBServerBackend, findRfdbBinary, startRfdbServer } from '@grafema/util';
+import {
+  RFDBClient,
+  loadConfig,
+  RFDBServerBackend,
+  findRfdbBinary,
+  startRfdbServer,
+  rfdbPidPath,
+  rfdbServerRecordPath,
+} from '@grafema/util';
 import { exitWithError } from '../utils/errorFormatter.js';
 
 // Extend config type for server settings
@@ -63,7 +71,9 @@ function getProjectPaths(projectPath: string) {
   const grafemaDir = join(projectPath, '.grafema');
   const socketPath = join(grafemaDir, 'rfdb.sock');
   const dbPath = join(grafemaDir, 'graph.rfdb');
-  const pidPath = join(grafemaDir, 'rfdb.pid');
+  // One definition of the PID-file name, derived from the socket, so the CLI
+  // and the backend can never disagree about which file to read (REG-1199).
+  const pidPath = rfdbPidPath(socketPath);
   return { grafemaDir, socketPath, dbPath, pidPath };
 }
 
@@ -110,9 +120,13 @@ async function stopRunningServer(socketPath: string, pidPath: string): Promise<v
     attempts++;
   }
 
-  // Clean up PID file
+  // Clean up PID file and the record of which database it served (REG-1199)
   if (existsSync(pidPath)) {
     unlinkSync(pidPath);
+  }
+  const recordPath = rfdbServerRecordPath(socketPath);
+  if (existsSync(recordPath)) {
+    unlinkSync(recordPath);
   }
 }
 

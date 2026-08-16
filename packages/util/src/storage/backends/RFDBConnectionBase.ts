@@ -10,11 +10,17 @@
 
 import { RFDBClient } from '@grafema/rfdb-client';
 import type { ChildProcess } from 'child_process';
-import { unlinkSync } from 'node:fs';
-import { join, dirname } from 'path';
+import { unlinkSync, existsSync, readFileSync } from 'node:fs';
 
 import type { FieldDeclaration } from '@grafema/types';
-import { startRfdbServer } from '../../utils/startRfdbServer.js';
+import {
+  startRfdbServer,
+  checkServerDatabase,
+  staleServerMessage,
+  pathIdentity,
+  rfdbPidPath,
+  rfdbServerRecordPath,
+} from '../../utils/startRfdbServer.js';
 import { GRAFEMA_VERSION, getSchemaVersion } from '../../version.js';
 import type { RFDBServerBackendOptions } from './rfdbTypes.js';
 import { resolveSocketPath, waitForPidExit } from './rfdbCodec.js';
@@ -78,14 +84,12 @@ export class RFDBConnectionBase {
       this.logError('[RFDBServerBackend] Client error:', err.message);
     });
 
+    let responsive = false;
     try {
       await this.client.connect();
       // Verify server is responsive
       await this.client.ping();
-      this.connected = true;
-      await this._negotiateProtocol();
-      this.log(`[RFDBServerBackend] Connected to RFDB server at ${this.socketPath} (protocol v${this.protocolVersion})`);
-      return;
+      responsive = true;
     } catch {
       // Server not running or stale socket
       if (!this.autoStart) {
@@ -95,6 +99,19 @@ export class RFDBConnectionBase {
         );
       }
       this.log(`[RFDBServerBackend] RFDB server not running, starting...`);
+    }
+
+    if (responsive) {
+      // Responsive is not the same as usable: a detached server whose project
+      // directory was deleted and recreated answers ping and then fails every
+      // write with a bare ENOENT (REG-1199). Say so here, while the cause is
+      // still nameable — and outside the catch above, so the diagnosis is not
+      // swallowed and re-read as "server not running".
+      this._assertServerServesThisDatabase();
+      this.connected = true;
+      await this._negotiateProtocol();
+      this.log(`[RFDBServerBackend] Connected to RFDB server at ${this.socketPath} (protocol v${this.protocolVersion})`);
+      return;
     }
 
     // Start the server (only if autoStart is true)
@@ -120,6 +137,26 @@ export class RFDBConnectionBase {
   }
 
   /**
+   * Throw the real diagnosis when the server we just reached was started
+   * against a database that is no longer there (REG-1199).
+   *
+   * Silent when there is nothing to compare against: a server started outside
+   * this code path leaves no record, and refusing to talk to it would be a
+   * regression, not a fix.
+   */
+  private _assertServerServesThisDatabase(): void {
+    if (!this.dbPath) return;
+    const verdict = checkServerDatabase(this.socketPath, this.dbPath, {
+      existsSync,
+      readFileSync: (p: string, enc: 'utf8') => readFileSync(p, enc),
+      pathIdentity,
+    });
+    if (verdict.state === 'stale') {
+      throw new Error(staleServerMessage(this.socketPath, verdict));
+    }
+  }
+
+  /**
    * Start RFDB server process using shared utility.
    */
   private async _startServer(): Promise<void> {
@@ -130,7 +167,7 @@ export class RFDBConnectionBase {
     await startRfdbServer({
       dbPath: this.dbPath,
       socketPath: this.socketPath,
-      pidPath: join(dirname(this.socketPath), 'rfdb.pid'),
+      pidPath: rfdbPidPath(this.socketPath),
       waitTimeoutMs: 30_000,
       logger: this.silent ? undefined : { debug: (m: string) => this.log(m) },
     });
@@ -203,7 +240,7 @@ export class RFDBConnectionBase {
    */
   async shutdownServer(): Promise<void> {
     if (!this.client) return;
-    const pidPath = join(dirname(this.socketPath), 'rfdb.pid');
+    const pidPath = rfdbPidPath(this.socketPath);
     try {
       await this.client.shutdown();
     } catch {
@@ -213,9 +250,11 @@ export class RFDBConnectionBase {
     this.connected = false;
     this.serverProcess = null;
     await waitForPidExit(pidPath, 5000);
-    // Explicitly remove PID and socket so checkExistingServer returns 'none'
-    // and the subsequent connect() spawns a fresh server unconditionally.
+    // Explicitly remove PID, server record and socket so checkExistingServer
+    // returns 'none' and the subsequent connect() spawns a fresh server
+    // unconditionally.
     try { unlinkSync(pidPath); } catch { /* already gone */ }
+    try { unlinkSync(rfdbServerRecordPath(this.socketPath)); } catch { /* already gone */ }
     try { unlinkSync(this.socketPath); } catch { /* already gone */ }
   }
 

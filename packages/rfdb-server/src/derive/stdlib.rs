@@ -6618,7 +6618,12 @@ mod tests {
         };
 
         let known_failures = ["rust_cross_methods_ctor", "rust_receiver_typing"];
+        let expected_planned = STDLIB_PACKS
+            .iter()
+            .filter(|(name, _)| !known_failures.contains(name))
+            .count();
         let mut failed: Vec<String> = Vec::new();
+        let mut planned = 0usize;
         for (name, src) in STDLIB_PACKS {
             if known_failures.contains(name) {
                 continue;
@@ -6628,6 +6633,8 @@ mod tests {
             let rules = program.rules();
             if let Err(e) = plan_program(&rules, &strat, &stats) {
                 failed.push(format!("{name}: {e}"));
+            } else {
+                planned += 1;
             }
         }
         assert!(
@@ -6635,6 +6642,22 @@ mod tests {
             "packs must plan under dogfood-scale stats (E-PLAN-003 is a \
              production rejection, not a perf hint):\n{}",
             failed.join("\n")
+        );
+        // `failed.is_empty()` is also true of a gate that planned NOTHING —
+        // empty the pack list or skip the loop and it passes while checking
+        // nothing at all (verified: both gates stay green with the iteration
+        // emptied, and drop from 24s to 0.00s). Pin the work actually done.
+        assert!(
+            planned > 0,
+            "gate planned no packs at all — STDLIB_PACKS is empty or the loop did not run"
+        );
+        assert_eq!(
+            planned, expected_planned,
+            "every bundled pack except the known exclusions must have been planned \
+             ({} of {} STDLIB_PACKS entries, {} excluded)",
+            planned,
+            STDLIB_PACKS.len(),
+            known_failures.len()
         );
     }
 
@@ -6690,9 +6713,12 @@ mod tests {
         use crate::derive::stratify::stratify;
 
         let mut failed: Vec<String> = Vec::new();
+        let mut planned = 0usize;
+        let mut oracles = 0usize;
         for total_nodes in [0u64, 1, 2, 4, 8, 16, 32] {
             for total_edges in [0u64, 3, total_nodes] {
                 for populated in [true, false] {
+                    oracles += 1;
                     let stats = Stats {
                         total_nodes,
                         total_edges,
@@ -6713,6 +6739,8 @@ mod tests {
                                  oracle={} {name}: {e}",
                                 if populated { "populated" } else { "empty" }
                             ));
+                        } else {
+                            planned += 1;
                         }
                     }
                 }
@@ -6729,6 +6757,23 @@ mod tests {
              rejections):\n{}",
             failed.len(),
             failed.join("\n")
+        );
+        // Same vacuity hazard as the dogfood twin: `failed.is_empty()` holds
+        // when nothing was planned. Pin both factors of the sweep — the number
+        // of oracles and the packs planned against each — so an emptied pack
+        // list or a collapsed sweep is a failure, not a fast pass.
+        assert!(
+            planned > 0,
+            "gate planned no packs at all — STDLIB_PACKS is empty or the sweep did not run"
+        );
+        assert_eq!(oracles, 42, "the oracle sweep must cover 7 sizes x 3 edge counts x 2 shapes");
+        assert_eq!(
+            planned,
+            oracles * STDLIB_PACKS.len(),
+            "every one of the {} STDLIB_PACKS entries must be planned against each of \
+             the {} oracles",
+            STDLIB_PACKS.len(),
+            oracles
         );
     }
 
