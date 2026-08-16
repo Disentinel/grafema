@@ -6638,6 +6638,100 @@ mod tests {
         );
     }
 
+    /// Spread `total` nodes over the node types the bundled packs read, so the
+    /// per-type oracle is CONSISTENT with `total_nodes` the way the engine
+    /// builds it (`engine_v2::derive_stats` sums the per-type counts) and no
+    /// pack is vacuously cheap because its type is simply absent.
+    fn micro_nodes_by_type(total: u64) -> std::collections::HashMap<String, u64> {
+        const TYPES: &[&str] = &[
+            "MODULE", "FUNCTION", "CALL", "LITERAL", "IMPORT_BINDING", "CONSTANT",
+            "VARIABLE", "PROPERTY_ACCESS", "REFERENCE", "CLASS", "METHOD", "SCOPE",
+            "http:route", "cli:command", "mcp:tool", "vscode:command",
+        ];
+        let mut m = std::collections::HashMap::new();
+        let mut left = total;
+        let mut i = 0;
+        while left > 0 {
+            *m.entry(TYPES[i % TYPES.len()].to_string()).or_insert(0) += 1;
+            left -= 1;
+            i += 1;
+        }
+        m
+    }
+
+    /// MICRO-SCALE TWIN of [`stdlib_packs_plan_under_dogfood_scale_stats`]
+    /// (REG-1196). The dogfood gate pins ONE point — 426k nodes / 905k edges —
+    /// and that is the regime in which the §3 estimate guard cannot fire at
+    /// all: every keyed derived leg divides by a `total_nodes` so large that it
+    /// floors to 1, the multiplicative chain collapses, and the ceiling is
+    /// unreachable by construction. So the gate certified an inert guard.
+    ///
+    /// The defect it therefore missed is the INVERSE of what the guard is for:
+    /// the SMALLER the graph, the LARGER the planner's estimate, because the
+    /// graph's node count sat in the DENOMINATOR of every keyed-probe fan-out
+    /// (`derived_estimate`). Live on 2026-08-16: `grafema analyze` on a
+    /// one-file C++ project (3 nodes / 3 edges) rejected FOUR packs —
+    /// js_http_routes_{nodes,edges} and js_entrypoint_features_{nodes,edges} —
+    /// with `E-PLAN-003 (res): per-rule output estimate 346862688` and
+    /// `414214080`, i.e. hundreds of millions of facts predicted from a graph
+    /// of three nodes. `ef_rule`, whose true cardinality is a graph-INDEPENDENT
+    /// ≤23 rows (it derives only from the pack's compiled-in ground facts), was
+    /// estimated at 180 on the dogfood graph and 27_360 on a 1-node graph.
+    ///
+    /// Every new or empty project is in this regime, so the guard was strictest
+    /// exactly where it was least needed. Both shapes of the oracle are swept:
+    /// POPULATED (the engine's real per-type counts) and EMPTY (the documented
+    /// fallback in `base_estimate`, where a const node type cannot be narrowed
+    /// and the whole relation is assumed).
+    #[test]
+    fn stdlib_packs_plan_under_micro_scale_stats() {
+        use crate::derive::parser_ext::parse_ext_program;
+        use crate::derive::plan::plan_program;
+        use crate::derive::stratify::stratify;
+
+        let mut failed: Vec<String> = Vec::new();
+        for total_nodes in [0u64, 1, 2, 4, 8, 16, 32] {
+            for total_edges in [0u64, 3, total_nodes] {
+                for populated in [true, false] {
+                    let stats = Stats {
+                        total_nodes,
+                        total_edges,
+                        nodes_by_type: if populated {
+                            micro_nodes_by_type(total_nodes)
+                        } else {
+                            std::collections::HashMap::new()
+                        },
+                    };
+                    for (name, src) in STDLIB_PACKS {
+                        let program =
+                            parse_ext_program(src).unwrap_or_else(|e| panic!("{name}: parse: {e}"));
+                        let strat =
+                            stratify(&program).unwrap_or_else(|e| panic!("{name}: stratify: {e}"));
+                        if let Err(e) = plan_program(&program.rules(), &strat, &stats) {
+                            failed.push(format!(
+                                "N={total_nodes} E={total_edges} \
+                                 oracle={} {name}: {e}",
+                                if populated { "populated" } else { "empty" }
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        // One line per distinct (pack, code, head) — the sweep repeats the same
+        // rejection at many points and the raw list buries the signal.
+        failed.dedup();
+        assert!(
+            failed.is_empty(),
+            "every bundled pack must PLAN on a micro-scale graph — a new or \
+             empty project is the commonest real input, and no rule can \
+             materialize 10M facts out of a graph of ≤32 nodes ({} \
+             rejections):\n{}",
+            failed.len(),
+            failed.join("\n")
+        );
+    }
+
     // ── Java packs (java-resolve migration, lang-spec-java.md) ─────────────
 
     /// VERDICT C2 pin (lang-spec-java.md): a NEGATED BUILTIN literal is a
