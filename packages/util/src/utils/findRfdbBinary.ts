@@ -4,7 +4,8 @@
  * Used by CLI, MCP server, and the unified grafema package.
  * Finds rfdb-server, grafema-orchestrator, or any binary by name.
  *
- * Search order:
+ * Search order (ONE order, defined by listBinaryCandidates; findBinary is its
+ * first element and every diagnostic reports the same list — REG-1198):
  * 1. Explicit path (from config or flag)
  * 2. Environment variable (GRAFEMA_RFDB_SERVER / GRAFEMA_ORCHESTRATOR)
  * 3. Platform package (@grafema/grafema-{os}-{arch})
@@ -13,6 +14,7 @@
  * 6. System PATH lookup
  * 7. ~/.grafema/bin/ (lazy-downloaded analyzers)
  * 8. ~/.local/bin/ (user-installed)
+ * 9. @grafema/rfdb legacy prebuilt (rfdb-server only)
  */
 
 import { existsSync } from 'fs';
@@ -76,8 +78,12 @@ export function getPlatformPackageName(): string {
 
 /**
  * Try to load the platform package and get a binary path from it.
+ *
+ * Exported because node resolution is anchored at the asking module: a caller
+ * that can see `@grafema/grafema-{os}-{arch}` when this module cannot needs to
+ * supply its own anchor and still fall back to this one (REG-1198).
  */
-function tryPlatformPackage(binaryName: BinaryName): string | null {
+export function resolvePlatformPackageBinary(binaryName: BinaryName): string | null {
   try {
     const require = createRequire(import.meta.url);
     const pkgName = getPlatformPackageName();
@@ -130,78 +136,141 @@ function findMonorepoRoot(startDir?: string): string | null {
 }
 
 /**
- * Find a Grafema native binary.
+ * One place a binary can come from.
  *
- * @param binaryName - Which binary to find
- * @param options - Search options
- * @returns Absolute path to the binary, or null if not found
+ * `source` is the human-readable label diagnostics print; it is the same label
+ * for the same step regardless of who asks.
  */
-export function findBinary(binaryName: BinaryName, options: FindBinaryOptions = {}): string | null {
-  const config = BINARY_CONFIG[binaryName];
+export interface BinaryCandidate {
+  source: string;
+  path: string;
+}
 
-  // 1. Explicit path (from config or flag) — no fallback
+/** Injection points, used by tests to stand up a candidate set on disk. */
+export interface ListBinaryCandidatesDeps {
+  existsSync?: (path: string) => boolean;
+  env?: Record<string, string | undefined>;
+  /** Resolve the platform package's binary, or null when it is not installed. */
+  platformPackagePath?: (binaryName: BinaryName) => string | null;
+  /** Resolve the legacy @grafema/rfdb prebuilt path, or null. */
+  legacyRfdbPath?: (binaryName: BinaryName) => string | null;
+}
+
+/**
+ * Legacy @grafema/rfdb npm package (old prebuilt location).
+ */
+function tryLegacyRfdbPackage(binaryName: BinaryName): string | null {
+  if (binaryName !== 'rfdb-server') return null;
+  try {
+    const require = createRequire(import.meta.url);
+    const rfdbPkg = require.resolve('@grafema/rfdb');
+    const rfdbDir = dirname(rfdbPkg);
+    const npmBinary = join(rfdbDir, 'prebuilt', getPlatformDir(), 'rfdb-server');
+    if (existsSync(npmBinary)) return npmBinary;
+  } catch {
+    // @grafema/rfdb not installed
+  }
+  return null;
+}
+
+/**
+ * EVERY place this binary is currently findable, in resolution order.
+ *
+ * REG-1198: the resolution order used to exist twice — here, and again inside
+ * `grafema doctor`, in the opposite order and without the platform package.
+ * Both answers were true of their own path, so consumers loaded rfdb-server
+ * 0.3.28 out of the platform package while doctor cheerfully reported
+ * "monorepo (release)". A diagnostic that walks a different path from the code
+ * it diagnoses can only agree with itself, so the order lives here once and
+ * `findBinary` is defined as "the first of these".
+ *
+ * The list does NOT stop at the winner: a second candidate is exactly what a
+ * silent version divergence looks like, and callers cannot report what the
+ * resolver never told them about.
+ */
+export function listBinaryCandidates(
+  binaryName: BinaryName,
+  options: FindBinaryOptions = {},
+  deps: ListBinaryCandidatesDeps = {},
+): BinaryCandidate[] {
+  const config = BINARY_CONFIG[binaryName];
+  const _existsSync = deps.existsSync ?? existsSync;
+  const env = deps.env ?? process.env;
+  const _platformPackagePath = deps.platformPackagePath ?? resolvePlatformPackageBinary;
+  const _legacyRfdbPath = deps.legacyRfdbPath ?? tryLegacyRfdbPackage;
+
+  const candidates: BinaryCandidate[] = [];
+  const add = (source: string, path: string | null | undefined): void => {
+    if (!path) return;
+    if (candidates.some((c) => c.path === path)) return;
+    candidates.push({ source, path });
+  };
+
+  // 1. Explicit path (from config or flag) — no fallback, by design: an
+  //    explicit path that does not exist is an error, not an invitation to
+  //    search elsewhere.
   if (options.explicitPath) {
     const resolved = resolve(options.explicitPath);
-    return existsSync(resolved) ? resolved : null;
+    return _existsSync(resolved) ? [{ source: 'explicit path', path: resolved }] : [];
   }
 
   // 2. Environment variable
-  const envPath = process.env[config.envVar];
-  if (envPath && existsSync(envPath)) {
-    return envPath;
+  const envPath = env[config.envVar];
+  if (envPath && _existsSync(envPath)) {
+    add(`$${config.envVar}`, envPath);
   }
 
   // 3. Platform package (@grafema/grafema-{os}-{arch})
-  const platformPath = tryPlatformPackage(binaryName);
-  if (platformPath) return platformPath;
+  add(`platform package ${getPlatformPackageName()}`, _platformPackagePath(binaryName));
 
   // 4-5. Monorepo development builds
   const monorepoRoot = findMonorepoRoot(options.monorepoRoot);
   if (monorepoRoot) {
     for (const profile of ['release', 'debug']) {
       const p = join(monorepoRoot, 'packages', config.monorepoPackage, 'target', profile, binaryName);
-      if (existsSync(p)) return p;
+      if (_existsSync(p)) add(`monorepo (${profile})`, p);
     }
   }
 
   // 6. System PATH lookup
-  const pathDirs = (process.env.PATH || '').split(delimiter);
+  const pathDirs = (env.PATH || '').split(delimiter);
   for (const dir of pathDirs) {
     if (!dir) continue;
     const p = join(dir, binaryName);
-    if (existsSync(p)) return p;
+    if (_existsSync(p)) add('PATH', p);
   }
 
   // 7. ~/.grafema/bin/ (lazy-downloaded analyzers)
-  const home = process.env.HOME || process.env.USERPROFILE || '';
+  const home = env.HOME || env.USERPROFILE || '';
   if (home) {
     const p = join(home, '.grafema', 'bin', binaryName);
-    if (existsSync(p)) return p;
+    if (_existsSync(p)) add('~/.grafema/bin', p);
   }
 
   // 8. ~/.local/bin/ (user-installed)
   if (home) {
     const p = join(home, '.local', 'bin', binaryName);
-    if (existsSync(p)) return p;
+    if (_existsSync(p)) add('~/.local/bin', p);
   }
 
-  // Legacy: @grafema/rfdb npm package (old prebuilt location)
-  if (binaryName === 'rfdb-server') {
-    try {
-      const require = createRequire(import.meta.url);
-      const rfdbPkg = require.resolve('@grafema/rfdb');
-      const rfdbDir = dirname(rfdbPkg);
-      const platformDir = getPlatformDir();
-      const npmBinary = join(rfdbDir, 'prebuilt', platformDir, 'rfdb-server');
-      if (existsSync(npmBinary)) {
-        return npmBinary;
-      }
-    } catch {
-      // @grafema/rfdb not installed
-    }
-  }
+  // 9. Legacy: @grafema/rfdb npm package (old prebuilt location)
+  add('@grafema/rfdb (legacy prebuilt)', _legacyRfdbPath(binaryName));
 
-  return null;
+  return candidates;
+}
+
+/**
+ * Find a Grafema native binary.
+ *
+ * Defined as the first candidate of {@link listBinaryCandidates}, so nothing
+ * can consult a different order than the one diagnostics report.
+ *
+ * @param binaryName - Which binary to find
+ * @param options - Search options
+ * @returns Absolute path to the binary, or null if not found
+ */
+export function findBinary(binaryName: BinaryName, options: FindBinaryOptions = {}): string | null {
+  return listBinaryCandidates(binaryName, options)[0]?.path ?? null;
 }
 
 /**

@@ -9,7 +9,8 @@
  */
 
 import { existsSync, readFileSync, statSync, unlinkSync } from 'fs';
-import { join, dirname, delimiter } from 'path';
+import { join, dirname } from 'path';
+import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import {
@@ -17,7 +18,13 @@ import {
   RFDBClient,
   loadConfig,
   GraphFreshnessChecker,
+  listBinaryCandidates,
+  resolvePlatformPackageBinary,
+  getPlatformPackageName,
+  GRAFEMA_VERSION,
+  getSchemaVersion,
 } from '@grafema/util';
+import type { BinaryCandidate } from '@grafema/util';
 import type { DoctorCheckResult } from './types.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -45,122 +52,173 @@ const VALID_PLUGIN_NAMES = new Set([
 // Level 1: Prerequisites (fail-fast)
 // =============================================================================
 
-/**
- * Binary lookup config — mirrors packages/grafema/src/binaries.ts but inlined
- * to avoid cross-package dependency (CLI does not depend on the `grafema` pkg).
- */
 type BinaryName = 'rfdb-server' | 'grafema-orchestrator';
 
-interface BinaryLookupResult {
-  name: BinaryName;
-  path: string | null;
-  source: string | null;
+/** A candidate plus what it says its version is. */
+interface InspectedCandidate {
+  source: string;
+  path: string;
+  /** Version reported by `<binary> --version`, or null when unreadable. */
+  version: string | null;
 }
 
-function findBinaryForDoctor(binaryName: BinaryName): BinaryLookupResult {
-  const envVars: Record<BinaryName, string> = {
-    'rfdb-server': 'GRAFEMA_RFDB_SERVER',
-    'grafema-orchestrator': 'GRAFEMA_ORCHESTRATOR',
-  };
-  const monorepoPackages: Record<BinaryName, string> = {
-    'rfdb-server': 'rfdb-server',
-    'grafema-orchestrator': 'grafema-orchestrator',
-  };
-
-  const envVar = envVars[binaryName];
-  const monorepoPkg = monorepoPackages[binaryName];
-
-  // 1. Environment variable
-  const envPath = process.env[envVar];
-  if (envPath && existsSync(envPath)) {
-    return { name: binaryName, path: envPath, source: `$${envVar}` };
-  }
-
-  // 2. Monorepo development builds (release, then debug)
-  // Walk up from this file to find monorepo root
-  let dir = __dirname;
-  let monorepoRoot: string | null = null;
-  for (let i = 0; i < 8; i++) {
-    if (existsSync(join(dir, 'packages', 'util')) && existsSync(join(dir, 'pnpm-workspace.yaml'))) {
-      monorepoRoot = dir;
-      break;
-    }
-    const parent = dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  if (!monorepoRoot) {
-    const envRoot = process.env.GRAFEMA_ROOT;
-    if (envRoot && existsSync(join(envRoot, 'packages', 'util'))) {
-      monorepoRoot = envRoot;
-    }
-  }
-
-  if (monorepoRoot) {
-    for (const profile of ['release', 'debug'] as const) {
-      const p = join(monorepoRoot, 'packages', monorepoPkg, 'target', profile, binaryName);
-      if (existsSync(p)) {
-        return { name: binaryName, path: p, source: `monorepo (${profile})` };
-      }
-    }
-  }
-
-  // 3. System PATH
-  const pathDirs = (process.env.PATH || '').split(delimiter);
-  for (const pathDir of pathDirs) {
-    if (!pathDir) continue;
-    const p = join(pathDir, binaryName);
-    if (existsSync(p)) {
-      return { name: binaryName, path: p, source: 'PATH' };
-    }
-  }
-
-  // 4. ~/.local/bin
-  const home = process.env.HOME || process.env.USERPROFILE || '';
-  if (home) {
-    const p = join(home, '.local', 'bin', binaryName);
-    if (existsSync(p)) {
-      return { name: binaryName, path: p, source: '~/.local/bin' };
-    }
-  }
-
-  return { name: binaryName, path: null, source: null };
+/** Injection points so the divergence report can be exercised on a fixture. */
+export interface CheckBinariesDeps {
+  listCandidates?: (binaryName: BinaryName) => BinaryCandidate[];
+  readVersion?: (path: string) => string | null;
 }
 
 /**
- * Check if native binaries (rfdb-server, grafema-orchestrator) are findable.
- * FAIL if both missing, WARN if one missing, PASS if both found.
+ * Version a binary reports for itself: `rfdb-server 0.4.1` → `0.4.1`.
+ *
+ * Returns null rather than throwing — an unreadable candidate is a fact worth
+ * printing, not a reason to abandon the check.
  */
-export async function checkBinaries(): Promise<DoctorCheckResult> {
-  const rfdb = findBinaryForDoctor('rfdb-server');
-  const orchestrator = findBinaryForDoctor('grafema-orchestrator');
+function readBinaryVersion(binaryPath: string): string | null {
+  const result = spawnSync(binaryPath, ['--version'], { encoding: 'utf-8', timeout: 5000 });
+  if (result.error || result.status !== 0) return null;
+  const match = `${result.stdout || ''}${result.stderr || ''}`.match(/(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/);
+  return match ? match[1] : null;
+}
+
+/**
+ * rfdb-server is released in lockstep with the JS packages, and
+ * RFDBServerBackend warns when the two disagree — so "different from expected"
+ * is a real finding for it. grafema-orchestrator carries its own crate version
+ * (0.1.0), so comparing it to GRAFEMA_VERSION would only ever print noise.
+ */
+function expectedVersionFor(binaryName: BinaryName): string | null {
+  return binaryName === 'rfdb-server' ? getSchemaVersion(GRAFEMA_VERSION) : null;
+}
+
+/**
+ * Resolve the platform package from the CLI's own module location, falling
+ * back to @grafema/util's.
+ *
+ * Node resolution is anchored at the asking module, and that anchor is the
+ * whole mechanism here: measured in this tree, `@grafema/grafema-darwin-x64`
+ * resolves from packages/cli and packages/grafema but is MODULE_NOT_FOUND from
+ * packages/util. So a doctor that only ever asked with util's anchor would
+ * still be blind to the package that actually serves installed consumers. In a
+ * hoisted npm install both anchors resolve to the same package, so this only
+ * ever adds visibility.
+ */
+function platformPackageForDoctor(binaryName: BinaryName): string | null {
+  try {
+    const require = createRequire(import.meta.url);
+    const pkg = require(getPlatformPackageName());
+    const named =
+      binaryName === 'rfdb-server' ? pkg.rfdbServerPath : pkg.orchestratorPath;
+    if (named && existsSync(named)) return named;
+    if (pkg.binDir) {
+      const p = join(pkg.binDir, binaryName);
+      if (existsSync(p)) return p;
+    }
+  } catch {
+    // Not installed next to the CLI — fall through to util's own lookup.
+  }
+  return null;
+}
+
+/**
+ * The shared candidate list, asked with the CLI's anchor for the platform
+ * package. Never shorter than `listBinaryCandidates(name)` — a diagnostic that
+ * sees fewer places than the resolver is how this defect stayed invisible.
+ */
+export function listCandidatesForDoctor(binaryName: BinaryName): BinaryCandidate[] {
+  return listBinaryCandidates(binaryName, {}, {
+    platformPackagePath: (n) => platformPackageForDoctor(n) ?? resolvePlatformPackageBinary(n),
+  });
+}
+
+function inspect(
+  binaryName: BinaryName,
+  deps: CheckBinariesDeps,
+): InspectedCandidate[] {
+  const list = deps.listCandidates ?? listCandidatesForDoctor;
+  const readVersion = deps.readVersion ?? readBinaryVersion;
+  return list(binaryName).map((c) => ({ ...c, version: readVersion(c.path) }));
+}
+
+/** One candidate per line, winner first and marked. */
+function renderCandidates(binaryName: BinaryName, candidates: InspectedCandidate[]): string[] {
+  return candidates.map((c, i) => {
+    const marker = i === 0 ? '→' : ' ';
+    return `  ${marker} ${binaryName} ${c.version ?? 'version unreadable'}  ${c.source}  ${c.path}`;
+  });
+}
+
+/**
+ * Everything that makes this set of candidates untrustworthy.
+ *
+ * REG-1198: the previous check could not produce any of these — it reported the
+ * single path IT would have chosen, using a different order from the one
+ * consumers walk (monorepo first, platform package not consulted at all). A
+ * check that cannot observe one of the two possible outcomes can only ever
+ * answer "fine".
+ */
+function divergences(binaryName: BinaryName, candidates: InspectedCandidate[]): string[] {
+  const problems: string[] = [];
+  const expected = expectedVersionFor(binaryName);
+
+  for (const c of candidates) {
+    if (expected && c.version && getSchemaVersion(c.version) !== expected) {
+      problems.push(
+        `${binaryName} in ${c.source} is v${c.version}, expected v${expected} (${c.path})`,
+      );
+    }
+  }
+
+  const versions = new Set(candidates.filter((c) => c.version).map((c) => c.version as string));
+  if (versions.size > 1) {
+    problems.push(
+      `${binaryName} resolves to different versions depending on which package asks: ` +
+        `${[...versions].join(' vs ')} — the first candidate (${candidates[0].source}) wins`,
+    );
+  }
+
+  return problems;
+}
+
+/**
+ * Check that the native binaries (rfdb-server, grafema-orchestrator) are
+ * findable AND that every place they are findable from agrees.
+ *
+ * FAIL if both missing, WARN if one is missing or any candidate diverges,
+ * PASS otherwise. Candidates are always listed, with versions: printing only
+ * the winner is what let a three-month-old rfdb-server serve consumers while
+ * doctor reported the fresh monorepo build.
+ */
+export async function checkBinaries(deps: CheckBinariesDeps = {}): Promise<DoctorCheckResult> {
+  const rfdb = inspect('rfdb-server', deps);
+  const orchestrator = inspect('grafema-orchestrator', deps);
 
   const found: string[] = [];
   const missing: string[] = [];
+  const lines: string[] = [];
+  const problems: string[] = [];
 
-  if (rfdb.path) {
-    found.push(`rfdb-server (${rfdb.source})`);
-  } else {
-    missing.push('rfdb-server');
+  for (const [name, candidates] of [
+    ['rfdb-server', rfdb],
+    ['grafema-orchestrator', orchestrator],
+  ] as const) {
+    if (candidates.length === 0) {
+      missing.push(name);
+      continue;
+    }
+    const winner = candidates[0];
+    found.push(`${name} ${winner.version ?? 'version unreadable'} (${winner.source})`);
+    lines.push(`  ${name} — ${candidates.length} candidate(s), in resolution order:`);
+    lines.push(...renderCandidates(name, candidates));
+    problems.push(...divergences(name, candidates));
   }
 
-  if (orchestrator.path) {
-    found.push(`grafema-orchestrator (${orchestrator.source})`);
-  } else {
-    missing.push('grafema-orchestrator');
-  }
-
-  if (missing.length === 0) {
-    return {
-      name: 'binaries',
-      status: 'pass',
-      message: `Binaries: ${found.join(', ')}`,
-      details: {
-        rfdbServer: rfdb.path,
-        orchestrator: orchestrator.path,
-      },
-    };
-  }
+  const details = {
+    rfdbServer: rfdb[0]?.path ?? null,
+    orchestrator: orchestrator[0]?.path ?? null,
+    candidates: { 'rfdb-server': rfdb, 'grafema-orchestrator': orchestrator },
+    divergences: problems,
+  };
 
   if (missing.length === 2) {
     return {
@@ -169,22 +227,46 @@ export async function checkBinaries(): Promise<DoctorCheckResult> {
       message: 'Native binaries not found: rfdb-server, grafema-orchestrator',
       recommendation:
         'Install: npm install grafema, or build from source: cd packages/<name> && cargo build --release, or set GRAFEMA_RFDB_SERVER / GRAFEMA_ORCHESTRATOR env vars',
+      details,
     };
   }
 
-  // One found, one missing
+  if (missing.length === 1) {
+    return {
+      name: 'binaries',
+      status: 'warn',
+      message: [`Missing binary: ${missing[0]} (found: ${found[0]})`, ...lines, ...problems.map((p) => `  ! ${p}`)].join('\n'),
+      recommendation:
+        missing[0] === 'rfdb-server'
+          ? 'Set GRAFEMA_RFDB_SERVER env var or build: cd packages/rfdb-server && cargo build --release'
+          : 'Set GRAFEMA_ORCHESTRATOR env var or build: cd packages/grafema-orchestrator && cargo build --release',
+      details,
+    };
+  }
+
+  if (problems.length > 0) {
+    return {
+      name: 'binaries',
+      status: 'warn',
+      message: [
+        `Binaries: ${found.join(', ')} — version divergence`,
+        ...lines,
+        ...problems.map((p) => `  ! ${p}`),
+      ].join('\n'),
+      recommendation:
+        'Rebuild or reinstall the diverging candidate so every consumer loads the same binary: ' +
+        'cd packages/<name> && cargo build --release, then refresh the platform package ' +
+        '(packages/grafema-<os>-<arch>/bin/). Until they agree, which binary you get depends on ' +
+        'which package made the call.',
+      details,
+    };
+  }
+
   return {
     name: 'binaries',
-    status: 'warn',
-    message: `Missing binary: ${missing[0]} (found: ${found[0]})`,
-    recommendation:
-      missing[0] === 'rfdb-server'
-        ? 'Set GRAFEMA_RFDB_SERVER env var or build: cd packages/rfdb-server && cargo build --release'
-        : 'Set GRAFEMA_ORCHESTRATOR env var or build: cd packages/grafema-orchestrator && cargo build --release',
-    details: {
-      rfdbServer: rfdb.path,
-      orchestrator: orchestrator.path,
-    },
+    status: 'pass',
+    message: [`Binaries: ${found.join(', ')}`, ...lines].join('\n'),
+    details,
   };
 }
 
