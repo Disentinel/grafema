@@ -12,7 +12,7 @@ import { resolve, join, dirname } from 'path';
 import { existsSync, mkdirSync, unlinkSync, readFileSync } from 'fs';
 import { spawn, type ChildProcess } from 'child_process';
 import { setTimeout as sleep } from 'timers/promises';
-import { RFDBClient, findRfdbBinary, loadConfig, startRfdbServer } from '@grafema/util';
+import { RFDBClient, findRfdbBinary, loadConfig, startRfdbServer, rfdbPidPath } from '@grafema/util';
 import { exitWithError } from '../utils/errorFormatter.js';
 
 interface StartOptions {
@@ -26,7 +26,8 @@ function getProjectPaths(projectPath: string) {
   const grafemaDir = join(projectPath, '.grafema');
   const socketPath = join(grafemaDir, 'rfdb.sock');
   const dbPath = join(grafemaDir, 'graph.rfdb');
-  const pidPath = join(grafemaDir, 'rfdb.pid');
+  // Derived from the socket so the CLI and the backend agree (REG-1199).
+  const pidPath = rfdbPidPath(socketPath);
   const httpPortFile = join(grafemaDir, 'rfdb-http.port');
   const logFile = join(grafemaDir, 'rfdb.log');
   return { grafemaDir, socketPath, dbPath, pidPath, httpPortFile, logFile };

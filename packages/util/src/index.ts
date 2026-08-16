@@ -107,8 +107,21 @@ export type { FindBinaryOptions, BinaryName } from './utils/findRfdbBinary.js';
 export { ensureBinary, downloadBinary, isDownloadable, findInGrafemaBin, getGrafemaBinDir, DOWNLOADABLE_BINARIES, isBinaryCurrentVersion } from './utils/lazyDownload.js';
 
 // RFDB server lifecycle
-export { startRfdbServer, checkExistingServer } from './utils/startRfdbServer.js';
-export type { StartRfdbServerOptions } from './utils/startRfdbServer.js';
+export {
+  startRfdbServer,
+  checkExistingServer,
+  checkServerDatabase,
+  staleServerMessage,
+  rfdbPidPath,
+  rfdbServerRecordPath,
+  pathIdentity,
+  processIsAlive,
+} from './utils/startRfdbServer.js';
+export type {
+  StartRfdbServerOptions,
+  RfdbServerRecord,
+  ServerDbVerdict,
+} from './utils/startRfdbServer.js';
 
 // Module resolution utilities
 export {
