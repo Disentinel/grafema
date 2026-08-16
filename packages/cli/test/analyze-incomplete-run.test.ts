@@ -35,7 +35,16 @@
 
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, existsSync } from 'fs';
+import {
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+  mkdirSync,
+  readFileSync,
+  existsSync,
+  statSync,
+  realpathSync,
+} from 'fs';
 import { tmpdir } from 'os';
 import { join, dirname } from 'path';
 import { spawnSync } from 'child_process';
@@ -75,7 +84,15 @@ function runCli(args: string[], cwd: string): CliResult {
   });
   const stdout = result.stdout || '';
   const stderr = result.stderr || '';
-  return { stdout, stderr, status: result.status, output: stdout + stderr };
+  // A `status` of null means the child never exited normally — killed by a
+  // signal, or never spawned at all. Both produce empty output, which would
+  // otherwise reach an assertion as a bare "null !== 0" and read like the
+  // defect under test. Say what actually happened instead.
+  const trouble =
+    result.error || result.signal
+      ? `\n[runCli] \`${args.join(' ')}\` did not exit normally: signal=${result.signal ?? 'none'} error=${result.error?.message ?? 'none'}`
+      : '';
+  return { stdout, stderr, status: result.status, output: stdout + stderr + trouble };
 }
 
 /** Parse the `  Nodes: N` line the CLI prints on a successful analyze. */
@@ -84,9 +101,17 @@ function nodeCount(result: CliResult): number {
   return m ? Number(m[1]) : -1;
 }
 
-/** A one-file JS project plus a `.grafema/config.yaml`, ready for `analyze`. */
+/**
+ * A one-file JS project plus a `.grafema/config.yaml`, ready for `analyze`.
+ *
+ * The path is canonicalized: on macOS `tmpdir()` is `/var/folders/…`, a symlink
+ * to `/private/var/folders/…`, and the orchestrator records realpaths in its
+ * generation tracker. A test that composes tracker keys from the symlinked form
+ * writes entries nothing will ever match — and a fixture whose files always look
+ * new passes over the very defect it is meant to catch.
+ */
 function makeProject(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'grafema-reg1197-'));
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'grafema-reg1197-')));
   const srcDir = join(dir, 'src');
   mkdirSync(srcDir);
   writeFileSync(
@@ -224,6 +249,76 @@ describe('REG-1197: a failed analyze run must not report "up to date" next time'
       assert.ok(
         nodeCount(third) > 1,
         `recovery run left a degenerate graph (Nodes: ${nodeCount(third)}):\n${third.stdout}`
+      );
+    });
+  });
+
+  // ---------------------------------------------------------------------
+  // The state every machine already hit by REG-1197 is sitting in: a
+  // gen-tracker.json written by a build that had no notion of completion,
+  // holding mtimes for files whose analysis never finished. Upgrading must
+  // recover from it — a fix that only guards runs it observed itself would
+  // leave those projects reporting "up to date" over their partial graph
+  // forever, or until someone thinks to pass --clear.
+  // ---------------------------------------------------------------------
+  describe('a tracker left by a build that never recorded completion', () => {
+    let dir: string | undefined;
+    before(() => {
+      dir = makeProject();
+    });
+    after(() => teardown(dir));
+
+    it('is not trusted: analyze re-runs instead of reporting "up to date"', () => {
+      // Hand-write the pre-REG-1197 file shape — current mtimes, no completion
+      // field — for a project whose graph was never built.
+      //
+      // `mtimeNs` (bigint stat), not `mtimeMs * 1e6`: the orchestrator stores
+      // nanoseconds since the epoch and compares SystemTime for exact equality,
+      // and mtimeMs is a float that drops sub-millisecond digits on APFS. A
+      // rounded value makes the file look CHANGED, which is the one thing this
+      // case must not do — it would sail through on the buggy binary too.
+      const src = join(dir!, 'src', 'app.js');
+      const mtimeNanos = statSync(src, { bigint: true }).mtimeNs.toString();
+      writeFileSync(
+        join(dir!, '.grafema', 'gen-tracker.json'),
+        `{\n  "generation": 1,\n  "file_mtimes": {\n    ${JSON.stringify(src)}: ${mtimeNanos}\n  }\n}\n`
+      );
+
+      const run = runCli(['analyze'], dir!);
+      assert.ok(
+        !/nothing to analyze/i.test(run.output),
+        `a tracker with no completion mark was trusted as "up to date":\n${run.output}`
+      );
+      assert.strictEqual(run.status, 0, `analyze failed: ${run.output}`);
+      assert.ok(
+        nodeCount(run) > 1,
+        `analysis was skipped — graph is empty (Nodes: ${nodeCount(run)}):\n${run.stdout}`
+      );
+    });
+  });
+
+  // ---------------------------------------------------------------------
+  // The other direction. "Never skip anything" would satisfy every
+  // assertion above and quietly destroy incremental analysis, turning every
+  // re-run of a large repo into a full rebuild. The fast path has to survive.
+  // ---------------------------------------------------------------------
+  describe('incremental skip after a run that DID finish', () => {
+    let dir: string | undefined;
+    before(() => {
+      dir = makeProject();
+    });
+    after(() => teardown(dir));
+
+    it('a repeat of a successful run still skips unchanged files', () => {
+      const first = runCli(['analyze'], dir!);
+      assert.strictEqual(first.status, 0, `analyze failed: ${first.output}`);
+
+      const second = runCli(['analyze'], dir!);
+      assert.strictEqual(second.status, 0, `repeat analyze failed: ${second.output}`);
+      assert.match(
+        second.output,
+        /changed=0 skipped=1/,
+        `a successful run's mtimes were not trusted on the next run — incremental analysis is broken:\n${second.output}`
       );
     });
   });

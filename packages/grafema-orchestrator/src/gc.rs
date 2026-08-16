@@ -32,9 +32,15 @@ pub struct GcStats {
 ///
 /// Each analysis run bumps the generation, and all produced nodes/edges
 /// are stamped with that generation number for traceability.
+///
+/// REG-1197: the tracker also records whether the run that wrote it finished.
+/// A stored mtime only means "this file is represented in the graph" if the run
+/// that stored it survived every phase — otherwise the graph is partial and the
+/// mtimes must not be read as "up to date".
 pub struct GenerationTracker {
     current: u64,
     file_mtimes: HashMap<PathBuf, SystemTime>,
+    last_run_complete: bool,
 }
 
 /// Serializable representation of tracker state for disk persistence.
@@ -42,14 +48,24 @@ pub struct GenerationTracker {
 struct TrackerState {
     generation: u64,
     file_mtimes: HashMap<String, u64>,
+    /// Whether the run that wrote this file reached the end of its pipeline
+    /// (REG-1197). Absent in files written before this field existed — and
+    /// those are exactly the trackers a masked failure could have poisoned, so
+    /// the missing value defaults to `false` (untrusted) rather than `true`.
+    #[serde(default)]
+    complete: bool,
 }
 
 impl GenerationTracker {
     /// Create a new tracker with the given initial generation.
+    ///
+    /// A tracker with no stored mtimes cannot mislead anyone into skipping work,
+    /// so it starts out trusted.
     pub fn new(generation: u64) -> Self {
         Self {
             current: generation,
             file_mtimes: HashMap::new(),
+            last_run_complete: true,
         }
     }
 
@@ -69,6 +85,7 @@ impl GenerationTracker {
                     Self {
                         current: state.generation,
                         file_mtimes,
+                        last_run_complete: state.complete,
                     }
                 }
                 Err(_) => Self::new(0),
@@ -77,8 +94,14 @@ impl GenerationTracker {
         }
     }
 
-    /// Save tracker state to disk.
-    pub fn save(&self, path: &Path) -> Result<()> {
+    /// Save tracker state to disk, recording whether the run that is writing it
+    /// has finished.
+    ///
+    /// `complete` is a parameter rather than an internal flag on purpose: the
+    /// defect this replaces (REG-1197) was a `save()` in the middle of the
+    /// pipeline that implicitly meant "done". Every call site now has to say
+    /// which it means.
+    pub fn save_with_status(&self, path: &Path, complete: bool) -> Result<()> {
         let state = TrackerState {
             generation: self.current,
             file_mtimes: self
@@ -89,10 +112,18 @@ impl GenerationTracker {
                     (k.display().to_string(), secs)
                 })
                 .collect(),
+            complete,
         };
         let json = serde_json::to_string_pretty(&state)?;
         fs::write(path, json)?;
         Ok(())
+    }
+
+    /// Whether the run that last wrote this tracker reached the end of its
+    /// pipeline. `false` means the stored mtimes describe a graph that was
+    /// never finished — see [`GenerationTracker`].
+    pub fn last_run_complete(&self) -> bool {
+        self.last_run_complete
     }
 
     /// Increment the generation counter and return the new value.
@@ -458,5 +489,93 @@ mod tests {
         assert_eq!(stats.files_skipped, 0);
         assert_eq!(stats.files_deleted, 0);
         assert_eq!(stats.generation, 0);
+    }
+
+    // -- REG-1197: completion status survives the round trip --
+
+    /// The status a run writes is the status the next run reads. Without this
+    /// the whole mechanism is decorative.
+    #[test]
+    fn completion_status_round_trips() {
+        let dir = create_test_tree(&["a.js"]);
+        let path = dir.join("gen-tracker.json");
+
+        let mut tracker = GenerationTracker::new(0);
+        tracker.bump();
+        tracker.save_with_status(&path, false).unwrap();
+        assert!(
+            !GenerationTracker::load(&path).last_run_complete(),
+            "a tracker saved mid-run must load back as incomplete"
+        );
+
+        tracker.save_with_status(&path, true).unwrap();
+        assert!(
+            GenerationTracker::load(&path).last_run_complete(),
+            "a tracker saved by a finished run must load back as complete"
+        );
+
+        cleanup(&dir);
+    }
+
+    /// An aborted run must not hand the next run a set of mtimes that make its
+    /// files look analyzed. `filter_changed_files` cannot see the status flag —
+    /// it is the caller's job to override — so this pins the two halves the
+    /// caller relies on: the flag says "incomplete", and the mtimes are the ones
+    /// from BEFORE the aborted run (the aborted run never got to store its own).
+    #[test]
+    fn aborted_run_leaves_incomplete_status_and_stale_mtimes() {
+        let dir = create_test_tree(&["a.js"]);
+        let files = vec![dir.join("a.js")];
+        let path = dir.join("gen-tracker.json");
+
+        // A run that finishes: mtimes stored, marked complete.
+        let mut tracker = GenerationTracker::new(0);
+        tracker.bump();
+        update_mtimes(&mut tracker, &files).unwrap();
+        tracker.save_with_status(&path, true).unwrap();
+
+        // A second run that dies mid-pipeline: it marks in-progress on entry and
+        // never reaches the mtime update.
+        let mut second = GenerationTracker::load(&path);
+        let gen = second.bump();
+        second.save_with_status(&path, false).unwrap();
+
+        let third = GenerationTracker::load(&path);
+        assert!(
+            !third.last_run_complete(),
+            "the run that died left the tracker claiming completion"
+        );
+        assert_eq!(
+            third.current(),
+            gen,
+            "the generation bump must survive an aborted run, or the next run's stamps collide with it"
+        );
+
+        cleanup(&dir);
+    }
+
+    /// Trackers written before the `complete` field existed carry no proof that
+    /// the run behind them finished — and a machine hit by REG-1197 is holding
+    /// exactly such a file, with poisoned mtimes. Absent must therefore read as
+    /// untrusted, so upgrading recovers instead of inheriting the silent skip.
+    #[test]
+    fn tracker_without_completion_field_is_untrusted() {
+        let dir = create_test_tree(&["a.js"]);
+        let path = dir.join("gen-tracker.json");
+        fs::write(
+            &path,
+            r#"{"generation": 2, "file_mtimes": {"/tmp/a.js": 1700000000000000000}}"#,
+        )
+        .unwrap();
+
+        let tracker = GenerationTracker::load(&path);
+        assert_eq!(tracker.current(), 2, "pre-existing state must still load");
+        assert_eq!(tracker.file_mtimes.len(), 1);
+        assert!(
+            !tracker.last_run_complete(),
+            "a tracker with no completion field must not be trusted as complete"
+        );
+
+        cleanup(&dir);
     }
 }

@@ -932,8 +932,24 @@ async fn main() -> Result<()> {
             let tracker_path = cfg.root.join(".grafema").join("gen-tracker.json");
             let mut gen_tracker = gc::GenerationTracker::load(&tracker_path);
             let generation = gen_tracker.bump();
-            let (changed_files, unchanged_files) =
+            let (mut changed_files, mut unchanged_files) =
                 gc::filter_changed_files(&files, &gen_tracker, force)?;
+
+            // REG-1197: a stored mtime only proves the file is in the graph if
+            // the run that stored it survived every phase. When the tracker was
+            // left behind by a run that aborted — or by a build from before this
+            // distinction existed, which is exactly the state a masked failure
+            // leaves on a user's machine — "unchanged" says nothing about the
+            // graph, so redo the whole thing instead of skipping.
+            if !gen_tracker.last_run_complete() {
+                tracing::warn!(
+                    files = files.len(),
+                    "Previous analyze run left no completion mark (aborted run, or a tracker written before REG-1197) — re-analyzing everything instead of trusting the recorded generation"
+                );
+                changed_files = files.clone();
+                unchanged_files.clear();
+            }
+
             let filter_ms = filter_start.elapsed().as_millis() as u64;
 
             tracing::info!(
@@ -946,6 +962,19 @@ async fn main() -> Result<()> {
             if changed_files.is_empty() {
                 tracing::info!("All files up to date, nothing to analyze");
                 return Ok(());
+            }
+
+            // REG-1197: past this point the run writes to the graph, so the
+            // on-disk tracker must stop claiming the graph is finished. This
+            // persists the generation bump — it has to advance even when the run
+            // dies, or the next run's GC stamps would collide with this one's —
+            // but deliberately NOT the new mtimes: those are written only by the
+            // success path at the very end of this arm. A run that fails, panics
+            // or is killed anywhere below therefore leaves the previous mtimes
+            // plus an explicit "incomplete", and the next `analyze` redoes the
+            // work rather than reporting "up to date" over a partial graph.
+            if let Err(e) = gen_tracker.save_with_status(&tracker_path, false) {
+                tracing::warn!("Failed to mark the analysis run as in-progress: {}", e);
             }
 
             // RFDB MVCC C2/C3: a FULL analysis is a bulk ingest — defer per-commit
@@ -1515,11 +1544,15 @@ async fn main() -> Result<()> {
                 }
             }
 
-            // 7. Update mtime tracker for next incremental run
+            // 7. Update mtime tracker for next incremental run — IN MEMORY ONLY
+            // (REG-1197). The mtimes are still sampled here, right after the
+            // files were parsed, so an edit made while the phases below run is
+            // not mistaken for "already analyzed". What moved to the end of this
+            // arm is the write to disk: everything below — resolution, user
+            // plugins, the rule-pack phase, unresolved diagnostics, compaction —
+            // can still abort the run, and a tracker file written at this point
+            // would tell the next `analyze` that these files are done.
             gc::update_mtimes(&mut gen_tracker, &changed_files)?;
-            if let Err(e) = gen_tracker.save(&tracker_path) {
-                tracing::warn!("Failed to save generation tracker: {}", e);
-            }
 
             let analysis_ms = analysis_timer.elapsed().as_millis() as u64;
 
@@ -2409,6 +2442,17 @@ async fn main() -> Result<()> {
                 "compact_ms" => compact_ms,
                 "total_ms" => total_ms
             );
+
+            // Persist the generation tracker — LAST, and only here (REG-1197).
+            // The run reached the end of the pipeline, so the mtimes sampled in
+            // step 7 really do describe files represented in the graph and the
+            // next `analyze` may skip them. Any earlier exit (a `?` in any phase
+            // above, a panic, a kill) leaves the file marked incomplete with the
+            // previous run's mtimes, which costs one redundant re-analysis and
+            // never a silent "up to date".
+            if let Err(e) = gen_tracker.save_with_status(&tracker_path, true) {
+                tracing::warn!("Failed to save generation tracker: {}", e);
+            }
 
             // 11. Summary
             println!(
