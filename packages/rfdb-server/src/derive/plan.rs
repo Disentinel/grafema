@@ -28,7 +28,7 @@
 //! running output-size estimate multiplies the surviving fan-out of each placed leg; the §3
 //! guard fires when that product exceeds `MAX_MATERIALIZED_FACTS`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 
 use crate::datalog::{Atom, Literal, Rule, Term};
@@ -41,6 +41,111 @@ use super::stratify::Stratification;
 /// Per-rule materialization ceiling (spec §3): a rule whose plan-time output estimate
 /// exceeds this is rejected with `E-PLAN-003`. Ten million facts.
 pub const MAX_MATERIALIZED_FACTS: u64 = 10_000_000;
+
+// ── Ground-fact cardinality (REG-1196) ─────────────────────────────
+
+/// The exact shape of a predicate defined ENTIRELY by ground facts — a pack's
+/// compiled-in registry table (`ecb_method`/`ecb_arg` from
+/// effects_callable_facts.dl, `rtg_key`/`rtg_eff`, `hr_lib`, `ef_lib`, …).
+#[derive(Debug, Clone)]
+struct FactShape {
+    /// Number of fact rows. Exact, not an estimate.
+    rows: u64,
+    /// Per-column count of DISTINCT constant values. Exact.
+    distinct: Vec<u64>,
+}
+
+/// Exact cardinalities of every all-ground-facts predicate in the program.
+///
+/// These relations are the one class whose size is a property of the PROGRAM, not of the
+/// graph: `ecb_method` has 180 rows whether the graph holds three nodes or half a million.
+/// Sizing a keyed probe into them by a graph-derived quantity is therefore a category
+/// error, and it is the one that produced REG-1196 (see [`derived_estimate`]).
+#[derive(Debug, Clone, Default)]
+struct FactStats {
+    per_pred: HashMap<String, FactShape>,
+}
+
+impl FactStats {
+    /// Collect the shapes from a program's rules. A predicate qualifies only if EVERY one
+    /// of its rules is a ground fact (empty body, all head arguments constant) — one
+    /// non-ground rule and the predicate's size depends on the graph again, so it is left
+    /// to the ordinary derived-predicate path.
+    fn from_rules(rules: &[&Rule]) -> Self {
+        // predicate -> per-column sets of the rendered constant values, or None once a
+        // non-ground rule for that predicate has been seen.
+        let mut acc: HashMap<String, Option<Vec<HashSet<String>>>> = HashMap::new();
+        for rule in rules {
+            let head = rule.head();
+            let entry = acc.entry(head.predicate().to_string()).or_insert_with(|| {
+                Some(vec![HashSet::new(); head.args().len()])
+            });
+            let ground = rule.body().is_empty()
+                && head.args().len() == entry.as_ref().map_or(0, |c| c.len())
+                && head.args().iter().all(|t| ground_key(t).is_some());
+            if !ground {
+                *entry = None;
+                continue;
+            }
+            if let Some(cols) = entry.as_mut() {
+                for (i, t) in head.args().iter().enumerate() {
+                    cols[i].insert(ground_key(t).expect("checked ground above"));
+                }
+            }
+        }
+
+        let mut per_pred = HashMap::new();
+        for rule in rules {
+            let pred = rule.head().predicate();
+            if let Some(Some(cols)) = acc.get(pred) {
+                let shape = per_pred.entry(pred.to_string()).or_insert_with(|| FactShape {
+                    rows: 0,
+                    distinct: cols.iter().map(|s| s.len() as u64).collect(),
+                });
+                shape.rows += 1;
+            }
+        }
+        FactStats { per_pred }
+    }
+
+    fn shape(&self, pred: &str) -> Option<&FactShape> {
+        self.per_pred.get(pred)
+    }
+
+    /// The per-key fan-out of a probe into a ground-fact relation: rows over the number of
+    /// distinct values in the columns the probe actually keys on.
+    ///
+    /// "Actually keys on" excludes `_`: [`arg_pattern`] marks a wildcard [`ArgMode::Bound`]
+    /// because it needs no binding, but a wildcard restricts NOTHING, so counting its
+    /// column as a key would divide by a selectivity the probe never gets.
+    ///
+    /// The divisor is the MAX over the keyed columns' distinct counts, which is a lower
+    /// bound on the number of distinct key TUPLES — so the fan-out is an over-estimate,
+    /// never an under-estimate. `None` when the probe binds no real key (a full scan of a
+    /// relation whose exact row count the caller already has).
+    fn keyed_fanout(&self, pred: &str, atom: &Atom, pattern: &[ArgMode]) -> Option<u64> {
+        let shape = self.shape(pred)?;
+        let keys = atom
+            .args()
+            .iter()
+            .enumerate()
+            .filter(|(i, t)| {
+                !matches!(t, Term::Wildcard) && pattern.get(*i) == Some(&ArgMode::Bound)
+            })
+            .filter_map(|(i, _)| shape.distinct.get(i).copied())
+            .max()?;
+        Some((shape.rows / keys.max(1)).max(1))
+    }
+}
+
+/// A ground term's comparable value, or `None` if the term is not ground.
+fn ground_key(term: &Term) -> Option<String> {
+    match term {
+        Term::Const(s) => Some(s.clone()),
+        Term::Lit(v) => Some(format!("{v:?}")),
+        Term::Var(_) | Term::Wildcard => None,
+    }
+}
 
 
 // ── Error taxonomy (invariant I5) ──────────────────────────────────
@@ -160,6 +265,12 @@ pub struct RulePlan {
     /// The per-rule output-size estimate (product of surviving leg fan-outs), checked
     /// against [`MAX_MATERIALIZED_FACTS`] by the §3 guard.
     pub estimate: u64,
+    /// Upper bound on the DISTINCT values each head column can take (REG-1196). Published
+    /// stratum-bottom-up by [`plan_program`] so a consumer of this predicate sizes its
+    /// columns by what populates them — a node count, an attribute's value space, a
+    /// ground-fact table's distinct count — instead of by this rule's own row estimate,
+    /// which is the very quantity the §3 cap exists to bound.
+    pub head_domains: Vec<u64>,
 }
 
 // ── Public entry points ────────────────────────────────────────────
@@ -184,6 +295,15 @@ pub fn plan_program(
     // `recursive_closure_*_qerror` test).
     let mut estimates: HashMap<String, u64> = HashMap::new();
     let mut plans: Vec<Option<RulePlan>> = (0..rules.len()).map(|_| None).collect();
+
+    // Per-predicate, per-column domain bounds, published stratum-bottom-up alongside the
+    // estimates so the §3 universe cap can see where each column's VALUES come from.
+    let mut col_domains: HashMap<String, Vec<u64>> = HashMap::new();
+
+    // Exact cardinalities of the program's compiled-in ground-fact tables (REG-1196).
+    // Collected once per program: these are the relations whose size does not move with
+    // the graph, so they must not be sized through a graph-derived divisor.
+    let facts = FactStats::from_rules(rules);
 
     for stratum in &strat.strata {
         let idxs: Vec<usize> = rules
@@ -214,6 +334,7 @@ pub fn plan_program(
         // Packs keep prelude-before-consumer source order (the established convention),
         // so the overlay is populated exactly along the dependency chain.
         let mut local_estimates: HashMap<String, u64> = estimates.clone();
+        let mut local_domains: HashMap<String, Vec<u64>> = col_domains.clone();
         let mut base_case: HashMap<String, u64> = HashMap::new();
         for &i in &idxs {
             let rule = rules[i];
@@ -225,11 +346,13 @@ pub fn plan_program(
             if is_recursive {
                 continue;
             }
-            let plan = plan_rule_with(rule, strat, stats, &local_estimates, None)?;
+            let plan =
+                plan_rule_with(rule, strat, stats, &local_estimates, None, &facts, &local_domains)?;
             let e = base_case.entry(head.to_string()).or_insert(0);
             *e = (*e).max(plan.estimate);
             let le = local_estimates.entry(head.to_string()).or_insert(0);
             *le = le.saturating_add(plan.estimate);
+            merge_column_domains(&mut local_domains, head, &plan.head_domains);
             plans[i] = Some(plan);
         }
         for &i in &idxs {
@@ -241,18 +364,29 @@ pub fn plan_program(
                 .get(rule.head().predicate())
                 .copied()
                 .unwrap_or(0);
-            let plan = plan_rule_with(rule, strat, stats, &local_estimates, Some(bc))?;
+            let plan = plan_rule_with(
+                rule,
+                strat,
+                stats,
+                &local_estimates,
+                Some(bc),
+                &facts,
+                &local_domains,
+            )?;
             let le = local_estimates
                 .entry(rule.head().predicate().to_string())
                 .or_insert(0);
             *le = le.saturating_add(plan.estimate);
+            merge_column_domains(&mut local_domains, rule.head().predicate(), &plan.head_domains);
             plans[i] = Some(plan);
         }
-        // Publish this stratum's predicate estimates for the strata above it.
+        // Publish this stratum's predicate estimates and column domains for the strata
+        // above it.
         for &i in &idxs {
             let p = plans[i].as_ref().expect("planned above");
             let e = estimates.entry(p.head.clone()).or_insert(0);
             *e = e.saturating_add(p.estimate);
+            merge_column_domains(&mut col_domains, &p.head.clone(), &p.head_domains);
         }
     }
 
@@ -276,7 +410,15 @@ pub fn plan_program(
 /// 3. Pick the join kind (hash on Δ for same-stratum derived legs; merge on Total/EDB).
 /// 4. Apply the §3 guards: cross-join body and per-rule estimate (`E-PLAN-003`).
 pub fn plan_rule(rule: &Rule, strat: &Stratification, stats: &Stats) -> PlanResult<RulePlan> {
-    plan_rule_with(rule, strat, stats, &HashMap::new(), None)
+    plan_rule_with(
+        rule,
+        strat,
+        stats,
+        &HashMap::new(),
+        None,
+        &FactStats::default(),
+        &HashMap::new(),
+    )
 }
 
 /// [`plan_rule`] with the per-predicate cardinality context [`plan_program`] threads in:
@@ -290,6 +432,8 @@ fn plan_rule_with(
     stats: &Stats,
     estimates: &HashMap<String, u64>,
     self_base: Option<u64>,
+    facts: &FactStats,
+    col_domains: &HashMap<String, Vec<u64>>,
 ) -> PlanResult<RulePlan> {
     let head = rule.head().predicate().to_string();
     let head_stratum = strat.stratum_of(&head);
@@ -299,6 +443,14 @@ fn plan_rule_with(
     let mut bound: HashSet<String> = HashSet::new();
     let mut legs: Vec<PlanLeg> = Vec::with_capacity(ordered.len());
     let mut rule_estimate: u64 = 1;
+    // Per-variable upper bound on the number of DISTINCT values the variable can take,
+    // recorded by the leg that first binds it, plus its SUPPORT — the set of independently
+    // generated variables it is a function of. A builtin output like
+    // `concat(F, Name, Sid)` is fully determined by its inputs, so multiplying its domain
+    // into the head universe alongside F and Name would count the same freedom three
+    // times; the support set is what stops that double-count. Both feed the §3 cap below.
+    let mut domains: HashMap<String, u64> = HashMap::new();
+    let mut support: HashMap<String, BTreeSet<String>> = HashMap::new();
 
     for (idx, lit) in ordered.iter().enumerate() {
         let atom = lit.atom();
@@ -337,7 +489,7 @@ fn plan_rule_with(
         }
 
         let join = pick_join(&source, &pattern);
-        let estimate = leg_estimate(&source, atom, &pattern, stats, estimates, self_base);
+        let estimate = leg_estimate(&source, atom, &pattern, stats, estimates, self_base, facts);
 
         // Only positive, tuple-introducing legs (those that bind previously-free variables)
         // grow the output-size estimate. Anti-joins (negative literals) and fully-bound
@@ -350,6 +502,19 @@ fn plan_rule_with(
             rule_estimate = rule_estimate.saturating_mul(estimate.max(1));
         }
 
+        if lit.is_positive() {
+            record_domains(
+                &source,
+                atom,
+                &provided,
+                stats,
+                estimates,
+                facts,
+                col_domains,
+                &mut domains,
+                &mut support,
+            );
+        }
         bound.extend(provided);
         legs.push(PlanLeg {
             literal: lit.clone(),
@@ -359,6 +524,23 @@ fn plan_rule_with(
             estimate,
         });
     }
+
+    // §3 UNIVERSE CAP (REG-1196). The running product multiplies a per-leg fan-out for
+    // every leg, so a long derivation chain compounds its per-leg q-error geometrically —
+    // but a rule cannot derive more distinct rows than its head has distinct value
+    // combinations. Each head column's domain is bounded by what actually populates it: a
+    // node/endpoint column by the graph's node count, an attribute value by the same (a
+    // node holds one value per key), a ground-fact column by that table's exact distinct
+    // count. Clamping the product at that universe is the generalization of the fix option
+    // recorded for the recursive case in `_ai/gaps.md` ("cap a recursive rule's estimate at
+    // |nodes|^arity — closure can't exceed the universe").
+    //
+    // This term is monotone-DECREASING: it can only lower an estimate, so it can never
+    // make the guard reject a rule it accepts today. On a production-size graph the cap is
+    // astronomically above the ceiling and never binds; it earns its keep only where the
+    // graph is genuinely too small to hold what the product claims.
+    let head_domains = head_column_domains(rule.head(), &domains);
+    let rule_estimate = rule_estimate.min(head_universe(rule.head(), &domains, &support));
 
     // §3 per-rule materialization guard.
     if rule_estimate > MAX_MATERIALIZED_FACTS {
@@ -376,6 +558,7 @@ fn plan_rule_with(
         head,
         legs,
         estimate: rule_estimate,
+        head_domains,
     })
 }
 
@@ -421,7 +604,7 @@ fn order_literals(body: &[Literal], head: &str, stats: &Stats) -> PlanResult<Vec
         //     ~370 cost band, so the marginal 367<370 must not force the worse leaf-led order).
         //     After the first leg hub_rank ≡ 0 (binding-driven feasibility takes over).
         //   • cost — the exact per-type / per-endpoint estimate, final tiebreak within a band.
-        let mut best: Option<(usize, (u64, u64, u64, u64))> = None;
+        let mut best: Option<(usize, (u64, u64, u64, u64, u64))> = None;
         for (i, lit) in remaining.iter().enumerate() {
             let (can_place, provides) = can_place_and_provides(lit, &bound);
             if !can_place {
@@ -458,7 +641,16 @@ fn order_literals(body: &[Literal], head: &str, stats: &Stats) -> PlanResult<Vec
             } else {
                 0
             };
-            let key = (cross_join_class, cost_band, hub_rank, cost);
+            // FINAL tiebreak only (REG-1196, second defect): when every term above is
+            // EXACTLY equal the planner used to fall back to source order, and on a
+            // near-empty graph every term IS equal — each candidate costs 1 because no
+            // node type has any members. Source order then led with a leg after which the
+            // only feasible continuations are cross-joins, and the §3 guard rejected the
+            // rule outright. One step of lookahead breaks that tie towards a body that can
+            // still be ordered. Placed LAST so it cannot reorder anything on a graph where
+            // cost already discriminates — production plans are untouched.
+            let strands = strands_body(&remaining, i, &bound, &provides);
+            let key = (cross_join_class, cost_band, hub_rank, cost, strands);
             match best {
                 Some((_, bk)) if key >= bk => {}
                 _ => best = Some((i, key)),
@@ -490,6 +682,38 @@ fn order_literals(body: &[Literal], head: &str, stats: &Stats) -> PlanResult<Vec
     }
 
     Ok(result)
+}
+
+/// Whether placing `remaining[placed]` next leaves the body with no continuation except a
+/// cross-join (or no feasible continuation at all) — the shapes the §3 guard and the
+/// feasibility check reject. `1` = stranded, `0` = some placeable, connected continuation
+/// exists. Bodies hold a handful of literals, so the quadratic scan is free.
+fn strands_body(
+    remaining: &[Literal],
+    placed: usize,
+    bound: &HashSet<String>,
+    provides: &HashSet<String>,
+) -> u64 {
+    let mut next_bound = bound.clone();
+    next_bound.extend(provides.iter().cloned());
+    let mut has_other = false;
+    for (j, other) in remaining.iter().enumerate() {
+        if j == placed {
+            continue;
+        }
+        has_other = true;
+        let (can_place, _) = can_place_and_provides(other, &next_bound);
+        if !can_place {
+            continue;
+        }
+        let would_cross_join = other.is_positive()
+            && introduces_tuples(other.atom().predicate())
+            && shares_no_binding(other.atom(), &next_bound);
+        if !would_cross_join {
+            return 0;
+        }
+    }
+    u64::from(has_other)
 }
 
 /// The cardinality-aware ordering cost of a candidate literal under the current bind set
@@ -531,8 +755,20 @@ fn ordering_estimate(lit: &Literal, bound: &HashSet<String>, stats: &Stats) -> u
     } else {
         // A derived predicate (rule head) reachable here. Ordering runs per rule WITHOUT
         // the program-level estimates context (it only ranks candidate orders — it never
-        // feeds the §3 guard), so it keeps the conservative whole-graph magnitude.
-        derived_estimate(pred, false, &pattern, stats, &HashMap::new(), None)
+        // feeds the §3 guard), so it keeps the conservative whole-graph magnitude. It is
+        // deliberately NOT given the ground-fact oracle either: ordering is I1-invariant
+        // but it decides join ORDER, and REG-1196 is a guard-arithmetic fix — leaving the
+        // ranking byte-identical keeps the blast radius on the estimate alone.
+        derived_estimate(
+            pred,
+            false,
+            atom,
+            &pattern,
+            stats,
+            &HashMap::new(),
+            None,
+            &FactStats::default(),
+        )
     }
 }
 
@@ -830,12 +1066,13 @@ fn leg_estimate(
     stats: &Stats,
     estimates: &HashMap<String, u64>,
     self_base: Option<u64>,
+    facts: &FactStats,
 ) -> u64 {
     match source {
         LegSource::Builtin(_) => 1,
         LegSource::Base(rel) => base_estimate(rel, atom, pattern, stats),
         LegSource::Derived { name, recursive } => {
-            derived_estimate(name, *recursive, pattern, stats, estimates, self_base)
+            derived_estimate(name, *recursive, atom, pattern, stats, estimates, self_base, facts)
         }
     }
 }
@@ -944,11 +1181,27 @@ fn base_estimate(rel: &str, atom: &Atom, pattern: &[ArgMode], stats: &Stats) -> 
 fn derived_estimate(
     name: &str,
     recursive: bool,
+    atom: &Atom,
     pattern: &[ArgMode],
     stats: &Stats,
     estimates: &HashMap<String, u64>,
     self_base: Option<u64>,
+    facts: &FactStats,
 ) -> u64 {
+    // A predicate defined entirely by ground facts is sized from the FACTS (REG-1196).
+    // Its cardinality is a property of the program — `ecb_method` has 180 rows on every
+    // graph — so the `k / total_nodes` model below, which stands the graph's node count in
+    // for the relation's key population, is a category error on it. Live consequence: on a
+    // 3-node graph `ecb_arg` probed at (Lib, Full) was sized at 152/3 = 50 instead of its
+    // true ~1, and the four js feature packs compounded that into estimates of 3.5·10^8.
+    if let Some(shape) = facts.shape(name) {
+        return match facts.keyed_fanout(name, atom, pattern) {
+            Some(fanout) => fanout,
+            // No real key bound: a full scan, and here the row count is EXACT.
+            None => shape.rows.max(1),
+        };
+    }
+
     let first_bound = pattern.first().map(|m| *m == ArgMode::Bound).unwrap_or(false);
     let any_bound = pattern.iter().any(|m| *m == ArgMode::Bound);
     let known = if recursive {
@@ -990,6 +1243,229 @@ fn derived_estimate(
             }
         }
     }
+}
+
+// ── Value-universe bounds (the §3 cap, REG-1196) ───────────────────
+
+/// No usable bound — the variable's domain is unknown, so it must not constrain the cap.
+const UNBOUNDED: u64 = u64::MAX;
+
+/// Record an upper bound on the number of DISTINCT values each variable this leg newly
+/// binds can take. Only an upper bound is needed, and an over-estimate is always safe: it
+/// merely loosens the cap.
+fn record_domains(
+    source: &LegSource,
+    atom: &Atom,
+    provided: &HashSet<String>,
+    stats: &Stats,
+    estimates: &HashMap<String, u64>,
+    facts: &FactStats,
+    col_domains: &HashMap<String, Vec<u64>>,
+    domains: &mut HashMap<String, u64>,
+    support: &mut HashMap<String, BTreeSet<String>>,
+) {
+    // A builtin is single-valued in its inputs, so everything it binds shares ONE support:
+    // the union of its input variables' supports. `split` is the exception — it emits many
+    // rows per input — so it generates freshly instead.
+    let functional = matches!(source, LegSource::Builtin(name) if name != "split");
+    if functional {
+        let inputs: Vec<&String> = atom
+            .args()
+            .iter()
+            .filter_map(|t| match t {
+                Term::Var(v) if !provided.contains(v) => Some(v),
+                _ => None,
+            })
+            .collect();
+        let mut union: BTreeSet<String> = BTreeSet::new();
+        let mut known = true;
+        for v in inputs {
+            match support.get(v) {
+                Some(s) => union.extend(s.iter().cloned()),
+                None => known = false,
+            }
+        }
+        let domain = if known {
+            union
+                .iter()
+                .map(|v| domains.get(v).copied().unwrap_or(UNBOUNDED))
+                .fold(1u64, |acc, d| {
+                    if acc == UNBOUNDED || d == UNBOUNDED { UNBOUNDED } else { acc.saturating_mul(d) }
+                })
+        } else {
+            UNBOUNDED
+        };
+        for v in provided {
+            domains.insert(v.clone(), domain.max(1));
+            support.insert(
+                v.clone(),
+                if known { union.clone() } else { BTreeSet::from([v.clone()]) },
+            );
+        }
+        return;
+    }
+
+    for (i, term) in atom.args().iter().enumerate() {
+        let Term::Var(v) = term else { continue };
+        if !provided.contains(v) {
+            continue;
+        }
+        let domain = match source {
+            LegSource::Base(rel) => base_column_domain(rel, atom, i, stats),
+            LegSource::Derived { name, .. } => derived_column_domain(
+                name, i, stats, estimates, facts, col_domains,
+            ),
+            // `split` and anything else non-functional generates freshly.
+            LegSource::Builtin(_) => UNBOUNDED,
+        };
+        domains.insert(v.clone(), domain.max(1));
+        // A relation column is an independent generator: it supports itself.
+        support.insert(v.clone(), BTreeSet::from([v.clone()]));
+    }
+}
+
+/// Upper bound on the distinct values a derived predicate's column `i` can yield.
+///
+/// The published per-column bound is the load-bearing one: it carries the ORIGIN of the
+/// value (a node id, an attribute's value space, a registry column) up through the
+/// derivation chain. Falling back to the predicate's estimated ROW COUNT — as the first cut
+/// of this fix did — is circular: that row count is exactly the inflated product the cap
+/// exists to bound, so the cap could never bind on the rules that need it (`res/2` stayed
+/// at 1.1·10^8 on an empty graph).
+fn derived_column_domain(
+    name: &str,
+    i: usize,
+    stats: &Stats,
+    estimates: &HashMap<String, u64>,
+    facts: &FactStats,
+    col_domains: &HashMap<String, Vec<u64>>,
+) -> u64 {
+    // A ground-fact column's distinct count is exact and needs no propagation.
+    if let Some(shape) = facts.shape(name) {
+        return shape.distinct.get(i).copied().unwrap_or(shape.rows);
+    }
+    // A relation of k rows carries at most k distinct values per column; the published
+    // per-column bound is usually far tighter. Take the better of the two.
+    let by_rows = estimates
+        .get(name)
+        .copied()
+        .unwrap_or_else(|| whole_graph_magnitude(stats));
+    match col_domains.get(name).and_then(|cols| cols.get(i)).copied() {
+        Some(by_column) => by_column.min(by_rows),
+        None => by_rows,
+    }
+}
+
+/// Upper bound on the distinct values a base relation's column `i` can yield.
+fn base_column_domain(rel: &str, atom: &Atom, i: usize, stats: &Stats) -> u64 {
+    match rel {
+        // (id, type): an id column is bounded by the live nodes of that type; the type
+        // column by the number of distinct types the oracle knows.
+        "node" | "type" => match i {
+            0 => {
+                let const_ty = atom.args().get(1).and_then(|t| t.const_value());
+                match const_ty {
+                    Some(ty) if !stats.nodes_by_type.is_empty() => {
+                        stats.nodes_by_type.get(ty).copied().unwrap_or(0)
+                    }
+                    _ => stats.total_nodes,
+                }
+            }
+            _ if !stats.nodes_by_type.is_empty() => stats.nodes_by_type.len() as u64,
+            _ => stats.total_nodes,
+        },
+        // (src, dst, type): endpoints are node ids; the type column is bounded — loosely
+        // but soundly — by the edge count.
+        "edge" | "incoming" => match i {
+            0 | 1 => stats.total_nodes,
+            _ => stats.total_edges,
+        },
+        // (id, key, value): the id column is a node; a VALUE column holds at most one
+        // value per node per key, so its distinct count is bounded by the node count. The
+        // key column is unbounded by graph size (keys are a schema property) — but it is
+        // never a head column in practice, so the loose node-count bound is enough.
+        "attr" => stats.total_nodes,
+        _ => whole_graph_magnitude(stats),
+    }
+}
+
+/// The per-column domain bound of a rule head, in head-argument order. A constant column
+/// holds exactly one value; a column whose variable no leg bounded is [`UNBOUNDED`].
+fn head_column_domains(head: &Atom, domains: &HashMap<String, u64>) -> Vec<u64> {
+    head.args()
+        .iter()
+        .map(|term| match term {
+            Term::Const(_) | Term::Lit(_) => 1,
+            Term::Wildcard => UNBOUNDED,
+            Term::Var(v) => domains.get(v).copied().unwrap_or(UNBOUNDED),
+        })
+        .collect()
+}
+
+/// The rule head's value universe — the number of distinct rows it could possibly hold.
+///
+/// Computed over the union of the head variables' SUPPORTS, not over the columns
+/// themselves: a `@materialize_node` head like
+/// `cli_command(Sid, Name, F, Lib, M, Cid)` carries a `Sid` built by a `concat` chain out
+/// of `F`, `Name` and `Cid`, so a naive per-column product squares those three and the cap
+/// never binds where it is needed. Multiplying each independent generator exactly once is
+/// both tighter and correct.
+///
+/// [`UNBOUNDED`] whenever any head column's origin is unknown — an unknown factor must
+/// never be silently treated as 1, since that would UNDER-bound the cap and weaken the
+/// guard.
+fn head_universe(
+    head: &Atom,
+    domains: &HashMap<String, u64>,
+    support: &HashMap<String, BTreeSet<String>>,
+) -> u64 {
+    let mut generators: BTreeSet<&String> = BTreeSet::new();
+    for term in head.args() {
+        match term {
+            Term::Const(_) | Term::Lit(_) => {}
+            Term::Wildcard => return UNBOUNDED,
+            Term::Var(v) => match support.get(v) {
+                Some(s) => generators.extend(s.iter()),
+                None => return UNBOUNDED,
+            },
+        }
+    }
+    let mut product: u64 = 1;
+    for g in generators {
+        match domains.get(g) {
+            Some(&d) if d != UNBOUNDED => product = product.saturating_mul(d),
+            _ => return UNBOUNDED,
+        }
+    }
+    product.max(1)
+}
+
+/// Fold one rule's head-column domains into the published bound for its predicate.
+///
+/// A predicate's rows are the UNION over its rules, so a column's distinct count is at
+/// most the SUM of the per-rule counts — never the max, which would under-bound a
+/// predicate whose arms draw from disjoint value spaces.
+fn merge_column_domains(
+    published: &mut HashMap<String, Vec<u64>>,
+    pred: &str,
+    head_domains: &[u64],
+) {
+    match published.get_mut(pred) {
+        Some(existing) if existing.len() == head_domains.len() => {
+            for (slot, add) in existing.iter_mut().zip(head_domains) {
+                *slot = slot.saturating_add(*add);
+            }
+        }
+        // First arm seen, or an arity disagreement the stratifier will reject anyway.
+        _ => {
+            published.insert(pred.to_string(), head_domains.to_vec());
+        }
+    }
+}
+
+/// The conservative whole-graph magnitude used wherever nothing better is known.
+fn whole_graph_magnitude(stats: &Stats) -> u64 {
+    stats.total_nodes.max(stats.total_edges).max(1)
 }
 
 /// The graph's average degree (⌈E/N⌉, floored at 1) — the population-level fan-out of a
