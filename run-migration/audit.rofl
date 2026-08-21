@@ -1,0 +1,18 @@
+-- Epistemic audit theory v0.2 — with integrity rules (the R10 silent-miss fix)
+at_risk[audit](C)    :- ground[a](C, G), refuted[b](G).
+repaired[audit](C)   :- at_risk[audit](C), repair[a](C, R).
+open_risk[audit](C)  :- at_risk[audit](C), not repaired[audit](C).
+shaky[audit](C)      :- ground[a](C, G), hypothesis[a](G), not verified[world](G).
+strong_ev[audit](C)  :- evidence[world](C, E1), evidence[world](C, E2), E1 != E2.
+weak_ev[audit](C)    :- evidence[world](C, E), not strong_ev[audit](C).
+unevidenced[audit](C):- claim_of[a](C), not evidence[world](C, E).
+split[audit](L)      :- part_of(A, L), part_of(B, L), verdict_ok[audit](A), verdict_bad[audit](B).
+miscast[audit](P, L) :- decision[a](attach(P, Lv)), level(Lv), split[audit](L).
+attack(X, C)         :- confound[b](C, X), not controlled[a](C, X).
+contested[audit](C)  :- causal[a](C), attack(X, C).
+clean[audit](C)      :- causal[a](C), not contested[audit](C).
+-- INTEGRITY: the library validates its own vocabulary (closed-world antidote)
+level(coarse_level).  level(depth_level).  level(language_level).
+vocab_drift[audit](P, Lv) :- decision[a](attach(P, Lv)), not level(Lv).
+-- slop detector for long runs: a claim with no ground at all
+groundless[audit](C) :- claim_of[a](C), not ground[a](C, G).

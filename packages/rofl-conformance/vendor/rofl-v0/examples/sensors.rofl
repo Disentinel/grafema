@@ -1,0 +1,21 @@
+-- sensors.rofl — paradigm litmus (Appendix B of START.md).
+-- three sources, one lying; bridge decides; triad exercised
+
+reading[s1](t1, 20) @init.
+reading[s2](t1, 21) @init.
+reading[s3](t1, 95) @init.
+authority(s1, sensor_net).  authority(s2, sensor_net).  authority(s3, sensor_net).
+
+close(V1, V2)          :- D is V1 - V2, D <= 2, D >= -2.  -- mode note: both bound
+corroborated[trust](S) :- reading[S](T, V1), reading[S2](T, V2),
+                          S != S2, close(V1, V2).
+outlier[trust](S)      :- reading[S](T, _), not corroborated[trust](S).
+temp[verified](T, V)   :- reading[S](T, V), corroborated[trust](S).
+
+-- Acceptance scenario:
+--   ? temp[verified](t1, V)      -> 20, 21 (never 95)
+--   why  outlier[trust](s3)      -> finite-failure demo of corroboration
+--   excise reading[s1](t1, 20)   -> corroborated(s2) falls, temp loses 21:
+--                                  the diff IS the blast radius
+--   whynot corroborated[trust](s3) -> names the missing close reading
+--                                    (single-step abduction)

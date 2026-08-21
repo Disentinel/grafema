@@ -1,0 +1,41 @@
+-- boot.rofl — the meta-kernel as data (Appendix A of START.md).
+-- STRATUM 0: monotone meta-kernel. No `not` above the marked line.
+
+rule_known(R)      :- has_conclusion(R, _).
+perspective(P)     :- authority(P, _).
+
+sees(P, P)         :- perspective(P).
+sees(P, Q)         :- imports(P, Q).
+sees(P, Q)         :- imports(P, X), sees(X, Q).
+
+dep(A, B)          :- concludes(R, A), premise_pos(R, B).
+dep(A, B)          :- concludes(R, A), premise_neg(R, B).
+dep_neg(A, B)      :- concludes(R, A), premise_neg(R, B).
+
+reach(A, B)        :- dep(A, B).
+reach(A, B)        :- reach(A, X), dep(X, B).
+unstratified(Rel)  :- dep_neg(Rel, Q), reach(Q, Rel).
+
+stratum(Rel, 0)    :- edb(Rel).
+stratum(Rel, N)    :- dep_neg(Rel, Q), stratum(Q, M), N is M + 1.
+stratum(Rel, N)    :- dep(Rel, Q), stratum(Q, N).
+
+-- ============ negation below this line only ============
+
+malformed[audit](R)   :- rule_known(R), not has_premise(R, _).
+malformed[audit](R)   :- has_premise(R, _), not has_conclusion(R, _).
+
+breach[audit](R)      :- concludes(R, Rel), reserved(Rel).
+
+flow(A, B)            :- reads_from(R, A), writes_to(R, B).
+leak[audit](A, B)     :- flow(A, B), not sees(B, A), not bridge_decl(R, A, B).
+
+forged[audit](F)      :- asserted_by(F, Who), in_perspective(F, P),
+                         not authority(P, Who).
+
+unmoded[audit](R)     :- uses_builtin(R, B), not mode(B, _).
+
+-- Required results on load:
+--   ? unstratified(X)      -> empty      ? malformed[audit](R) -> empty
+--   ? breach[audit](R)     -> empty      ? leak[audit](A,B)    -> empty
+--   whynot unstratified(reach) -> finite demonstration via dep/reach

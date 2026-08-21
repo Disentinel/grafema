@@ -1,0 +1,18 @@
+-- tm_diverge.rofl — the diverging variant: a one-rule machine that runs
+-- right forever. Under a budget the kernel emits hole(...) and returns the
+-- partial trace; it must never hang.
+
+cfg(a, tape(nil, 0, nil)) @init.
+
+delta(a, 0, a, 1, r) @init.
+delta(a, 1, a, 1, r) @init.
+
+move(r, L, W, cons(H2, R2), tape(cons(W, L), H2, R2)) :- H2 = H2.
+move(r, L, W, nil,          tape(cons(W, L), 0, nil)) :- W = W.
+move(l, cons(H2, L2), W, R, tape(L2, H2, cons(W, R))) :- H2 = H2.
+move(l, nil,          W, R, tape(nil, 0, cons(W, R))) :- W = W.
+
+step(S, tape(L, H, R), S2, T2) :- delta(S, H, S2, W, D), move(D, L, W, R, T2).
+
+cfg(S2, T2) @next :- cfg(S, T), step(S, T, S2, T2).
+delta(S, X, S2, W, D) @next :- delta(S, X, S2, W, D).

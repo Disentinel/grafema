@@ -1,0 +1,12 @@
+{
+  "name": "@grafema/rofl-conformance",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "TWO-TIER conformance harness: ROFL v0 (vendored oracle) vs RFDB derive engine (wire subject). Tier-0 = 120-seed stratified-datalog differential; tier-1 = the 29 v0 tests + boot.rofl with a closed RED-reason taxonomy.",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "run": "node --experimental-strip-types src/run.ts"
+  },
+  "dependencies": {}
+}

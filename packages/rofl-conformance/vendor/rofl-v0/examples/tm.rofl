@@ -1,0 +1,29 @@
+-- tm.rofl — Turing-completeness demo (Appendix C of START.md).
+-- Tape as terms tape(Left, Head, Right); Left/Right are cons-lists nearest
+-- the head first; blank symbol is 0. Transitions: delta(S, Sym, S2, W, Dir).
+-- One @next rule advances the configuration; delta and the halted cfg are
+-- carried explicitly (persistence is not a storage property).
+--
+-- Machine: the classic 3-state busy beaver (Sigma(3) = 6 ones, halts in 13
+-- steps on a blank tape).
+
+cfg(a, tape(nil, 0, nil)) @init.
+
+delta(a, 0, b, 1, r) @init.
+delta(a, 1, c, 1, l) @init.
+delta(b, 0, a, 1, l) @init.
+delta(b, 1, b, 1, r) @init.
+delta(c, 0, b, 1, l) @init.
+delta(c, 1, halt, 1, r) @init.
+
+-- head movement over the two-list tape (moded helper relations)
+move(r, L, W, cons(H2, R2), tape(cons(W, L), H2, R2)) :- H2 = H2.
+move(r, L, W, nil,          tape(cons(W, L), 0, nil)) :- W = W.
+move(l, cons(H2, L2), W, R, tape(L2, H2, cons(W, R))) :- H2 = H2.
+move(l, nil,          W, R, tape(nil, 0, cons(W, R))) :- W = W.
+
+step(S, tape(L, H, R), S2, T2) :- delta(S, H, S2, W, D), move(D, L, W, R, T2).
+
+cfg(S2, T2) @next :- cfg(S, T), step(S, T, S2, T2).
+delta(S, X, S2, W, D) @next :- delta(S, X, S2, W, D).
+cfg(halt, T) @next :- cfg(halt, T).

@@ -1,0 +1,7 @@
+-- counter.rofl — ticks demo: emits 1..5 as intention facts, then quiesces.
+-- Persistence is not a storage property: counter survives only because the
+-- @next rule carries it (until N reaches 5, after which the world empties).
+
+counter(1) @init.
+counter(M) @next :- counter(N), N < 5, M is N + 1.
+emit(N) :- counter(N).

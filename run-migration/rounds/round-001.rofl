@@ -1,0 +1,85 @@
+-- Round 001 (2026-08-21) — PRE-REGISTERED expectations for the RFDB↔ROFL-v0
+-- conformance harness (ТЗ P0), committed BEFORE the harness's first run.
+-- Vocabulary: audit-v0.2 (claim_of[a]/1, ground[a]/2, evidence[world]/2).
+-- expected/found live in the migration perspective m; found/2 arrives in round-002
+-- with the run evidence. Until then every claim below legitimately appears in
+-- unevidenced[audit] and weak_ev[audit] — that IS the pre-register semantics.
+--
+-- Claim → design ground mapping (design doc: the P0 workflow design, expectations[]):
+--   exp_phase1_tc_parse_green      — phase1.test.ts:12-56 TC seminaive + @async(:45) + @next(:52)
+--                                    rejects. RFDB live-proven on recursive anc/parent (probe);
+--                                    parse rejects reproduced by the SHARED vendored v0 parser
+--                                    (parser.ts:189, :236-239). Expected GREEN (3 of 6 tests;
+--                                    tc-naive is RED dialect:untranslatable — v0-mode toggle).
+--   exp_phase1_functor_red         — phase1.test.ts:30-43 cons/2 functor append via demand rules.
+--                                    Expected RED missing:compound-terms (+ demand-mode);
+--                                    datalog/types.rs:12-14 has no compound term form.
+--   exp_phase1_arith_red           — phase1.test.ts:58-69 is/mod/>=. Expected RED
+--                                    dialect:untranslatable in P0 (unverified semantic mapping,
+--                                    unify.ts:96-113 vs 26 RFDB builtins); first P1 flip candidate.
+--   exp_phase2_differentials_green — phase2.test.ts:63-100 naive≡seminaive differentials,
+--                                    superseded-by-construction: the harness tier-0 differential
+--                                    IS these tests re-pointed at RFDB. Expected GREEN.
+--   exp_phase2_whytree_persp_strata_red — phase2.test.ts:102-189 why-tree regex / perspectives /
+--                                    stratum-strataPlan / unstratifiable-demo / derived_by.
+--                                    Expected RED: missing:whynot-shape (:102), missing:perspectives
+--                                    (:118), missing:rules-as-data (:129,:150,:161,:176).
+--   exp_phase3_reflection_snapshot_red — phase3.test.ts all 6. Expected RED
+--                                    missing:rules-as-data except :75-99 missing:snapshot.
+--   exp_phase4_time_budget_boot_red — phase4.test.ts all 9. Expected RED: missing:temporal
+--                                    (:19,:34,:83), missing:holes (:104,:199 — THE abort-vs-hole
+--                                    policy contradiction, engine_v2.rs:681-684 vs engine.ts:188-198),
+--                                    missing:rules-as-data/persp/excise (:119-185).
+--   exp_boot_load_red              — boot.rofl through the adapter. Expected RED
+--                                    missing:rules-as-data at the first reflection-vocabulary literal
+--                                    (boot.rofl:4-21 over rule/concludes/premise_pos/premise_neg).
+--   exp_tier0_differential_green   — 120-seed TS↔RFDB fact-set differential on the common subset
+--                                    (stratified flat datalog, atom constants, connected bodies,
+--                                    range-restricted distinct-var heads). Both engines deterministic
+--                                    + sorted (api.ts:223/unify.ts:79; exec.rs:929-933). Expected
+--                                    GREEN: zero divergences.
+--   exp_tier0_witness_green        — per-seed witness existence + body-soundness spot-checks
+--                                    (≤5 derived facts): v0 why().ok ∧ RFDB explainDatalogFact
+--                                    witness non-null ∧ witness body ⊆ v0 canonical fact set.
+--                                    Deliberately NOT tree identity (store.ts:127 first-witness-only).
+--                                    Expected GREEN.
+
+claim_of[a](exp_phase1_tc_parse_green).
+ground[a](exp_phase1_tc_parse_green, rfdb_liveproven_recursion_and_shared_v0_parser_rejects).
+expected[m](exp_phase1_tc_parse_green, green).
+
+claim_of[a](exp_phase1_functor_red).
+ground[a](exp_phase1_functor_red, rfdb_types_have_no_compound_term_form).
+expected[m](exp_phase1_functor_red, red_missing_compound_terms).
+
+claim_of[a](exp_phase1_arith_red).
+ground[a](exp_phase1_arith_red, arith_semantic_mapping_unverified_in_p0).
+expected[m](exp_phase1_arith_red, red_dialect_untranslatable).
+
+claim_of[a](exp_phase2_differentials_green).
+ground[a](exp_phase2_differentials_green, tier0_differential_is_these_tests_repointed).
+expected[m](exp_phase2_differentials_green, green).
+
+claim_of[a](exp_phase2_whytree_persp_strata_red).
+ground[a](exp_phase2_whytree_persp_strata_red, flat_witness_no_persp_no_queryable_strata).
+expected[m](exp_phase2_whytree_persp_strata_red, red).
+
+claim_of[a](exp_phase3_reflection_snapshot_red).
+ground[a](exp_phase3_reflection_snapshot_red, no_reflection_vocabulary_no_canonicalstate).
+expected[m](exp_phase3_reflection_snapshot_red, red).
+
+claim_of[a](exp_phase4_time_budget_boot_red).
+ground[a](exp_phase4_time_budget_boot_red, no_ticks_no_holes_abort_no_commit_policy).
+expected[m](exp_phase4_time_budget_boot_red, red).
+
+claim_of[a](exp_boot_load_red).
+ground[a](exp_boot_load_red, boot_is_reflection_vocabulary_in_action).
+expected[m](exp_boot_load_red, red_missing_rules_as_data).
+
+claim_of[a](exp_tier0_differential_green).
+ground[a](exp_tier0_differential_green, sorted_deterministic_output_both_engines).
+expected[m](exp_tier0_differential_green, green).
+
+claim_of[a](exp_tier0_witness_green).
+ground[a](exp_tier0_witness_green, explain_fact_liveproven_witness_existence_and_body_soundness).
+expected[m](exp_tier0_witness_green, green).
