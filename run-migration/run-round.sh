@@ -28,6 +28,6 @@ echo "== snapshot =="
 node --experimental-strip-types --no-warnings "$RM/ledger.ts" snapshot "round-$ROUND"
 
 echo "== commit (never push) =="
-git add "$RM" _ai/research/rofl-conformance-report.md packages/rofl-conformance/conformance-report.json
+git add "$RM" _ai/research/rofl-conformance-report.md packages/rofl-conformance/conformance-report.json packages/rofl-conformance/conformance-run-meta.json
 git commit -m "rofl-migration: round $ROUND"
 echo "round $ROUND committed (NOT pushed)"

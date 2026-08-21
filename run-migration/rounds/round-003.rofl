@@ -1,0 +1,49 @@
+-- Round 003 (2026-08-21) — evidence from the conformance harness run.
+-- run_id: rofl-conformance-1787352790006; report sha256 prefix: 5b833d1332cdac90 over the ARCHIVED bytes
+-- rounds/round-003.report.json (verify: sha256sum that file — the live
+-- conformance-report.json is regenerated per run and is NOT the evidence artifact).
+-- Assert-only: found[m] records the actual outcome per pre-registered claim;
+-- a mismatch gets a repair[a] with the reason (abandoned/adjusted), never a retract.
+
+evidence[world](exp_phase1_tc_parse_green, run_003_report_sha_5b833d1332cdac90).
+found[m](exp_phase1_tc_parse_green, green).
+evidence[world](exp_phase1_functor_red, run_003_report_sha_5b833d1332cdac90).
+found[m](exp_phase1_functor_red, red_missing_compound_terms).
+evidence[world](exp_phase1_arith_red, run_003_report_sha_5b833d1332cdac90).
+found[m](exp_phase1_arith_red, red_dialect_untranslatable).
+evidence[world](exp_phase2_differentials_green, run_003_report_sha_5b833d1332cdac90).
+found[m](exp_phase2_differentials_green, green).
+evidence[world](exp_phase2_whytree_persp_strata_red, run_003_report_sha_5b833d1332cdac90).
+found[m](exp_phase2_whytree_persp_strata_red, red).
+evidence[world](exp_phase3_reflection_snapshot_red, run_003_report_sha_5b833d1332cdac90).
+found[m](exp_phase3_reflection_snapshot_red, red).
+evidence[world](exp_phase4_time_budget_boot_red, run_003_report_sha_5b833d1332cdac90).
+found[m](exp_phase4_time_budget_boot_red, red).
+evidence[world](exp_boot_load_red, run_003_report_sha_5b833d1332cdac90).
+found[m](exp_boot_load_red, red_missing_rules_as_data).
+evidence[world](exp_tier0_differential_green, run_003_report_sha_5b833d1332cdac90).
+found[m](exp_tier0_differential_green, green).
+evidence[world](exp_tier0_witness_green, run_003_report_sha_5b833d1332cdac90).
+found[m](exp_tier0_witness_green, green).
+-- REPAIR (adversarial-review finding, 2026-08-21): round-002's evidence pointer
+-- is DANGLING. round-002 recorded report sha256 prefix 066d04add6049395, but
+-- conformance-report.json was regenerated IN PLACE after recording (with the
+-- run-identity fields carried over), so the recorded sha verifies against no
+-- persisted artifact. The run-002 report CONTENT is genuine — an independent
+-- review re-run reproduced it bit-identically modulo run_id/timestamp — but the
+-- integrity pointer itself is broken, and round-002's found[m] values were
+-- re-established by this round's own run (found values identical across rounds).
+-- Mechanical fix shipped with this round: the report is now byte-reproducible
+-- (run identity moved to the conformance-run-meta.json sidecar), record-round.ts
+-- ARCHIVES the exact report bytes at rounds/round-NNN.report.json, hashes the
+-- archive, and REFUSES to re-record an existing round.
+repair[a](exp_phase1_tc_parse_green, round_002_evidence_sha_dangling_rearchived_in_round_003).
+repair[a](exp_phase1_functor_red, round_002_evidence_sha_dangling_rearchived_in_round_003).
+repair[a](exp_phase1_arith_red, round_002_evidence_sha_dangling_rearchived_in_round_003).
+repair[a](exp_phase2_differentials_green, round_002_evidence_sha_dangling_rearchived_in_round_003).
+repair[a](exp_phase2_whytree_persp_strata_red, round_002_evidence_sha_dangling_rearchived_in_round_003).
+repair[a](exp_phase3_reflection_snapshot_red, round_002_evidence_sha_dangling_rearchived_in_round_003).
+repair[a](exp_phase4_time_budget_boot_red, round_002_evidence_sha_dangling_rearchived_in_round_003).
+repair[a](exp_boot_load_red, round_002_evidence_sha_dangling_rearchived_in_round_003).
+repair[a](exp_tier0_differential_green, round_002_evidence_sha_dangling_rearchived_in_round_003).
+repair[a](exp_tier0_witness_green, round_002_evidence_sha_dangling_rearchived_in_round_003).

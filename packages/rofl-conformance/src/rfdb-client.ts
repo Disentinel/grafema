@@ -1,0 +1,142 @@
+// rfdb-client.ts — minimal unix-socket client for rfdb-server.
+// Framing: [4-byte BE length][MessagePack body] both directions
+// (rfdb_server.rs read/write loop). Requests are internally tagged maps
+// {"cmd": <camelCase>, ...} (Request enum serde attrs, rfdb_server.rs:85).
+
+import * as net from 'node:net';
+import { encode, decode, type MpValue } from './msgpack.ts';
+
+export interface WireBodyFact { predicate: string; tuple: string[]; }
+export interface FactWitness { ruleAstHash: string; body: WireBodyFact[]; }
+export interface GapWitness {
+  ruleAstHash: string;
+  satisfied: WireBodyFact[];
+  failingPredicate: string;
+  failingIsNegative: boolean;
+}
+
+/** Extract the machine-readable E-code from an RFDB error string, if any. */
+export function extractECode(error: string): string | null {
+  const m = /\[E-[A-Z]+-\d+\]/.exec(error);
+  return m ? m[0].slice(1, -1) : null;
+}
+
+export class RfdbError extends Error {
+  code: string | null;
+  constructor(message: string) {
+    super(message);
+    this.code = extractECode(message);
+  }
+}
+
+export class RfdbClient {
+  private socket: net.Socket;
+  private buf: Buffer = Buffer.alloc(0);
+  private waiters: { resolve: (v: MpValue) => void; reject: (e: Error) => void }[] = [];
+  /** Wire round-trips issued on this client — the suite runner diffs it around
+   *  each scenario so a GREEN's evidence string states honestly whether the
+   *  engine was consulted at all (parse-reject scenarios never hit the wire). */
+  callCount = 0;
+
+  private constructor(socket: net.Socket) {
+    this.socket = socket;
+    socket.on('data', (chunk) => this.onData(chunk));
+    socket.on('error', (e) => this.failAll(e));
+    socket.on('close', () => this.failAll(new Error('rfdb socket closed')));
+  }
+
+  static async connect(socketPath: string): Promise<RfdbClient> {
+    const socket = await new Promise<net.Socket>((resolve, reject) => {
+      const s = net.createConnection(socketPath);
+      s.once('connect', () => { s.removeListener('error', reject); resolve(s); });
+      s.once('error', reject);
+    });
+    return new RfdbClient(socket);
+  }
+
+  close(): void {
+    this.socket.removeAllListeners();
+    this.socket.destroy();
+  }
+
+  private failAll(e: Error): void {
+    const ws = this.waiters.splice(0);
+    for (const w of ws) w.reject(e);
+  }
+
+  private onData(chunk: Buffer): void {
+    this.buf = Buffer.concat([this.buf, chunk]);
+    while (this.buf.length >= 4) {
+      const len = this.buf.readUInt32BE(0);
+      if (this.buf.length < 4 + len) return;
+      const body = this.buf.subarray(4, 4 + len);
+      this.buf = this.buf.subarray(4 + len);
+      const w = this.waiters.shift();
+      if (!w) throw new Error('rfdb-client: response with no pending request');
+      try {
+        w.resolve(decode(new Uint8Array(body)));
+      } catch (e) {
+        w.reject(e as Error);
+      }
+    }
+  }
+
+  call(req: { [k: string]: MpValue }): Promise<MpValue> {
+    this.callCount++;
+    const payload = encode(req);
+    const frame = Buffer.alloc(4 + payload.length);
+    frame.writeUInt32BE(payload.length, 0);
+    frame.set(payload, 4);
+    return new Promise((resolve, reject) => {
+      this.waiters.push({ resolve, reject });
+      this.socket.write(frame);
+    });
+  }
+
+  /** Hello handshake; asserts protocol v3 + the datalogDerive feature so the
+   *  harness never silently tests the wrong engine. */
+  async hello(): Promise<{ protocolVersion: number; serverVersion: string; features: string[] }> {
+    const r = (await this.call({ cmd: 'hello', protocolVersion: 3, clientId: 'rofl-conformance' })) as {
+      [k: string]: MpValue;
+    };
+    if (r['ok'] !== true) throw new Error(`hello failed: ${JSON.stringify(r)}`);
+    const features = (r['features'] as string[]) ?? [];
+    if (r['protocolVersion'] !== 3) throw new Error(`unexpected protocolVersion: ${r['protocolVersion']}`);
+    if (!features.includes('datalogDerive')) {
+      throw new Error('rfdb-server does not advertise datalogDerive — derive engine is off; the harness would test the wrong engine');
+    }
+    return {
+      protocolVersion: r['protocolVersion'] as number,
+      serverVersion: r['serverVersion'] as string,
+      features,
+    };
+  }
+
+  /** Execute a derive program; returns rows of variable bindings for the FIRST
+   *  rule head's predicate (rfdb_server.rs:2949-2951 — callers hoist the wanted
+   *  predicate's first rule to the top). explain is ALWAYS false: explain=true
+   *  silently reroutes to the legacy v1 query engine (rfdb_server.rs:2907). */
+  async executeDatalog(source: string): Promise<Record<string, string>[]> {
+    const r = (await this.call({ cmd: 'executeDatalog', source, explain: false })) as { [k: string]: MpValue };
+    if (typeof r['error'] === 'string') throw new RfdbError(r['error']);
+    const results = r['results'];
+    if (!Array.isArray(results)) throw new Error(`unexpected executeDatalog response: ${JSON.stringify(r)}`);
+    return results.map((row) => ((row as { [k: string]: MpValue })['bindings'] ?? {}) as Record<string, string>);
+  }
+
+  /** why(): one supporting derivation of predicate(key), or null. */
+  async explainDatalogFact(source: string, predicate: string, key: string[]): Promise<FactWitness | null> {
+    const r = (await this.call({ cmd: 'explainDatalogFact', source, predicate, key })) as { [k: string]: MpValue };
+    if (typeof r['error'] === 'string') throw new RfdbError(r['error']);
+    if (!('witness' in r)) throw new Error(`unexpected explainDatalogFact response: ${JSON.stringify(r)}`);
+    return (r['witness'] as FactWitness | null) ?? null;
+  }
+
+  /** why-not(): satisfied prefix + first failing premise, or null (= derivable). */
+  async explainDatalogGap(source: string, predicate: string, key: string[]): Promise<GapWitness | null> {
+    const r = (await this.call({ cmd: 'explainDatalogGap', source, predicate, key })) as { [k: string]: MpValue };
+    if (typeof r['error'] === 'string') throw new RfdbError(r['error']);
+    if (!('witness' in r)) throw new Error(`unexpected explainDatalogGap response: ${JSON.stringify(r)}`);
+    return (r['witness'] as GapWitness | null) ?? null;
+  }
+}

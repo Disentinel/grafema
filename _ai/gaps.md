@@ -506,3 +506,19 @@ regression — a pre-existing propagation gap now reachable.
 **Locus (to confirm):** `traceEffects`/`findCallsInFunction` (packages/util) member-call resolution
 to (module, method) for the effects-db lookup, OR the JS property-access/method-call resolution that
 should link `axios.get` CALL → module=axios + method=get. Tracked: triage task.
+
+## Pre-existing on rofl-v1: rfdb-server bench_c2_bulkload 2 test failures (2026-08-21, NOT harness-caused)
+
+**What:** `cargo test -p rfdb-server --test bench_c2_bulkload` fails 2 of 4:
+`c2_bulk_plus_concurrent_durability` and `c2_throughput_and_serial_durability`, both panicking
+`end_bulk_load barrier: Io(Os { code: 2, kind: NotFound })` (tests/bench_c2_bulkload.rs:512 and :244).
+
+**NOT caused by the rofl-conformance P0 harness:** the worktree has zero modified tracked files
+(harness work is all-new TS/docs; commits c64138ce and 22a2611e touch only TS/vendor/docs), and the
+failing tests come from pre-existing commit f96b2b00 ("perf(rfdb): MVCC C2 — bulk-load mode").
+Reproducible in isolation with no stray server. The 1420-test lib suite passes.
+
+**Likely locus (to triage):** the C2 durable-barrier path
+(`packages/rfdb-server/src/graph/engine_v2.rs` end_bulk_load fsync/rename sequence) or an
+environment-specific tmp-path assumption. Recorded here so a red run of the full rfdb-server test
+suite on branch rofl-v1 is not mis-attributed to the conformance harness. Owner decision pending.

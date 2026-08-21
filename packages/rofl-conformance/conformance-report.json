@@ -1,0 +1,345 @@
+{
+  "engines": {
+    "v0": {
+      "rev": "052a4c5"
+    },
+    "rfdb": {
+      "gitSha": "c64138cef6a251258af794d99c9fa9da44f5edff",
+      "binary": "/home/dev/grafema-rofl/packages/rfdb-server/target/debug/rfdb-server",
+      "serverVersion": "0.4.1",
+      "protocolVersion": 3
+    }
+  },
+  "tier0": {
+    "seeds": 120,
+    "divergences": [],
+    "witnessChecks": {
+      "passed": 325,
+      "failed": 0
+    },
+    "whynotChecks": {
+      "passed": 544,
+      "failed": 0
+    }
+  },
+  "tier1": [
+    {
+      "id": "p1-tc-seminaive",
+      "sourceRef": "test/phase1.test.ts:12",
+      "tier": "tier1",
+      "verdict": "GREEN",
+      "reason_code": null,
+      "evidence": "all ported assertions passed against the RfdbRofl adapter (answers delegated to rfdb-server over the wire; 1 wire round-trips)"
+    },
+    {
+      "id": "p1-tc-naive",
+      "sourceRef": "test/phase1.test.ts:22",
+      "tier": "tier1",
+      "verdict": "RED",
+      "reason_code": "dialect:untranslatable",
+      "evidence": "naive evaluation mode is a v0 engine-internal toggle; RFDB has a single evaluation mode (v0 modes agree on fact sets, LIMITS.md:48)"
+    },
+    {
+      "id": "p1-functor-append",
+      "sourceRef": "test/phase1.test.ts:30",
+      "tier": "tier1",
+      "verdict": "RED",
+      "reason_code": "missing:compound-terms",
+      "evidence": "functor term 'cons(…)' in clause 2: RFDB v1 has no compound term form (datalog/types.rs:12-14)"
+    },
+    {
+      "id": "p1-async-reject",
+      "sourceRef": "test/phase1.test.ts:45",
+      "tier": "tier1",
+      "verdict": "GREEN",
+      "reason_code": null,
+      "evidence": "all ported assertions passed via the SHARED vendored v0 parser front-end (rejection at load(); no engine delegation involved — zero wire round-trips)"
+    },
+    {
+      "id": "p1-next-body-reject",
+      "sourceRef": "test/phase1.test.ts:52",
+      "tier": "tier1",
+      "verdict": "GREEN",
+      "reason_code": null,
+      "evidence": "all ported assertions passed via the SHARED vendored v0 parser front-end (rejection at load(); no engine delegation involved — zero wire round-trips)"
+    },
+    {
+      "id": "p1-arith",
+      "sourceRef": "test/phase1.test.ts:58",
+      "tier": "tier1",
+      "verdict": "RED",
+      "reason_code": "dialect:untranslatable",
+      "evidence": "builtin 'is' in clause 3: the v0 arithmetic/comparison semantics (unify.ts:96-113, JS trunc) → RFDB builtin mapping is unverified in P0 (first P1 flip candidate)"
+    },
+    {
+      "id": "p2-diff-positive",
+      "sourceRef": "test/phase2.test.ts:63 (re-pointed per design: naive≡seminaive → v0≡RFDB; oracle mode runs the FULL 120 positive seeds of the original, subject mode the 90 positive seeds of the tier-0 75/25 split)",
+      "tier": "tier1",
+      "verdict": "GREEN",
+      "reason_code": null,
+      "evidence": "all ported assertions passed against the RfdbRofl adapter (answers delegated to rfdb-server over the wire; 943 wire round-trips)"
+    },
+    {
+      "id": "p2-diff-negation",
+      "sourceRef": "test/phase2.test.ts:74 (re-pointed per design: naive≡seminaive → v0≡RFDB)",
+      "tier": "tier1",
+      "verdict": "GREEN",
+      "reason_code": null,
+      "evidence": "all ported assertions passed against the RfdbRofl adapter (answers delegated to rfdb-server over the wire; 481 wire round-trips)"
+    },
+    {
+      "id": "p2-why-tree",
+      "sourceRef": "test/phase2.test.ts:102",
+      "tier": "tier1",
+      "verdict": "RED",
+      "reason_code": "missing:whynot-shape",
+      "evidence": "v0 why() is a recursive tree '<key> <= r<fnv1a> @tick N' (api.ts:250-277); RFDB witness for path(a,c) is flat {ruleAstHash, body[]} (exec.rs:248) — witness EXISTS but the tree shape is unrepresentable"
+    },
+    {
+      "id": "p2-persp-isolation",
+      "sourceRef": "test/phase2.test.ts:118",
+      "tier": "tier1",
+      "verdict": "RED",
+      "reason_code": "missing:perspectives",
+      "evidence": "perspective [vault] in clause 1: RFDB has no perspective dimension"
+    },
+    {
+      "id": "p2-stratum-order",
+      "sourceRef": "test/phase2.test.ts:129",
+      "tier": "tier1",
+      "verdict": "RED",
+      "reason_code": "missing:rules-as-data",
+      "evidence": "reflection-vocabulary relation 'has_conclusion' in clause 1: RFDB has no rules-as-data / provenance relations"
+    },
+    {
+      "id": "p2-noboot-null-plan",
+      "sourceRef": "test/phase2.test.ts:150",
+      "tier": "tier1",
+      "verdict": "RED",
+      "reason_code": "missing:rules-as-data",
+      "evidence": "v0 strata come from boot-derived stratum/2 + unstratified/1 FACTS (engine.ts:2-4, boot.rofl:17-21); RFDB stratification is internal, not queryable"
+    },
+    {
+      "id": "p2-unstrat-reject",
+      "sourceRef": "test/phase2.test.ts:161",
+      "tier": "tier1",
+      "verdict": "RED",
+      "reason_code": "missing:rules-as-data",
+      "evidence": "reflection-vocabulary relation 'has_conclusion' in clause 1: RFDB has no rules-as-data / provenance relations"
+    },
+    {
+      "id": "p2-derived-by",
+      "sourceRef": "test/phase2.test.ts:176",
+      "tier": "tier1",
+      "verdict": "RED",
+      "reason_code": "missing:rules-as-data",
+      "evidence": "reflection-vocabulary relation 'derived_by' in query 'derived_by(F, R, T)': RFDB has no rules-as-data / provenance relations"
+    },
+    {
+      "id": "p3-kernel-grep",
+      "sourceRef": "test/phase3.test.ts:14",
+      "tier": "tier1",
+      "verdict": "RED",
+      "reason_code": "missing:rules-as-data",
+      "evidence": "the kernel-grep vocabulary contract is about the v0 reflection vocabulary as the kernel API; RFDB has no reflection vocabulary to check"
+    },
+    {
+      "id": "p3-runtime-rule",
+      "sourceRef": "test/phase3.test.ts:19",
+      "tier": "tier1",
+      "verdict": "RED",
+      "reason_code": "missing:rules-as-data",
+      "evidence": "reflection-vocabulary relation 'has_conclusion' in clause 1: RFDB has no rules-as-data / provenance relations"
+    },
+    {
+      "id": "p3-write-protected",
+      "sourceRef": "test/phase3.test.ts:38",
+      "tier": "tier1",
+      "verdict": "RED",
+      "reason_code": "missing:rules-as-data",
+      "evidence": "reflection-vocabulary relation 'has_conclusion' in clause 1: RFDB has no rules-as-data / provenance relations"
+    },
+    {
+      "id": "p3-breach",
+      "sourceRef": "test/phase3.test.ts:46",
+      "tier": "tier1",
+      "verdict": "RED",
+      "reason_code": "missing:rules-as-data",
+      "evidence": "reflection-vocabulary relation 'has_conclusion' in clause 1: RFDB has no rules-as-data / provenance relations"
+    },
+    {
+      "id": "p3-malformed-sibling",
+      "sourceRef": "test/phase3.test.ts:55",
+      "tier": "tier1",
+      "verdict": "RED",
+      "reason_code": "missing:rules-as-data",
+      "evidence": "reflection-vocabulary relation 'has_conclusion' in clause 1: RFDB has no rules-as-data / provenance relations"
+    },
+    {
+      "id": "p3-snapshot-roundtrip",
+      "sourceRef": "test/phase3.test.ts:75",
+      "tier": "tier1",
+      "verdict": "RED",
+      "reason_code": "missing:rules-as-data",
+      "evidence": "reflection-vocabulary relation 'has_conclusion' in clause 1: RFDB has no rules-as-data / provenance relations"
+    },
+    {
+      "id": "p4-counter",
+      "sourceRef": "test/phase4.test.ts:19",
+      "tier": "tier1",
+      "verdict": "RED",
+      "reason_code": "missing:rules-as-data",
+      "evidence": "reflection-vocabulary relation 'has_conclusion' in clause 1: RFDB has no rules-as-data / provenance relations"
+    },
+    {
+      "id": "p4-replay",
+      "sourceRef": "test/phase4.test.ts:34",
+      "tier": "tier1",
+      "verdict": "RED",
+      "reason_code": "missing:rules-as-data",
+      "evidence": "reflection-vocabulary relation 'uses_builtin' in clause 1: RFDB has no rules-as-data / provenance relations"
+    },
+    {
+      "id": "p4-tm",
+      "sourceRef": "test/phase4.test.ts:83",
+      "tier": "tier1",
+      "verdict": "RED",
+      "reason_code": "missing:rules-as-data",
+      "evidence": "reflection-vocabulary relation 'has_conclusion' in clause 1: RFDB has no rules-as-data / provenance relations"
+    },
+    {
+      "id": "p4-tm-diverge",
+      "sourceRef": "test/phase4.test.ts:104",
+      "tier": "tier1",
+      "verdict": "RED",
+      "reason_code": "missing:rules-as-data",
+      "evidence": "reflection-vocabulary relation 'has_conclusion' in clause 1: RFDB has no rules-as-data / provenance relations"
+    },
+    {
+      "id": "p4-boot-audits",
+      "sourceRef": "test/phase4.test.ts:119",
+      "tier": "tier1",
+      "verdict": "RED",
+      "reason_code": "missing:rules-as-data",
+      "evidence": "reflection-vocabulary relation 'has_conclusion' in clause 1: RFDB has no rules-as-data / provenance relations"
+    },
+    {
+      "id": "p4-sensors",
+      "sourceRef": "test/phase4.test.ts:133",
+      "tier": "tier1",
+      "verdict": "RED",
+      "reason_code": "missing:rules-as-data",
+      "evidence": "reflection-vocabulary relation 'has_conclusion' in clause 1: RFDB has no rules-as-data / provenance relations"
+    },
+    {
+      "id": "p4-excise-multi",
+      "sourceRef": "test/phase4.test.ts:169",
+      "tier": "tier1",
+      "verdict": "RED",
+      "reason_code": "missing:excise",
+      "evidence": "v0 excise = clean re-evaluation on EDB minus one fact (api.ts:348); RFDB sim_derive is overlay-ADD, there is no minus-one-fact counterpart"
+    },
+    {
+      "id": "p4-forged",
+      "sourceRef": "test/phase4.test.ts:185",
+      "tier": "tier1",
+      "verdict": "RED",
+      "reason_code": "missing:rules-as-data",
+      "evidence": "reflection-vocabulary relation 'has_conclusion' in clause 1: RFDB has no rules-as-data / provenance relations"
+    },
+    {
+      "id": "p4-budget-hole",
+      "sourceRef": "test/phase4.test.ts:199",
+      "tier": "tier1",
+      "verdict": "RED",
+      "reason_code": "missing:holes",
+      "evidence": "load with an evaluation budget: v0 commits partial results + hole/2 facts on exhaustion (engine.ts:188-198); RFDB aborts without committing (E-codes, engine_v2.rs:681-684) — the known policy contradiction, ТЗ P1 mandates holes"
+    },
+    {
+      "id": "boot-load",
+      "sourceRef": "boot.rofl (design: boot.rofl load through adapter)",
+      "tier": "tier1",
+      "verdict": "RED",
+      "reason_code": "missing:rules-as-data",
+      "evidence": "reflection-vocabulary relation 'has_conclusion' in clause 1: RFDB has no rules-as-data / provenance relations"
+    }
+  ],
+  "expectedVsFound": [
+    {
+      "claim": "exp_phase1_tc_parse_green",
+      "expected": "green",
+      "found": "green",
+      "match": true,
+      "note": "p1-tc-seminaive=GREEN, p1-async-reject=GREEN, p1-next-body-reject=GREEN"
+    },
+    {
+      "claim": "exp_phase1_functor_red",
+      "expected": "red:missing:compound-terms",
+      "found": "red:missing:compound-terms",
+      "match": true,
+      "note": "functor term 'cons(…)' in clause 2: RFDB v1 has no compound term form (datalog/types.rs:12-14)"
+    },
+    {
+      "claim": "exp_phase1_arith_red",
+      "expected": "red:dialect:untranslatable",
+      "found": "red:dialect:untranslatable",
+      "match": true,
+      "note": "builtin 'is' in clause 3: the v0 arithmetic/comparison semantics (unify.ts:96-113, JS trunc) → RFDB builtin mapping is unverified in P0 (first P1 flip candidate"
+    },
+    {
+      "claim": "exp_phase2_differentials_green",
+      "expected": "green",
+      "found": "green",
+      "match": true,
+      "note": "p2-diff-positive=GREEN, p2-diff-negation=GREEN"
+    },
+    {
+      "claim": "exp_phase2_whytree_persp_strata_red",
+      "expected": "red",
+      "found": "red",
+      "match": true,
+      "note": "p2-why-tree=RED(missing:whynot-shape), p2-persp-isolation=RED(missing:perspectives), p2-stratum-order=RED(missing:rules-as-data), p2-noboot-null-plan=RED(missing:rules-as-data), p2-unstrat-reject=RED(missing:rules-as-data), p2-derived-by=RED(missing:rules-as-data)"
+    },
+    {
+      "claim": "exp_phase3_reflection_snapshot_red",
+      "expected": "red",
+      "found": "red",
+      "match": true,
+      "note": "p3-kernel-grep=RED(missing:rules-as-data), p3-runtime-rule=RED(missing:rules-as-data), p3-write-protected=RED(missing:rules-as-data), p3-breach=RED(missing:rules-as-data), p3-malformed-sibling=RED(missing:rules-as-data), p3-snapshot-roundtrip=RED(missing:rules-as-data)"
+    },
+    {
+      "claim": "exp_phase4_time_budget_boot_red",
+      "expected": "red",
+      "found": "red",
+      "match": true,
+      "note": "p4-counter=RED(missing:rules-as-data), p4-replay=RED(missing:rules-as-data), p4-tm=RED(missing:rules-as-data), p4-tm-diverge=RED(missing:rules-as-data), p4-boot-audits=RED(missing:rules-as-data), p4-sensors=RED(missing:rules-as-data), p4-excise-multi=RED(missing:excise), p4-forged=RED(missing:rules-as-data), p4-budget-hole=RED(missing:holes)"
+    },
+    {
+      "claim": "exp_boot_load_red",
+      "expected": "red:missing:rules-as-data",
+      "found": "red:missing:rules-as-data",
+      "match": true,
+      "note": "reflection-vocabulary relation 'has_conclusion' in clause 1: RFDB has no rules-as-data / provenance relations"
+    },
+    {
+      "claim": "exp_tier0_differential_green",
+      "expected": "green",
+      "found": "green",
+      "match": true,
+      "note": "120 seeds run"
+    },
+    {
+      "claim": "exp_tier0_witness_green",
+      "expected": "green",
+      "found": "green",
+      "match": true,
+      "note": "325 why witnesses (existence + body ⊆ v0 facts) + 544 whynot gap witnesses (existence + satisfied ⊆ v0 facts) checked; NOT tree identity — v0 keeps first witness only, store.ts:127"
+    }
+  ],
+  "discoveredEngineFindings": [
+    "RFDB `\\+ p(X, _)` (wildcard inside a NEGATED literal) silently returns wrong answers: probe q0(X) :- p0(X), \\+ p2(X, _) with p0(c0). p0(c1). p2(c1,c9). returned {c0, c1}; correct is {c0}. Positive wildcards are correct. The harness translator works around it by projecting negated wildcards through an auxiliary predicate (documented, not masked).",
+    "A body literal over a predicate with NO facts and NO rules HANGS rfdb-server past the 30s EvalLimits deadline (probe: q0(X) :- p0(X), p9(X). — no response in >45s). The translator eliminates statically-empty predicates to fixpoint before hitting the wire.",
+    "A fully-ground body literal in a multi-literal rule trips E-PLAN-003 after planner reordering (the ground leg is placed first, the var leg then shares no binding): q0(X) :- p0(X), p1(\"c1\",\"c2\"). rejected. shares_no_binding treats ground probes as safe (plan.rs:1506-1520) but only in the written order.",
+    "executeDatalog \"first rule head\" includes ground FACTS (a fact is a bodyless rule): the target predicate's first RULE must be hoisted above all facts or the response is the first fact's relation with empty bindings."
+  ]
+}
