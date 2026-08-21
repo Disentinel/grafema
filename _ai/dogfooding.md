@@ -29,8 +29,8 @@ MCP server configured in `.mcp.json` — provides 25 tools for graph queries. Re
 |---------------|----------------------|
 | Glob `**/*.ts` + Read files | `find_nodes` by type/name/file |
 | Grep "functionName" + Read context | `find_calls --name functionName` |
-| Read file to understand dependencies | `trace_dataflow` or `get_file_overview` |
-| Read file to understand structure | `get_file_overview` or `get_function_details` |
+| Read file to understand dependencies | `trace(along="data")` or `get_node` (file path ⇒ overview) |
+| Read file to understand structure | `get_node` (file overview / detail="full") |
 | Multiple Reads to understand impact | `query_graph` with Datalog |
 
 If graph doesn't have the answer → fallback to direct file reads. **Note the gap.**

@@ -28,6 +28,10 @@ grafema export --feature "cli:command:tldr" --as docs-md
 
 ## Full MCP tool registry as JSON
 
+Emits the canonical JSON-RPC tools array — the consolidated surface of
+~27 advertised MCP tools (deprecated legacy names are NOT exported; they
+survive only as hidden dispatch aliases).
+
 ```sh
 grafema export --feature "mcp:tool" --as mcp-schema --output tools.json
 ```

@@ -42,7 +42,14 @@ export type { MCPConfig } from './config.js';
 // === TOOL ARGUMENTS ===
 export interface QueryGraphArgs {
   query: string;
-  language?: 'datalog' | 'cypher';
+  /**
+   * Query language. "graphql" is handled by the query_graph router
+   * (merged-handlers) which delegates to the GraphQL handler; the Datalog/Cypher
+   * handler only sees "datalog"/"cypher".
+   */
+  language?: 'datalog' | 'cypher' | 'graphql';
+  /** Which graph to query: "code" (default) or "knowledge". */
+  graph?: 'code' | 'knowledge';
   limit?: number;
   offset?: number;
   format?: 'table' | 'json' | 'tree';

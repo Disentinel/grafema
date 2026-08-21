@@ -53,7 +53,7 @@ Present as health report:
 
  Daily:  grafema check catches guarantee violations in new code
  Weekly: /onboard --status shows drift, new features, stale knowledge  
- On PR:  'What's the blast radius?' → trace_dataflow from changed functions
+ On PR:  'What's the blast radius?' → trace(along="data") from changed functions
  New dev: /onboard --for-new-dev generates personalized guide
 
  I'll also flag when:

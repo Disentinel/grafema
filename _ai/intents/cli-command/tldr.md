@@ -9,7 +9,7 @@ whenToUse: |
 seeAlso:
   - cli:command:describe
   - cli:command:file
-  - mcp:tool:get_file_overview
+  - mcp:tool:get_node
 gotchas:
   - On unanalysed projects falls back to AST-only mode (no calls/effects).
     Run `grafema analyze` first for richer output.

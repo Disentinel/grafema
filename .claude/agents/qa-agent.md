@@ -149,7 +149,7 @@ For each file (in priority order):
       i.   Position cursor on the entity in code-server (Playwright).
       ii.  Wait 3 seconds for async panel updates.
       iii. Screenshot all visible panels.
-      iv.  Query graph via MCP tools (find_nodes, get_node, trace_dataflow, get_neighbors).
+      iv.  Query graph via MCP tools (find_nodes, get_node, trace(along="data"), get_node detail="neighbors").
       v.   Compare extension panels with graph data.
       vi.  If mismatch: record bug or gap.
       vii. Update state: entities.checked++, entities.ok++ or entities.bugs++.
@@ -183,21 +183,21 @@ The extension registers **7 panels** in a dedicated activity bar view container,
 ### 2. Value Trace
 - **Trigger**: Click on entity (panel updates automatically).
 - **Screenshot**: Capture the Value Trace sidebar panel.
-- **Cross-validate**: `trace_dataflow` with the node ID.
+- **Cross-validate**: `trace(source=<nodeId>, along="data")`.
 - **Check**: trace steps (assignments, returns, parameters) match panel content.
 - **Placeholder text** (no data): "Hover over a variable to trace its value origins."
 
 ### 3. Callers
 - **Trigger**: Click on entity.
 - **Screenshot**: Capture the Callers sidebar panel.
-- **Cross-validate**: `get_neighbors` with `direction=in`, `edgeType=CALLS`.
+- **Cross-validate**: `get_node(detail="neighbors", edge_types=["CALLS"])` (incoming).
 - **Check**: caller count and caller names match.
 - **Placeholder text**: "Move cursor to a function to see its callers."
 
 ### 4. Blast Radius
 - **Trigger**: Click on entity.
 - **Screenshot**: Capture the Blast Radius sidebar panel.
-- **Cross-validate**: `get_neighbors` with both `direction=in` and `direction=out`.
+- **Cross-validate**: `get_node(detail="neighbors")` (both incoming and outgoing edges).
 - **Check**: edge types, edge counts, connected node names match.
 - **Placeholder text**: "Move cursor to a function or variable to see its blast radius."
 
@@ -459,7 +459,7 @@ When an infrastructure gap is detected:
      "blocking": ["packages/vscode/src/Orchestrator.ts", "packages/vscode/src/index.ts"],
      "evidence": {
        "screenshotSample": "_qa/screenshots/gap-001-value-trace-empty.png",
-       "mcpConfirm": "trace_dataflow returns empty array for all queries",
+       "mcpConfirm": "trace(along=\"data\") returns empty array for all queries",
        "affectedFiles": ["Orchestrator.ts", "index.ts"]
      },
      "linearIssue": null,

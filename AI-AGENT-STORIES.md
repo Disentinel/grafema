@@ -55,7 +55,8 @@ So that I can locate function definitions without reading files.
 **Fix applied:** 2026-03-11
 
 As an AI agent needing to understand a file,
-I want to call `get_file_overview(file="path/to/file.ts")` and see its structure,
+I want to call `get_node(target="path/to/file.ts")` (a file path defaults to a file
+overview) and see its structure,
 So that I don't need to read the raw source code to understand what a file contains.
 
 **Acceptance criteria:**
@@ -127,7 +128,7 @@ So that I can understand the dependency graph without reading import statements.
 **Last tested:** 2026-03-12
 
 As an AI agent tracking where a value flows,
-I want to call `trace_dataflow(source="variableName", file="path")` and see the chain,
+I want to call `trace(source="variableName", along="data", file="path")` and see the chain,
 So that I can do impact analysis or taint tracking without reading code.
 
 **Acceptance criteria:**
@@ -191,10 +192,10 @@ I want to query the Knowledge Base before querying the graph before reading file
 So that I get architectural context, not just structural facts.
 
 **Acceptance criteria:**
-- `query_knowledge(text="X")` finds relevant facts and decisions
-- `query_decisions()` lists all architectural decisions
+- `recall(query="X")` finds relevant facts and decisions
+- `query_graph(graph="knowledge", ...)` lists architectural decisions
 - Decisions include rejected alternatives and rationale
-- Dangling code references are flagged
+- Dangling code references are flagged (`get_stats(graph="knowledge")`)
 
 **Test results:**
 1. **query_knowledge(text="RFDB"):** Returned **5 results** — 2 decisions, 2 facts, 1 session. Rich content with rationale and rejected alternatives. ✅
@@ -262,7 +263,8 @@ So that I can validate the codebase against its defined rules.
 **Last tested:** 2026-03-11
 
 As an AI agent deep-diving into a specific code entity,
-I want to call `get_context(semanticId)` and see all relationships with code,
+I want to call `get_node(target=semanticId)` (default detail="context") and see all
+relationships with code,
 So that I understand how a node connects to the rest of the codebase.
 
 **Acceptance criteria:**
@@ -291,7 +293,7 @@ So that I can orient myself without reading dozens of files.
 
 **Acceptance criteria:**
 - `get_stats` gives size overview
-- `get_schema` shows vocabulary (what node/edge types exist)
+- `get_stats(include=["schema"])` shows vocabulary (what node/edge types exist)
 - `find_nodes(type="CLASS")` lists all classes
 - `find_nodes(type="MODULE", file="packages/")` shows package structure
 
@@ -314,8 +316,8 @@ I want to find all dependents (importers, callers, subclasses),
 So that I know the blast radius before making changes.
 
 **Acceptance criteria:**
-- `get_context` incoming edges show who imports the class
-- `traverse_graph` with IMPORTS_FROM follows transitive dependents
+- `get_node` (detail="neighbors") incoming edges show who imports the class
+- `trace(along="edges", edge_types=["IMPORTS_FROM"])` follows transitive dependents
 - `find_calls` shows method call sites
 
 **Test results (pre-fix):**
@@ -350,7 +352,7 @@ So that I can understand project status without reading code.
 **Acceptance criteria:**
 - `get_stats` gives size metrics
 - `check_guarantees` shows how many rules pass/fail
-- `get_knowledge_stats` shows documentation coverage
+- `get_stats(graph="knowledge")` shows documentation coverage
 - `git_churn` shows activity hot spots
 
 **Test results (2026-03-12):**
@@ -636,7 +638,7 @@ The 10 remaining unresolved are all genuine external libraries (`Req.post`, `Pho
 | US-10 | ✅ WORKING | 36 guarantees loaded from YAML, violations found |
 | US-11 | ✅ WORKING | Rich context: methods, properties, importers |
 | US-12 | ✅ WORKING | Full onboarding via stats + schema |
-| US-13 | ✅ WORKING | find_calls + get_context work; get_function_details inconsistent (fix in progress) |
+| US-13 | ✅ WORKING | find_calls + get_node work; get_node detail="full" inconsistent (fix in progress) |
 | US-14 | 🔶 PARTIAL | Stats + guarantees + KB work; git tools disabled |
 | US-15 | ✅ MOSTLY | RFD-48 FIXED! attr(file) works. branchType→name schema fix applied |
 | US-16 | ✅ WORKING | 345/669 files (52%) analyzed |
@@ -649,8 +651,8 @@ The 10 remaining unresolved are all genuine external libraries (`Req.post`, `Pho
 
 ### Critical Product Gaps (Remaining)
 
-1. **US-06: trace_dataflow regression** — Noise filter (REFERENCE/EXPRESSION/LITERAL) hides BFS results. Handler ignores `file` parameter. BFS algorithm itself is correct. Fix in progress.
-2. **US-13 partial: get_function_details inconsistency** — Returns `calls: [], calledBy: []` while `describe` shows rich call data for the same function. Different code paths (scope traversal vs edge query). Fix in progress.
+1. **US-06: `trace(along="data")` regression** — Noise filter (REFERENCE/EXPRESSION/LITERAL) hides BFS results. Handler ignores `file` parameter. BFS algorithm itself is correct. Fix in progress.
+2. **US-13 partial: `get_node` detail="full" inconsistency** — Returns `calls: [], calledBy: []` while the DSL view (`get_node` format="dsl") shows rich call data for the same function. Different code paths (scope traversal vs edge query). Fix in progress.
 3. **US-17: Git tools disabled** — Require unfinished git-ingest feature. Removed from public API.
 4. **US-20: Rust analyzer lacks function body analysis** — Only structural skeleton. `describe` on Rust files shows 15 lines of struct names for 2000-line files. Needs syn-based function body traversal in orchestrator.
 

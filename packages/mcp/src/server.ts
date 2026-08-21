@@ -38,21 +38,10 @@ import { initializeFromArgs, setupLogging, getProjectPath } from './state.js';
 import { errorResult, log } from './utils.js';
 import { getSocketPathOverride } from './state.js';
 import {
-  handleQueryGraph,
-  handleExplainFact,
-  handleExplainGap,
-  handleSimDatalog,
   handleFindCalls,
-  handleFindNodes,
-  handleTraceAlias,
-  handleTraceDataflow,
-  handleTraceCalls,
-  handleCheckInvariant,
   handleDiscoverServices,
   handleAnalyzeProject,
   handleGetAnalysisStatus,
-  handleGetStats,
-  handleGetSchema,
   handleCreateGuarantee,
   handleListGuarantees,
   handleCheckGuarantees,
@@ -61,15 +50,10 @@ import {
   handleGetDocumentation,
   handleFindGuards,
   handleReportIssue,
-  handleGetFunctionDetails,
-  handleGetContext,
   handleReadProjectStructure,
   handleWriteConfig,
   handleGetFileOverview,
   handleGetShape,
-  handleGetNode,
-  handleGetNeighbors,
-  handleTraverseGraph,
   // Disabled: requires git-ingest (US-17). See US-17 in AI-AGENT-STORIES.md
   // handleGitChurn,
   // handleGitCoChange,
@@ -79,15 +63,12 @@ import {
   handleQueryGraphql,
   handleQueryRegistry,
   handleExplain,
-  handleTraceEffects,
   handleFindSharedBehaviors,
-  handleRemember,
   handleRecall,
-  handleSemanticSearch,
   handleExploreEntity,
-  handleAddAssertion,
   handleUpdateAssertion,
-  handleDeleteAssertion,
+  handleAssert,
+  handleRetract,
   handleEnoxQuery,
   handleEnoxTraverse,
   handleEnoxStats,
@@ -95,26 +76,32 @@ import {
   handleUpdateNode,
   handleCrawlEntity,
   handleSaveDocument,
+  // Consolidated routers (advertised tool surface)
+  handleQueryGraphRouted,
+  handleFindNodesRouted,
+  handleGetStatsRouted,
+  handleTrace,
+  handleExplainDatalog,
+  handleGetNodeRouted,
 } from './handlers/index.js';
 import type { ExplainArgs } from './handlers/index.js';
+import type {
+  AssertArgs,
+  RetractArgs,
+  GetStatsRoutedArgs,
+  TraceRoutedArgs,
+  ExplainDatalogArgs,
+  GetNodeRoutedArgs,
+} from './handlers/index.js';
 import type {
   ToolResult,
   ReportIssueArgs,
   GetDocumentationArgs,
-  GetFunctionDetailsArgs,
-  GetContextArgs,
   QueryGraphArgs,
-  ExplainFactArgs,
-  ExplainGapArgs,
-  SimDatalogArgs,
   FindCallsArgs,
   FindNodesArgs,
-  TraceAliasArgs,
-  TraceDataFlowArgs,
-  TraceCallChainArgs,
   CheckInvariantArgs,
   AnalyzeProjectArgs,
-  GetSchemaArgs,
   CreateGuaranteeArgs,
   CheckGuaranteesArgs,
   DeleteGuaranteeArgs,
@@ -124,15 +111,11 @@ import type {
   WriteConfigArgs,
   GetFileOverviewArgs,
   GetShapeArgs,
-  GetNodeArgs,
-  GetNeighborsArgs,
-  TraverseGraphArgs,
   // Disabled: requires git-ingest (US-17). See US-17 in AI-AGENT-STORIES.md
   // GitChurnArgs,
   // GitCoChangeArgs,
   // GitOwnershipArgs,
   // GitArchaeologyArgs,
-  TraceEffectsArgs,
   DescribeArgs,
   GraphQLQueryArgs,
   QueryRegistryArgs,
@@ -256,76 +239,108 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
   const argsPreview = args ? JSON.stringify(args).slice(0, 200) : '{}';
   log(`[Grafema MCP] ▶ ${name} args=${argsPreview}`);
 
+  // Deprecation note for hidden legacy aliases (not advertised in tools/list).
+  const deprecated = (newName: string) =>
+    log(`[Grafema MCP] ⚠ deprecated tool "${name}" → use "${newName}". This alias still works but is hidden from tools/list.`);
+
   try {
     let result: ToolResult;
 
     switch (name) {
+      // =====================================================================
+      // ADVERTISED TOOLS (the consolidated ~27-tool surface)
+      // =====================================================================
+
+      // --- code/graph ---
       case 'query_graph':
-        result = await handleQueryGraph(asArgs<QueryGraphArgs>(args));
+        result = await handleQueryGraphRouted(asArgs<QueryGraphArgs & Record<string, unknown>>(args));
+        break;
+
+      case 'find_nodes':
+        result = await handleFindNodesRouted(asArgs<FindNodesArgs & Record<string, unknown>>(args));
         break;
 
       case 'find_calls':
         result = await handleFindCalls(asArgs<FindCallsArgs>(args));
         break;
 
-      case 'find_nodes':
-        result = await handleFindNodes(asArgs<FindNodesArgs>(args));
+      case 'get_node':
+        result = await handleGetNodeRouted(asArgs<GetNodeRoutedArgs>(args));
         break;
 
-      case 'trace_alias':
-        result = await handleTraceAlias(asArgs<TraceAliasArgs>(args));
+      case 'trace':
+        result = await handleTrace(asArgs<TraceRoutedArgs>(args));
         break;
 
-      case 'trace_dataflow':
-        result = await handleTraceDataflow(asArgs<TraceDataFlowArgs>(args));
+      case 'explain_datalog':
+        result = await handleExplainDatalog(asArgs<ExplainDatalogArgs>(args));
         break;
 
-      case 'trace_calls':
-        result = await handleTraceCalls(asArgs<TraceCallChainArgs>(args));
+      case 'get_stats':
+        result = await handleGetStatsRouted(asArgs<GetStatsRoutedArgs>(args));
         break;
 
-      case 'explain':
-        result = await handleExplain(asArgs<ExplainArgs>(args));
+      case 'find_guards':
+        result = await handleFindGuards(asArgs<FindGuardsArgs>(args));
         break;
 
-      case 'explain_fact':
-        result = await handleExplainFact(asArgs<ExplainFactArgs>(args));
+      case 'find_shared_behaviors':
+        result = await handleFindSharedBehaviors(asArgs<FindSharedBehaviorsArgs>(args));
         break;
 
-      case 'sim_datalog':
-        result = await handleSimDatalog(asArgs<SimDatalogArgs>(args));
+      // --- knowledge ---
+      case 'assert':
+        result = await handleAssert(asArgs<AssertArgs>(args));
         break;
 
-      case 'explain_gap':
-        result = await handleExplainGap(asArgs<ExplainGapArgs>(args));
+      case 'retract':
+        result = await handleRetract(asArgs<RetractArgs>(args));
         break;
 
-      case 'trace_effects':
-        result = await handleTraceEffects(asArgs<TraceEffectsArgs>(args));
+      case 'recall':
+        result = await handleRecall(asArgs<RecallArgs>(args));
         break;
 
-      case 'check_invariant':
-        result = await handleCheckInvariant(asArgs<CheckInvariantArgs>(args));
+      case 'crawl_entity':
+        result = await handleCrawlEntity(asArgs<CrawlEntityArgs>(args));
+        break;
+
+      case 'save_document':
+        result = await handleSaveDocument(asArgs<SaveDocumentArgs>(args));
+        break;
+
+      // --- project lifecycle ---
+      case 'analyze_project':
+        result = await handleAnalyzeProject(asArgs<AnalyzeProjectArgs>(args));
         break;
 
       case 'discover_services':
         result = await handleDiscoverServices();
         break;
 
-      case 'analyze_project':
-        result = await handleAnalyzeProject(asArgs<AnalyzeProjectArgs>(args));
-        break;
-
       case 'get_analysis_status':
         result = await handleGetAnalysisStatus();
         break;
 
-      case 'get_stats':
-        result = await handleGetStats();
+      case 'get_coverage':
+        result = await handleGetCoverage(asArgs<GetCoverageArgs>(args));
         break;
 
-      case 'get_schema':
-        result = await handleGetSchema(asArgs<GetSchemaArgs>(args));
+      case 'write_config':
+        result = await handleWriteConfig(asArgs<WriteConfigArgs>(args));
+        break;
+
+      case 'read_project_structure':
+        result = await handleReadProjectStructure(asArgs<ReadProjectStructureArgs>(args));
+        break;
+
+      // --- docs / issue / guarantees / registry ---
+      case 'get_docs':
+        result = await handleGetDocumentation(asArgs<GetDocumentationArgs>(args));
+        break;
+
+      case 'report_issue':
+        result = await handleReportIssue(asArgs<ReportIssueArgs>(args));
         break;
 
       case 'create_guarantee':
@@ -344,147 +359,238 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
         result = await handleDeleteGuarantee(asArgs<DeleteGuaranteeArgs>(args));
         break;
 
-      case 'get_coverage':
-        result = await handleGetCoverage(asArgs<GetCoverageArgs>(args));
-        break;
-
-      case 'get_documentation':
-        result = await handleGetDocumentation(asArgs<GetDocumentationArgs>(args));
-        break;
-
-      case 'find_guards':
-        result = await handleFindGuards(asArgs<FindGuardsArgs>(args));
-        break;
-
-      case 'report_issue':
-        result = await handleReportIssue(asArgs<ReportIssueArgs>(args));
-        break;
-
-      case 'get_function_details':
-        result = await handleGetFunctionDetails(asArgs<GetFunctionDetailsArgs>(args));
-        break;
-
-      case 'get_context':
-        result = await handleGetContext(asArgs<GetContextArgs>(args));
-        break;
-
-      case 'get_file_overview':
-        result = await handleGetFileOverview(asArgs<GetFileOverviewArgs>(args));
-        break;
-
-      case 'get_shape':
-        result = await handleGetShape(asArgs<GetShapeArgs>(args));
-        break;
-
-      case 'read_project_structure':
-        result = await handleReadProjectStructure(asArgs<ReadProjectStructureArgs>(args));
-        break;
-
-      case 'write_config':
-        result = await handleWriteConfig(asArgs<WriteConfigArgs>(args));
-        break;
-
-      case 'get_node':
-        result = await handleGetNode(asArgs<GetNodeArgs>(args));
-        break;
-
-      case 'get_neighbors':
-        result = await handleGetNeighbors(asArgs<GetNeighborsArgs>(args));
-        break;
-
-      case 'traverse_graph':
-        result = await handleTraverseGraph(asArgs<TraverseGraphArgs>(args));
-        break;
-
-      // Disabled: requires git-ingest (US-17). See US-17 in AI-AGENT-STORIES.md
-      // case 'git_churn':
-      //   result = await handleGitChurn(asArgs<GitChurnArgs>(args));
-      //   break;
-      //
-      // case 'git_cochange':
-      //   result = await handleGitCoChange(asArgs<GitCoChangeArgs>(args));
-      //   break;
-      //
-      // case 'git_ownership':
-      //   result = await handleGitOwnership(asArgs<GitOwnershipArgs>(args));
-      //   break;
-      //
-      // case 'git_archaeology':
-      //   result = await handleGitArchaeology(asArgs<GitArchaeologyArgs>(args));
-      //   break;
-
-      case 'describe':
-        result = await handleDescribe(asArgs<DescribeArgs>(args));
-        break;
-
-      case 'query_graphql':
-        result = await handleQueryGraphql(asArgs<GraphQLQueryArgs>(args));
-        break;
-
       case 'query_registry':
         result = await handleQueryRegistry(asArgs<QueryRegistryArgs>(args));
         break;
 
-      case 'find_shared_behaviors':
-        result = await handleFindSharedBehaviors(asArgs<FindSharedBehaviorsArgs>(args));
+      // =====================================================================
+      // HIDDEN LEGACY ALIASES — NOT advertised in tools/list. Each maps to the
+      // consolidated handler with arg translation + a deprecation log.
+      // =====================================================================
+
+      // get_node family
+      case 'get_neighbors':
+        deprecated('get_node (detail="neighbors")');
+        result = await handleGetNodeRouted({ ...asArgs<Record<string, unknown>>(args), detail: 'neighbors' });
         break;
 
-      // === Enox knowledge graph ===
-      case 'remember':
-        result = await handleRemember(asArgs<RememberArgs>(args));
+      case 'get_context':
+        deprecated('get_node (detail="context")');
+        result = await handleGetNodeRouted({ ...asArgs<Record<string, unknown>>(args), detail: 'context' });
         break;
 
-      case 'recall':
-        result = await handleRecall(asArgs<RecallArgs>(args));
+      case 'get_function_details':
+        deprecated('get_node (detail="full")');
+        result = await handleGetNodeRouted({ ...asArgs<Record<string, unknown>>(args), detail: 'full' });
         break;
 
-      case 'semantic_search':
-        result = await handleSemanticSearch(asArgs<SemanticSearchArgs>(args));
+      case 'get_file_overview':
+        deprecated('get_node (target=<file>)');
+        result = await handleGetFileOverview(asArgs<GetFileOverviewArgs>(args));
         break;
 
-      case 'enox_explore':
-        result = await handleExploreEntity(asArgs<ExploreEntityArgs>(args));
+      case 'get_shape':
+        deprecated('get_node (on a CLASS/INTERFACE)');
+        result = await handleGetShape(asArgs<GetShapeArgs>(args));
         break;
 
-      case 'add_assertion':
-        result = await handleAddAssertion(asArgs<AddAssertionArgs>(args));
+      case 'describe':
+        deprecated('get_node (format="dsl")');
+        result = await handleDescribe(asArgs<DescribeArgs>(args));
         break;
 
-      case 'update_assertion':
+      // trace family
+      case 'trace_dataflow':
+        deprecated('trace (along="data")');
+        result = await handleTrace({ ...asArgs<Record<string, unknown>>(args), source: String((args as Record<string, unknown>)?.source ?? ''), along: 'data' });
+        break;
+
+      case 'trace_calls':
+        deprecated('trace (along="calls")');
+        result = await handleTrace({ ...asArgs<Record<string, unknown>>(args), source: String((args as Record<string, unknown>)?.source ?? ''), along: 'calls' });
+        break;
+
+      case 'trace_effects': {
+        deprecated('trace (along="effects")');
+        const a = asArgs<Record<string, unknown>>(args);
+        result = await handleTrace({ ...a, source: String(a.node ?? a.source ?? ''), along: 'effects' });
+        break;
+      }
+
+      case 'trace_alias': {
+        deprecated('trace (along="alias")');
+        const a = asArgs<Record<string, unknown>>(args);
+        result = await handleTrace({ ...a, source: String(a.variableName ?? a.source ?? ''), file: a.file as string | undefined, along: 'alias' });
+        break;
+      }
+
+      case 'traverse_graph': {
+        deprecated('trace (along="edges")');
+        const a = asArgs<Record<string, unknown>>(args);
+        const startIds = (a.startNodeIds as string[] | undefined) ?? [];
+        result = await handleTrace({
+          source: startIds[0] ?? String(a.source ?? ''),
+          along: 'edges',
+          edge_types: a.edgeTypes as string[] | undefined,
+          maxDepth: a.maxDepth as number | undefined,
+          direction: (a.direction as 'forward' | 'backward' | 'both' | undefined),
+        });
+        break;
+      }
+
+      // explain_datalog family
+      case 'explain_fact':
+        deprecated('explain_datalog (mode="fact")');
+        result = await handleExplainDatalog({ ...asArgs<Record<string, unknown>>(args), mode: 'fact' } as ExplainDatalogArgs);
+        break;
+
+      case 'explain_gap':
+        deprecated('explain_datalog (mode="gap")');
+        result = await handleExplainDatalog({ ...asArgs<Record<string, unknown>>(args), mode: 'gap' } as ExplainDatalogArgs);
+        break;
+
+      case 'sim_datalog':
+        deprecated('explain_datalog (mode="sim")');
+        result = await handleExplainDatalog({ ...asArgs<Record<string, unknown>>(args), mode: 'sim' } as ExplainDatalogArgs);
+        break;
+
+      // query family
+      case 'query_graphql':
+        deprecated('query_graph (language="graphql")');
+        result = await handleQueryGraphql(asArgs<GraphQLQueryArgs>(args));
+        break;
+
+      case 'check_invariant': {
+        deprecated('query_graph (datalog violation rule)');
+        // check_invariant ran a violation rule; route to query_graph with the rule as query.
+        const a = asArgs<CheckInvariantArgs>(args);
+        result = await handleQueryGraphRouted({ ...a, query: a.rule } as QueryGraphArgs & Record<string, unknown>);
+        break;
+      }
+
+      // get_stats / get_schema family
+      case 'get_schema': {
+        deprecated('get_stats (include=["schema"])');
+        result = await handleGetStatsRouted({ include: ['schema'] });
+        break;
+      }
+
+      // explain (dropped — returns an LLM prompt, not data) kept as alias
+      case 'explain':
+        deprecated('get_node / trace (explain returns an LLM prompt, not data)');
+        result = await handleExplain(asArgs<ExplainArgs>(args));
+        break;
+
+      // documentation rename
+      case 'get_documentation':
+        deprecated('get_docs');
+        result = await handleGetDocumentation(asArgs<GetDocumentationArgs>(args));
+        break;
+
+      // knowledge: assert family
+      case 'remember': {
+        deprecated('assert (single-element assertions array)');
+        const a = asArgs<RememberArgs>(args);
+        // remember(subject, fact) → assert one fact: subject -[relation]-> fact text.
+        result = await handleAssert({
+          assertions: [{
+            from: a.subject,
+            relation: a.relation ?? 'about',
+            to: a.fact,
+            context: a.fact,
+            confidence: a.confidence,
+            domain: a.domain,
+          }],
+        });
+        break;
+      }
+
+      case 'add_assertion': {
+        deprecated('assert (single-element assertions array)');
+        const a = asArgs<AddAssertionArgs>(args);
+        result = await handleAssert({ assertions: [a] });
+        break;
+      }
+
+      case 'update_assertion': {
+        deprecated('assert (re-assert to upsert) / retract');
+        // Keep the existing fact_id-based update working.
         result = await handleUpdateAssertion(asArgs<UpdateAssertionArgs>(args));
         break;
+      }
 
-      case 'delete_assertion':
-        result = await handleDeleteAssertion(asArgs<DeleteAssertionArgs>(args));
+      case 'supersede':
+      case 'supersede_fact': {
+        deprecated('assert (relation="supersedes")');
+        const a = asArgs<Record<string, unknown>>(args);
+        result = await handleAssert({
+          assertions: [{
+            from: String(a.from ?? a.new_content ?? a.new ?? ''),
+            relation: 'supersedes',
+            to: String(a.to ?? a.old_id ?? a.old ?? ''),
+            context: a.context as string | undefined,
+            confidence: a.confidence as number | undefined,
+            domain: a.domain as string | undefined,
+          }],
+        });
         break;
+      }
 
-      case 'enox_query':
+      // knowledge: retract family
+      case 'delete_assertion': {
+        deprecated('retract (fact_ids array)');
+        const a = asArgs<DeleteAssertionArgs>(args);
+        result = await handleRetract({ fact_ids: [a.fact_id] });
+        break;
+      }
+
+      // knowledge: recall family
+      case 'semantic_search': {
+        deprecated('recall');
+        const a = asArgs<SemanticSearchArgs>(args);
+        result = await handleRecall({ query: a.query, top_k: a.top_k, domain: a.domain });
+        break;
+      }
+
+      // knowledge: read aliases routed to graph="knowledge" verbs
+      case 'enox_explore': {
+        deprecated('get_node (graph="knowledge")');
+        const a = asArgs<ExploreEntityArgs>(args);
+        result = await handleExploreEntity(a);
+        break;
+      }
+
+      case 'enox_query': {
+        deprecated('find_nodes (graph="knowledge")');
         result = await handleEnoxQuery(asArgs<QueryGraphKnowledgeArgs>(args));
         break;
+      }
 
-      case 'enox_traverse':
+      case 'enox_traverse': {
+        deprecated('trace (graph="knowledge", along="edges")');
         result = await handleEnoxTraverse(asArgs<EnoxTraverseArgs>(args));
         break;
+      }
 
-      case 'enox_stats':
+      case 'enox_stats': {
+        deprecated('get_stats (graph="knowledge")');
         result = await handleEnoxStats();
         break;
+      }
 
+      // knowledge: dropped standalones still reachable as aliases
       case 'recent_activity':
+        deprecated('query_graph/find_nodes (graph="knowledge")');
         result = await handleRecentActivity(asArgs<RecentActivityArgs>(args));
         break;
 
       case 'update_node':
+        deprecated('get_node + assert (graph="knowledge")');
         result = await handleUpdateNode(asArgs<EnoxUpdateNodeArgs>(args));
         break;
 
-      case 'crawl_entity':
-        result = await handleCrawlEntity(asArgs<CrawlEntityArgs>(args));
-        break;
-
-      case 'save_document':
-        result = await handleSaveDocument(asArgs<SaveDocumentArgs>(args));
-        break;
+      // Disabled: requires git-ingest (US-17). See US-17 in AI-AGENT-STORIES.md
+      // case 'git_churn': …
 
       default:
         result = errorResult(`Unknown tool: ${name}`);

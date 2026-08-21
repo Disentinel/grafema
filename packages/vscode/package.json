@@ -2,7 +2,7 @@
   "name": "grafema-explore",
   "displayName": "Grafema Explore",
   "description": "Interactive graph navigation for Grafema code analysis",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "private": true,
   "publisher": "GrafemaLabs",
   "repository": {

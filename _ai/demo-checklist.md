@@ -7,7 +7,7 @@ Subject: Grafema analyzing itself (JS → Rust → Haskell, 3 languages).
 ## Scene 1: Interactive DSL (File Overview)
 
 ### Prerequisites
-- [ ] `describe()` / `get_file_overview` returns DSL with node IDs per line
+- [ ] `get_node(format="dsl")` (file path ⇒ overview) returns DSL with node IDs per line
 - [ ] VS Code extension: "Grafema: File Overview" command registered
 - [ ] DSL renders as virtual document (or webview) with clickable ranges
 - [ ] Each DSL line maps to a node ID in the graph
@@ -26,7 +26,7 @@ Subject: Grafema analyzing itself (JS → Rust → Haskell, 3 languages).
 ## Scene 2: Dataflow Trace (Side Panel)
 
 ### Prerequisites
-- [ ] `trace_dataflow` backward trace works end-to-end via extension
+- [ ] `trace(along="data")` backward trace works end-to-end via extension
 - [ ] Treeview provider registered in VS Code sidebar
 - [ ] Trace results render as expandable tree (node → edge → node → ...)
 

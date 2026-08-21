@@ -704,41 +704,34 @@ describe('get_coverage honors advertised parameters', () => {
 });
 
 // ============================================================================
-// remember must honor every advertised parameter
+// assert must honor every advertised parameter
 //
-// The remember tool advertises a `confidence` parameter ("Confidence level 0-1
-// (default: 0.9)"). Before the fix, handleRemember never read it, so an agent
-// calling remember({ confidence: 0.5 }) silently lost the confidence — the
-// stored HAS_FACT assertion edge carried no confidence at all. This is the same
-// advertised-but-ignored trust hole as REG-1192 (save_document.doc_type) and
-// get_coverage.depth.
-//
-// Unlike get_coverage.depth (which was delisted because it was wired to nothing),
-// the capability already exists here: handleAddAssertion stamps `confidence` onto
-// edge metadata. So the fix is to HONOR `confidence` in handleRemember, matching
-// the assertion handler, not to delist it.
+// Tool-surface consolidation (MKT) merged remember/add_assertion/update_assertion
+// into a single batch-native `assert` tool (assertions: array of facts). The old
+// `remember` tool is no longer advertised; this guards the same REG-1144-class
+// invariant on its replacement: every parameter advertised by `assert` must be
+// read by handleAssert, or it is dead-on-arrival for callers.
 // ============================================================================
 
-describe('remember honors advertised parameters', () => {
-  it('every advertised remember param is read by handleRemember', () => {
+describe('assert honors advertised parameters', () => {
+  it('every advertised assert param is read by handleAssert', () => {
     const here = dirname(fileURLToPath(import.meta.url));
 
-    const tool = TOOLS.find((t) => t.name === 'remember');
-    assert.ok(tool, 'remember tool must be advertised in TOOLS');
+    const tool = TOOLS.find((t) => t.name === 'assert');
+    assert.ok(tool, 'assert tool must be advertised in TOOLS');
 
     const schema = tool.inputSchema as { properties?: Record<string, unknown> };
     const advertised = Object.keys(schema.properties ?? {});
-    assert.ok(advertised.length > 0, 'remember must advertise parameters');
+    assert.ok(advertised.length > 0, 'assert must advertise parameters');
 
-    // Isolate the handleRemember function body so unrelated handlers in the same
-    // file (e.g. handleAddAssertion, which does read args.confidence) can't
-    // satisfy the invariant by accident.
+    // Isolate the handleAssert function body so unrelated handlers in the same
+    // file can't satisfy the invariant by accident.
     const src = readFileSync(
       join(here, '..', 'src', 'handlers', 'enox-handlers.ts'),
       'utf8',
     );
-    const start = src.indexOf('export async function handleRemember');
-    assert.ok(start >= 0, 'handleRemember must exist');
+    const start = src.indexOf('export async function handleAssert');
+    assert.ok(start >= 0, 'handleAssert must exist');
     const after = src.indexOf('\nexport ', start + 1);
     const body = after >= 0 ? src.slice(start, after) : src.slice(start);
 
@@ -746,57 +739,52 @@ describe('remember honors advertised parameters', () => {
     assert.deepStrictEqual(
       ignored,
       [],
-      `remember advertises params its handler never reads: ${ignored.join(', ')}`,
+      `assert advertises params its handler never reads: ${ignored.join(', ')}`,
     );
   });
 });
 
 // ============================================================================
-// check_invariant must honor every advertised parameter
+// recall must honor every advertised parameter
 //
-// check_invariant advertised `description`, `limit` and `offset`, but
-// handleCheckInvariant read `args.name` (a key the schema never advertised) and
-// hardcoded `.slice(0, 20)` — `description` was dropped, `limit`/`offset` ignored.
-// Same advertised-but-ignored trust hole as REG-1192 (save_document.doc_type) and
-// get_coverage.depth, all under the REG-1144 class.
-//
-// The capability is cheap and the params are now honored (not delisted): like the
-// get_coverage guard, handleCheckInvariant destructures its params, so a param
-// counts as honored if referenced as `args.<param>` OR as a destructured
-// word-boundary identifier in the handler body.
+// Tool-surface consolidation merged semantic_search into recall, which now
+// advertises query/depth/top_k/domain. The old check_invariant tool was folded
+// into query_graph (a datalog violation rule IS the query). This guards the same
+// REG-1144-class invariant on recall: every advertised param must be read by
+// handleRecall, or it is dead-on-arrival for callers.
 // ============================================================================
 
-describe('check_invariant honors advertised parameters', () => {
-  it('every advertised check_invariant param is read by handleCheckInvariant', () => {
+describe('recall honors advertised parameters', () => {
+  it('every advertised recall param is read by handleRecall', () => {
     const here = dirname(fileURLToPath(import.meta.url));
 
-    const tool = TOOLS.find((t) => t.name === 'check_invariant');
-    assert.ok(tool, 'check_invariant tool must be advertised in TOOLS');
+    const tool = TOOLS.find((t) => t.name === 'recall');
+    assert.ok(tool, 'recall tool must be advertised in TOOLS');
 
     const schema = tool.inputSchema as { properties?: Record<string, unknown> };
     const advertised = Object.keys(schema.properties ?? {});
-    assert.ok(advertised.length > 0, 'check_invariant must advertise parameters');
+    assert.ok(advertised.length > 0, 'recall must advertise parameters');
 
-    // Isolate the handleCheckInvariant function body so unrelated handlers in the
-    // same file can't satisfy the invariant by accident.
+    // Isolate the handleRecall function body so unrelated handlers in the same
+    // file can't satisfy the invariant by accident.
     const src = readFileSync(
-      join(here, '..', 'src', 'handlers', 'dataflow-handlers.ts'),
+      join(here, '..', 'src', 'handlers', 'enox-handlers.ts'),
       'utf8',
     );
-    const start = src.indexOf('export async function handleCheckInvariant');
-    assert.ok(start >= 0, 'handleCheckInvariant must exist');
+    const start = src.indexOf('export async function handleRecall');
+    assert.ok(start >= 0, 'handleRecall must exist');
     const after = src.indexOf('\nexport ', start + 1);
     const body = after >= 0 ? src.slice(start, after) : src.slice(start);
 
     const ignored = advertised.filter((param) => {
       if (body.includes(`args.${param}`)) return false;
-      // Allow destructured reads like `const { rule, description } = args`.
+      // Allow destructured reads.
       return !new RegExp(`\\b${param}\\b`).test(body);
     });
     assert.deepStrictEqual(
       ignored,
       [],
-      `check_invariant advertises params its handler never reads: ${ignored.join(', ')}`,
+      `recall advertises params its handler never reads: ${ignored.join(', ')}`,
     );
   });
 });

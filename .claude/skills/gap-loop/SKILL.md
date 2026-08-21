@@ -70,9 +70,9 @@ Each step is detailed below. Steps 2-5 form the inner loop -- repeat until no BR
 MCP tools are deferred. Load them before any graph queries:
 
 ```
-ToolSearch("+grafema get_stats find_nodes get_file_overview find_calls")
-ToolSearch("+grafema trace_dataflow query_graph get_context query_knowledge")
-ToolSearch("+grafema check_guarantees list_guarantees get_schema get_knowledge_stats")
+ToolSearch("+grafema get_stats find_nodes get_node find_calls")
+ToolSearch("+grafema trace query_graph recall")
+ToolSearch("+grafema check_guarantees list_guarantees explain_datalog")
 ```
 
 ### 1.2 Check graph health
@@ -131,22 +131,25 @@ If a previously WORKING story is now BROKEN or PARTIAL:
 
 ### DSL Validation Tests
 
-Test the `describe` tool (MCP) and `grafema describe` (CLI) notation rendering:
+Test `get_node(format="dsl")` (MCP) and `grafema describe` (CLI) notation rendering.
+(DSL rendering used to be a separate `describe` MCP tool — it is now the
+`format: "dsl"` mode of `get_node`, with `context_lines` mapping to DSL depth and
+an optional `perspective`.)
 
-1. **Cross-type rendering**: Run `describe` on at least one FUNCTION, CLASS, and MODULE node from the graph. Verify each returns valid DSL notation with appropriate operators (`o-`, `>`, `<`, etc.).
+1. **Cross-type rendering**: Run `get_node(format="dsl")` on at least one FUNCTION, CLASS, and MODULE node from the graph. Verify each returns valid DSL notation with appropriate operators (`o-`, `>`, `<`, etc.).
 
-2. **LOD progression**: Pick one node with edges. Run `describe` at depth=0, depth=1, depth=2. Verify:
+2. **LOD progression**: Pick one node with edges. Run `get_node(format="dsl")` with `context_lines` 0, 1, 2. Verify:
    - depth=0: names only, no operators
    - depth=1: operators appear with target names
    - depth=2: nested children expanded with their own edges
 
-3. **Perspective presets**: Test all 5 perspectives (security, data, errors, api, events) on one node with diverse edge types. Verify each perspective filters to its archetype set only.
+3. **Perspective presets**: Test all 5 perspectives (security, data, errors, api, events) on one node with diverse edge types via `get_node(format="dsl", perspective=...)`. Verify each perspective filters to its archetype set only.
 
-4. **Budget enforcement**: Run `describe` with `budget=3` on a node with many edges. Verify output includes `+N more` summarization.
+4. **Budget enforcement**: Run `get_node(format="dsl")` on a node with many edges. Verify output includes `+N more` summarization.
 
-5. **Multi-language coverage**: If the graph contains nodes from multiple languages (JS/TS, Haskell, Rust, Python), run `describe` on one node per language. If only JS/TS exists, note multi-language gaps but do NOT treat as test failure.
+5. **Multi-language coverage**: If the graph contains nodes from multiple languages (JS/TS, Haskell, Rust, Python), run `get_node(format="dsl")` on one node per language. If only JS/TS exists, note multi-language gaps but do NOT treat as test failure.
 
-6. **Empty case**: Find a leaf node with no edges. Run `describe` on it. Expect "No relationships found" message.
+6. **Empty case**: Find a leaf node with no edges. Run `get_node(format="dsl")` on it. Expect "No relationships found" message.
 
 ---
 
@@ -156,20 +159,20 @@ Test the `describe` tool (MCP) and `grafema describe` (CLI) notation rendering:
 
 Pretend you're seeing this codebase for the first time. Ask and test:
 
-- "What languages does this project use?" -> `get_schema`, `get_stats` node type breakdown
+- "What languages does this project use?" -> `get_stats(include=["schema"])`, `get_stats` node type breakdown
 - "What are the main entry points?" -> `find_nodes(type="MODULE")`, `discover_services`
-- "What does class X do?" -> `find_nodes(type="CLASS", name="X")`, `get_context`
-- "How do these two modules connect?" -> `traverse_graph` with IMPORTS_FROM
-- "Are there any security concerns?" -> `check_invariant` with eval/exec rules
+- "What does class X do?" -> `find_nodes(type="CLASS", name="X")`, `get_node`
+- "How do these two modules connect?" -> `trace(along="edges", edge_types=["IMPORTS_FROM"])`
+- "Are there any security concerns?" -> `query_graph` (datalog `violation/1`) with eval/exec rules
 
 ### 3.2 Expert Engineer Questions (Familiar Codebase)
 
 Ask questions a maintainer would ask:
 
 - "What changed recently?" -> `git_churn`, `git_archaeology`
-- "What's the blast radius of changing file X?" -> `git_cochange`, `traverse_graph`
-- "What are the architectural rules?" -> `list_guarantees`, `query_decisions`
-- "Are there known issues?" -> `query_knowledge(text="bug")`, `query_knowledge(text="limitation")`
+- "What's the blast radius of changing file X?" -> `git_cochange`, `trace(along="edges")`
+- "What are the architectural rules?" -> `list_guarantees`, `recall(query="decisions")`
+- "Are there known issues?" -> `recall(query="bug")`, `recall(query="limitation")`
 - "What's the test coverage situation?" -> `get_coverage`
 
 ### 3.3 Non-Engineer Questions
@@ -177,9 +180,9 @@ Ask questions a maintainer would ask:
 Ask questions a PM or stakeholder would ask:
 
 - "How big is this project?" -> `get_stats` node/edge counts
-- "Is it healthy?" -> `check_guarantees`, `get_knowledge_stats` dangling refs
+- "Is it healthy?" -> `check_guarantees`, `get_stats(graph="knowledge")` dangling refs
 - "Who owns what?" -> `git_ownership`
-- "What's the documentation status?" -> `get_knowledge_stats`, `query_decisions`
+- "What's the documentation status?" -> `get_stats(graph="knowledge")`, `recall(query="decisions")`
 
 ### 3.4 Stress Tests
 
@@ -187,18 +190,18 @@ Push the tools to their limits:
 
 - Query with very common names (e.g., `find_nodes(name="get")`) -> pagination?
 - Large Datalog queries with joins -> performance?
-- `trace_dataflow` with max_depth=20 -> does it handle deep chains?
-- `get_file_overview` on the largest file -> complete results?
+- `trace(along="data", max_depth=20)` -> does it handle deep chains?
+- `get_node` on the largest file (file path ⇒ file overview) -> complete results?
 
 ### 3.5 DSL Coverage Tests
 
 Dedicated stress tests for DSL notation coverage and correctness:
 
-- **Cross-language comparison**: If multiple languages exist in the graph, `describe` similar constructs (e.g., a function with calls) in JS vs Python vs Rust. Compare operator usage and completeness.
-- **Edge coverage audit**: Use `get_schema` to list all edge types in the graph. For each edge type, verify it maps to an archetype in the notation (check `EDGE_ARCHETYPE_MAP`). Any unmapped edge type is a gap.
-- **Large file stress test**: Find the file with the most nodes (`find_nodes` sorted by file). Run `describe` on it at depth=2. Verify output is complete and doesn't truncate silently.
-- **Deeply nested test**: Find a CLASS with methods. Run `describe` at depth=2. Verify methods appear as nested children with their own edges.
-- **Empty graph test**: Run `describe` on a leaf node with no edges. Expect the "No relationships found" fallback message.
+- **Cross-language comparison**: If multiple languages exist in the graph, `get_node(format="dsl")` on similar constructs (e.g., a function with calls) in JS vs Python vs Rust. Compare operator usage and completeness.
+- **Edge coverage audit**: Use `get_stats(include=["schema"])` to list all edge types in the graph. For each edge type, verify it maps to an archetype in the notation (check `EDGE_ARCHETYPE_MAP`). Any unmapped edge type is a gap.
+- **Large file stress test**: Find the file with the most nodes (`find_nodes` sorted by file). Run `get_node(format="dsl")` on it at depth=2. Verify output is complete and doesn't truncate silently.
+- **Deeply nested test**: Find a CLASS with methods. Run `get_node(format="dsl")` at depth=2. Verify methods appear as nested children with their own edges.
+- **Empty graph test**: Run `get_node(format="dsl")` on a leaf node with no edges. Expect the "No relationships found" fallback message.
 
 **Story templates to create if gaps are found:**
 - US-XX: DSL Describes Functions Across Languages
@@ -235,11 +238,11 @@ For each BROKEN/PARTIAL story:
 
 1. **Reproduce** with a minimal query
 2. **Trace the data path**:
-   - Does the data exist in RFDB? -> `query_graph` or `check_invariant`
+   - Does the data exist in RFDB? -> `query_graph` (datalog `violation/1` for an ad-hoc check)
    - If YES: MCP layer or query layer bug
    - If NO: analysis pipeline or resolver issue
 3. **Check the code** (yes, read source here -- this is implementation, not exploration):
-   - Use `get_file_overview` + `get_context` to find the relevant code
+   - Use `get_node` (file overview / context) to find the relevant code
    - Read the specific function that should produce the missing data
 4. **Document the root cause** -- one sentence, specific: "GuaranteeManager.loadFromFile() is never called during MCP server init"
 5. **Estimate scope**: single function fix? multiple files? architectural change?

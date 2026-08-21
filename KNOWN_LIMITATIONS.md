@@ -64,7 +64,7 @@ Honest list of what works, what doesn't, and when we plan to fix it.
 
 ## Known Bugs
 
-- ~~**REG-655: `get_file_overview` shows empty calls**~~ — Fixed: line-range fallback in `FileOverview.buildFunctionOverview()` now queries both `CALL` and `METHOD_CALL` nodes by file+line range when `findCallsInFunction` returns empty. TS class methods now report calls correctly.
+- ~~**REG-655: file overview shows empty calls**~~ (the file-overview path, formerly the `get_file_overview` tool, is now a `get_node` detail mode) — Fixed: line-range fallback in `FileOverview.buildFunctionOverview()` now queries both `CALL` and `METHOD_CALL` nodes by file+line range when `findCallsInFunction` returns empty. TS class methods now report calls correctly.
 - ~~**REG-656: Rust intra-file CALLS missing**~~ — Fixed: `rust-resolve` now runs `rust-calls` command that matches CALL nodes to same-file FUNCTION nodes by name (exact or last `::` segment).
 - ~~**REG-625: JS/TS MODULE names have absolute paths**~~ — Fixed: `node.name` now stripped to relative path in `relativize_paths()` alongside `node.file` (commit `96b30173`).
 - ~~**REG-652: MCP not workspace-aware**~~ — Fixed: MCP server auto-detects project root by walking up from `process.cwd()` looking for `grafema.yaml` or `.grafema/`. `--project` flag still works as an explicit override. MCP clients (Claude Code, Cursor) set CWD = workspace root when spawning the server, so no config is needed.

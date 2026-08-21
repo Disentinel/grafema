@@ -1,14 +1,21 @@
 /**
- * Enox Tools — persistent knowledge graph (long-term memory)
+ * Knowledge Tools — persistent project knowledge graph (long-term memory)
  *
- * Enox is a federated knowledge graph shared across sessions and projects.
- * These tools provide CRUD operations on nodes and edges, semantic search,
- * graph traversal, and document storage.
+ * The knowledge graph is a separate RFDB database ("knowledge") sharing the same
+ * server socket as the code graph. These tools provide batch-native writes
+ * (assert/retract), retrieval (recall), a code→knowledge bridge (crawl_entity),
+ * and document storage (save_document).
+ *
+ * Naming note: Enox is a protocol Grafema supports, not a tool namespace — these
+ * tools use neutral verb_noun names (assert, retract, recall), NOT an `enox_`
+ * prefix. Generic graph reads/writes against the knowledge graph go through the
+ * code-graph verbs with `graph: "knowledge"` (query_graph, find_nodes, get_node,
+ * trace, get_stats).
  */
 
 import type { ToolDefinition } from './types.js';
 
-const RELATION_TYPES = [
+export const RELATION_TYPES = [
   'depends_on',
   'supersedes',
   'implements',
@@ -54,59 +61,86 @@ const RELATION_TYPES = [
 
 export const ENOX_TOOLS: ToolDefinition[] = [
   {
-    name: 'remember',
-    description: `Quick knowledge write — store a fact about a subject.
+    name: 'assert',
+    description: `Write one or more facts (relation edges) into the project knowledge graph. BATCH-NATIVE.
 
-Use this when you:
-- Discover something worth remembering across sessions
-- Want to record an experiment result, decision, or observation
-- Need a quick "jot it down" without specifying exact graph structure
+Use this when you discover something worth remembering across sessions — a decision,
+experiment result, dependency, contradiction, or any relationship between two entities.
 
-The subject becomes a node (or reuses an existing one), and the fact is stored
-as an assertion from that node.
+This is the SINGLE knowledge-write tool. There is no separate "remember"/"add_assertion"/
+"update_assertion" — pass an array of assertions. One fact = an array of one. Both "from"
+and "to" become nodes if they don't exist yet.
 
-Example: remember(subject="RFDB compaction", fact="flush_data_only was a no-op in V2 engine", domain="engineering")`,
+To record that a newer finding replaces an older one, just use relation="supersedes"
+(e.g. assert([{from:"new approach", relation:"supersedes", to:"old approach", context:"..."}])).
+Re-asserting the same {from, relation, to} updates that edge's context/confidence.
+
+Example:
+  assert(assertions=[
+    { from:"Grafema", relation:"uses", to:"RFDB", context:"RFDB is the storage engine", confidence:1.0, domain:"engineering" },
+    { from:"V2 engine", relation:"supersedes", to:"V1 engine", context:"segment-based persistence" }
+  ])`,
     inputSchema: {
       type: 'object',
       properties: {
-        subject: {
-          type: 'string',
-          description: 'The entity this fact is about (becomes a node)',
-        },
-        fact: {
-          type: 'string',
-          description: 'The fact or observation to record',
-        },
-        domain: {
-          type: 'string',
-          description: 'Knowledge domain (default: "memory")',
-        },
-        confidence: {
-          type: 'number',
-          description: 'Confidence level 0-1 (default: 0.9)',
-        },
-        relation: {
-          type: 'string',
-          description: 'Relation type for the assertion edge',
-          enum: [...RELATION_TYPES],
+        assertions: {
+          type: 'array',
+          description: 'One or more facts to write. A single fact is an array of one element.',
+          items: {
+            type: 'object',
+            properties: {
+              from: { type: 'string', description: 'Source entity name or ID (becomes a node if new)' },
+              relation: { type: 'string', description: 'Relation type for the edge', enum: [...RELATION_TYPES] },
+              to: { type: 'string', description: 'Target entity name or ID (becomes a node if new)' },
+              context: { type: 'string', description: 'Context/evidence for this fact — this is what recall searches over' },
+              confidence: { type: 'number', description: 'Confidence level 0-1 (default 0.9)' },
+              domain: { type: 'string', description: 'Knowledge domain this fact belongs to' },
+            },
+            required: ['from', 'relation', 'to'],
+          },
         },
       },
-      required: ['subject', 'fact'],
+      required: ['assertions'],
+    },
+  },
+  {
+    name: 'retract',
+    description: `Delete one or more facts (relation edges) from the knowledge graph by fact_id. BATCH-NATIVE.
+
+Use this when assertions are wrong, outdated, or no longer relevant. Consider asserting a
+"supersedes" relation instead of retracting when you want to keep the history.
+
+fact_ids are the ids returned by \`assert\` (and visible in recall/get_node output).
+
+Example: retract(fact_ids=["a1b2c3...", "d4e5f6..."])`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        fact_ids: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'IDs of the assertions/edges to remove.',
+        },
+      },
+      required: ['fact_ids'],
     },
   },
   {
     name: 'recall',
-    description: `Broad "what do we know about X" — combines embedding search with graph traversal.
+    description: `Broad "what do we know about X" retrieval over the project knowledge graph — combines
+name/content search with graph traversal.
 
-Use this at session start or before making decisions to check for prior art,
-known failures, and existing context.
+Use this at session start or before making decisions to check for prior art, known
+failures, and existing context.
 
-Depth controls how far to traverse from matched nodes:
+depth controls how far to traverse from matched nodes:
 - 1: direct matches only (fast)
-- 2: matches + their neighbors (default, good balance)
+- 2: matches + their neighbors (good balance)
 - 3: two hops out (broader context, slower)
 
-Example: recall(query="federation architecture", depth=2)`,
+top_k caps the number of matched seed nodes. domain filters to one knowledge domain.
+
+Example: recall(query="federation architecture", depth=2, top_k=10)`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -116,298 +150,35 @@ Example: recall(query="federation architecture", depth=2)`,
         },
         depth: {
           type: 'number',
-          description: 'Traversal depth from matched nodes: 1-3 (default: 1)',
-        },
-      },
-      required: ['query'],
-    },
-  },
-  {
-    name: 'semantic_search',
-    description: `Substring search across knowledge-graph node names (case-insensitive).
-
-NOTE: despite the name, embedding-based semantic ranking is not wired yet
-(RFD-63). This currently matches substrings of node names — results are
-plain matches, not similarity-ranked. Use recall for broader retrieval.
-
-Example: semantic_search(query="auth token", top_k=5, domain="devops")`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        query: {
-          type: 'string',
-          description: 'Natural language search query',
+          description: 'Traversal depth from matched nodes: 1-3 (default: 2)',
         },
         top_k: {
           type: 'number',
-          description: 'Maximum number of results to return (default: 10)',
+          description: 'Maximum number of matched seed nodes to expand (default: 10)',
         },
         domain: {
           type: 'string',
-          description: 'Filter results to a specific domain',
+          description: 'Filter results to a specific knowledge domain',
         },
       },
       required: ['query'],
-    },
-  },
-  {
-    name: 'enox_explore',
-    description: `Get all edges around an entity in the knowledge graph — see everything connected to it.
-
-Use this to understand the full context of an entity: what it relates to,
-what depends on it, what contradicts it, etc.
-
-Returns all incoming and outgoing edges with connected node summaries.
-
-Example: explore(entity="RFDB V2 engine")`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        entity: {
-          type: 'string',
-          description: 'Name or ID of the entity to explore',
-        },
-      },
-      required: ['entity'],
-    },
-  },
-  {
-    name: 'add_assertion',
-    description: `Create a precise edge between two nodes in the knowledge graph.
-
-Use this when you need exact control over the graph structure:
-- Specific relation type between two entities
-- Confidence level on an assertion
-- Domain scoping
-
-Both "from" and "to" become nodes if they don't exist yet.
-
-Example: add_assertion(from="Grafema", relation="uses", to="RFDB", context="RFDB is the storage engine for code graphs", confidence=1.0)`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        from: {
-          type: 'string',
-          description: 'Source entity name or ID',
-        },
-        relation: {
-          type: 'string',
-          description: 'Relation type for the edge',
-          enum: [...RELATION_TYPES],
-        },
-        to: {
-          type: 'string',
-          description: 'Target entity name or ID',
-        },
-        context: {
-          type: 'string',
-          description: 'Additional context or evidence for this assertion',
-        },
-        confidence: {
-          type: 'number',
-          description: 'Confidence level 0-1',
-        },
-        domain: {
-          type: 'string',
-          description: 'Knowledge domain this assertion belongs to',
-        },
-      },
-      required: ['from', 'relation', 'to'],
-    },
-  },
-  {
-    name: 'update_assertion',
-    description: `Update an existing edge in the knowledge graph.
-
-Use this to change the context or confidence of a previously recorded assertion
-without deleting and re-creating it.
-
-Example: update_assertion(fact_id="edge-abc123", confidence=0.5, context="Partially confirmed after testing")`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        fact_id: {
-          type: 'string',
-          description: 'ID of the assertion/edge to update',
-        },
-        context: {
-          type: 'string',
-          description: 'Updated context or evidence',
-        },
-        confidence: {
-          type: 'number',
-          description: 'Updated confidence level 0-1',
-        },
-      },
-      required: ['fact_id'],
-    },
-  },
-  {
-    name: 'delete_assertion',
-    description: `Remove an edge from the knowledge graph.
-
-Use this when an assertion is wrong, outdated, or no longer relevant.
-Consider using update_assertion to lower confidence instead of deleting,
-or add_assertion with "supersedes" relation to record the replacement.
-
-Example: delete_assertion(fact_id="edge-abc123")`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        fact_id: {
-          type: 'string',
-          description: 'ID of the assertion/edge to remove',
-        },
-      },
-      required: ['fact_id'],
-    },
-  },
-  {
-    name: 'enox_query',
-    description: `Filter nodes in the knowledge graph by type, domain, or name.
-
-Use this for exact filtering when you know what you're looking for.
-Unlike semantic_search, this does exact/substring matching on fields.
-
-Example: query_graph(type="decision", domain="engineering", limit=20)`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        type: {
-          type: 'string',
-          description: 'Filter by node type',
-        },
-        domain: {
-          type: 'string',
-          description: 'Filter by knowledge domain',
-        },
-        name: {
-          type: 'string',
-          description: 'Filter by node name (substring match)',
-        },
-        limit: {
-          type: 'number',
-          description: 'Maximum number of results (default: 50)',
-        },
-      },
-    },
-  },
-  {
-    name: 'enox_traverse',
-    description: `Graph traversal from a knowledge entity following specific edge types and direction.
-
-Use this for structured exploration:
-- "What does X depend on?" → traverse(start="X", direction="outgoing", edge_types=["depends_on"])
-- "What supersedes X?" → traverse(start="X", direction="incoming", edge_types=["supersedes"])
-- Full neighborhood: traverse(start="X", direction="both", max_depth=2)
-
-Returns nodes with depth info (0 = start, 1 = direct, 2+ = transitive).
-
-Example: traverse(start="RFDB", direction="outgoing", edge_types=["depends_on", "uses"], max_depth=3)`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        start: {
-          type: 'string',
-          description: 'Starting entity name or ID',
-        },
-        direction: {
-          type: 'string',
-          description: 'Traversal direction (default: "both")',
-          enum: ['outgoing', 'incoming', 'both'],
-        },
-        edge_types: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Filter by edge/relation types. Omit for all.',
-        },
-        max_depth: {
-          type: 'number',
-          description: 'Maximum traversal depth (default: 2)',
-        },
-      },
-      required: ['start'],
-    },
-  },
-  {
-    name: 'enox_stats',
-    description: `Get statistics about the Enox knowledge graph.
-
-Use this to:
-- Check if the knowledge graph has content
-- See node and edge counts by type
-- Assess graph density and coverage
-
-Returns: total nodes, total edges, counts by type, domain distribution.`,
-    inputSchema: {
-      type: 'object',
-      properties: {},
-    },
-  },
-  {
-    name: 'recent_activity',
-    description: `Get recently created or updated nodes and edges.
-
-Use this at session start to see what other sessions have recorded recently.
-Helps avoid duplicating work and provides continuity across sessions.
-
-Example: recent_activity(since="2026-05-20T00:00:00Z", limit=10)`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        since: {
-          type: 'string',
-          description: 'ISO 8601 date — only show activity after this time',
-        },
-        limit: {
-          type: 'number',
-          description: 'Maximum number of results (default: 20)',
-        },
-      },
-    },
-  },
-  {
-    name: 'update_node',
-    description: `Update metadata on an existing node in the knowledge graph.
-
-Use this to rename, re-domain, or add descriptions to existing nodes
-without affecting their edges.
-
-Example: update_node(node_id="node-abc123", description="V2 storage engine with segment-based persistence")`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        node_id: {
-          type: 'string',
-          description: 'ID of the node to update',
-        },
-        name: {
-          type: 'string',
-          description: 'Updated node name',
-        },
-        domain: {
-          type: 'string',
-          description: 'Updated knowledge domain',
-        },
-        description: {
-          type: 'string',
-          description: 'Updated node description',
-        },
-      },
-      required: ['node_id'],
     },
   },
   {
     name: 'crawl_entity',
-    description: `Run ontological crawl on a code entity — generate hypotheses and verify against code graph.
-Uses the Grafema code graph for verification. Records findings in knowledge database.
+    description: `Run an ontological crawl on a CODE entity — bridge from the code graph into knowledge.
+
+Queries the Grafema code graph for the entity, generates graph-derived facts (what it is,
+who calls it, what it contains, what it calls), and surfaces any prior knowledge already
+recorded about it. Use \`assert\` afterwards to record interpretations worth persisting.
+
 Example: crawl_entity(entity="compactionEnricher", context="TypeScript enricher creating FEATURE nodes")`,
     inputSchema: {
       type: 'object',
       properties: {
         entity: { type: 'string', description: 'Entity name to crawl' },
         context: { type: 'string', description: 'Brief description of what this entity is' },
-        depth: { type: 'number', description: 'How many perspectives to explore (default: 3)' },
+        depth: { type: 'number', description: 'How many matched code nodes to explore (default: 3)' },
       },
       required: ['entity'],
     },

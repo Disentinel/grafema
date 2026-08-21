@@ -322,7 +322,7 @@ git commit -m "Add HTTP error handling guarantee"
 
 | Tool | Назначение |
 |------|-----------|
-| `get_schema` | Посмотреть доступные node/edge types |
+| `get_stats` (`include: ["schema"]`) | Посмотреть доступные node/edge types |
 | `query_graph` | Выполнить Datalog запрос |
 | `check_guarantee_feasibility` | Проверить feasibility rule против схемы графа |
 | `create_guarantee` | Создать новую гарантию |

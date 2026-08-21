@@ -1,118 +1,82 @@
 /**
- * Context Tools — node details, context, file overview, guards
+ * Context Tools — the unified node inspector (get_node) + find_guards
  */
 
 import type { ToolDefinition } from './types.js';
 
 export const CONTEXT_TOOLS: ToolDefinition[] = [
   {
-    name: 'get_function_details',
-    description: `Get comprehensive details about a function, including what it calls and who calls it.
+    name: 'get_node',
+    description: `Inspect a single node — the unified node-detail tool for the code graph (and knowledge graph).
 
-Graph structure:
-  FUNCTION -[HAS_SCOPE]-> SCOPE -[CONTAINS]-> CALL/METHOD_CALL
-  CALL -[CALLS]-> FUNCTION (target)
+\`target\` is a semantic ID (from find_nodes/query_graph), a node name, or a file path.
 
-Returns:
-- Function metadata (name, file, line, async)
-- calls: What functions/methods this function calls
-- calledBy: What functions call this one
+Set \`detail\` to choose how much to return:
+- "record" — the raw node record only (fast lookup, no edges).
+- "neighbors" — direct incoming/outgoing edges grouped by type (no source code).
+- "context" (default) — source code at the node + full graph neighborhood with code context at
+  each connected node.
+- "full" — for a FUNCTION/METHOD: comprehensive details incl. callers and callees (transitive
+  call chains).
 
-For calls array:
-- resolved=true means target function was found
-- resolved=false means unknown target (external/dynamic)
-- type='CALL' for function calls like foo()
-- type='METHOD_CALL' for method calls like obj.method()
-- depth field shows transitive level (0=direct, 1+=indirect)
+Smart defaults by node kind (when detail is omitted/"context"):
+- a MODULE / file path → a file overview (imports, exports, classes, functions, variables).
+- a CLASS / INTERFACE / typed variable → its shape (methods + properties, incl. inherited).
+- otherwise → the source + neighborhood context described above.
 
-Use transitive=true to follow call chains (A calls B calls C).
-Max transitive depth is 5 to prevent explosion.`,
+Set \`format\`:
+- "json" (default) — structured text + JSON.
+- "dsl" — compact Grafema DSL notation of the node's neighborhood (archetype-grouped operators;
+  great for LLM context windows). With format="dsl" you may pass \`perspective\` to filter
+  archetypes: "security", "data", "errors", "api", "events", and \`context_lines\` maps to DSL depth.
+
+Set \`graph\` to "knowledge" to inspect an entity in the project knowledge graph (its edges and
+metadata) instead of the code graph (default "code").
+
+Other params: \`edge_types\` (filter neighbors), \`context_lines\` (source context lines / DSL depth),
+\`file\` (disambiguate a name).`,
     inputSchema: {
       type: 'object',
       properties: {
-        name: {
+        target: {
           type: 'string',
-          description: 'Function name to look up',
+          description: 'Semantic ID, node name, or file path to inspect.',
         },
         file: {
           type: 'string',
-          description: 'Optional: file path to disambiguate (partial match)',
+          description: 'File path to disambiguate a name (optional).',
         },
-        transitive: {
-          type: 'boolean',
-          description: 'Follow call chains recursively (default: false)',
-        },
-      },
-      required: ['name'],
-    },
-  },
-  {
-    name: 'get_context',
-    description: `Get deep context for a graph node: source code + full graph neighborhood.
-
-Shows ALL incoming and outgoing edges grouped by type, with source code
-at each connected node's location. Works for ANY node type.
-
-Use this after find_nodes or query_graph to deep-dive into a specific node.
-
-Output includes:
-- Node info (type, name, semantic ID, location)
-- Source code at the node's location
-- All outgoing edges (what this node connects to)
-- All incoming edges (what connects to this node)
-- Code context at each connected node's location
-
-Primary edges (CALLS, ASSIGNED_FROM, DEPENDS_ON, etc.) include code context.
-Structural edges (CONTAINS, HAS_SCOPE, etc.) are shown in compact form.`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        semanticId: {
+        detail: {
           type: 'string',
-          description: 'Exact semantic ID of the node (from find_nodes or query_graph)',
+          description: 'record | neighbors | context (default) | full',
+          enum: ['record', 'neighbors', 'context', 'full'],
         },
-        contextLines: {
+        format: {
+          type: 'string',
+          description: 'json (default) | dsl (compact Grafema notation)',
+          enum: ['json', 'dsl'],
+        },
+        graph: {
+          type: 'string',
+          description: 'Which graph: "code" (default) or "knowledge".',
+          enum: ['code', 'knowledge'],
+        },
+        edge_types: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Filter neighbors/context to these edge types (e.g. ["CALLS","ASSIGNED_FROM"]).',
+        },
+        perspective: {
+          type: 'string',
+          description: 'Archetype filter for format="dsl": security | data | errors | api | events',
+          enum: ['security', 'data', 'errors', 'api', 'events'],
+        },
+        context_lines: {
           type: 'number',
-          description: 'Lines of code context around each reference (default: 3)',
-        },
-        edgeType: {
-          type: 'string',
-          description: 'Filter by edge type (comma-separated, e.g., "CALLS,ASSIGNED_FROM")',
+          description: 'Source context lines around each reference (default 3); for format="dsl", the notation depth.',
         },
       },
-      required: ['semanticId'],
-    },
-  },
-  {
-    name: 'get_file_overview',
-    description: `Understand what a file does without reading it — shows structure and relationships from the graph.
-
-USE THIS FIRST when you need to understand a file. It replaces reading the file with
-a structured summary: imports, exports, classes, functions, variables, and how they
-connect to the rest of the codebase.
-
-Returns:
-- Imports: what modules are pulled in and which names
-- Exports: what the file exposes to others
-- Classes: with methods and their call targets
-- Functions: with what they call
-- Variables: with their assignment sources
-
-After this, use get_context with specific node IDs to deep-dive into relationships.`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        file: {
-          type: 'string',
-          description: 'File path (relative to project root or absolute)',
-        },
-        include_edges: {
-          type: 'boolean',
-          description:
-            'Include relationship edges like CALLS, EXTENDS (default: true). Set false for faster results.',
-        },
-      },
-      required: ['file'],
+      required: ['target'],
     },
   },
   {

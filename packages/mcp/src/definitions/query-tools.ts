@@ -1,5 +1,5 @@
 /**
- * Query Tools — graph querying and tracing
+ * Query Tools — graph querying and tracing (code graph + knowledge graph)
  */
 
 import type { ToolDefinition } from './types.js';
@@ -8,10 +8,19 @@ import { DEFAULT_LIMIT, MAX_LIMIT } from '../utils.js';
 export const QUERY_TOOLS: ToolDefinition[] = [
   {
     name: 'query_graph',
-    description: `Execute a Datalog or Cypher query on the code graph.
+    description: `Execute a Datalog, Cypher, or GraphQL query on a graph.
 
-Set language to "cypher" for Cypher queries (e.g., MATCH (n:FUNCTION) RETURN n.name).
-Default is Datalog.
+This is the general query tool. Set \`language\`:
+- "datalog" (default) — pattern matching with a violation/1 rule. Also use this to run a
+  one-off invariant/violation check (the rule IS the query; no separate check_invariant tool).
+- "cypher" — MATCH (n:FUNCTION) RETURN n.name
+- "graphql" — typed nested queries; pass the GraphQL document as \`query\`. Use GraphQL when
+  you need node + edges + neighbors in one shot.
+
+Set \`graph\`:
+- "code" (default) — the code graph (functions, calls, dataflow, modules…)
+- "knowledge" — the project knowledge graph (asserted facts, decisions, documents). With
+  graph="knowledge", filter by node type/domain/name (see find_nodes for the field-filter form).
 
 Available Datalog predicates:
 - type(Id, Type) / node(Id, Type) - match nodes by type
@@ -20,33 +29,34 @@ Available Datalog predicates:
 - gt(Val, N), lt(Val, N), gte(Val, N), lte(Val, N) - numeric comparisons
 - \\+ - negation (not)
 
-NODE TYPES:
+NODE TYPES (code graph):
 - MODULE, FUNCTION, METHOD, CLASS, VARIABLE, PARAMETER
 - CALL, PROPERTY_ACCESS, METHOD_CALL, CALL_SITE
-- METRIC (performance metrics: value/unit/source in metadata, OBSERVES → MODULE)
-- ISSUE (analysis problems: category/severity/message in metadata, CONTAINS ← MODULE)
-- http:route, http:request, db:query, socketio:emit, socketio:on
+- METRIC, ISSUE, http:route, http:request, db:query, socketio:emit, socketio:on
 
 EDGE TYPES:
-- CONTAINS, CALLS, DEPENDS_ON, ASSIGNED_FROM, INSTANCE_OF, PASSES_ARGUMENT
-- OBSERVES (METRIC → MODULE, links performance metric to observed file)
+- CONTAINS, CALLS, DEPENDS_ON, ASSIGNED_FROM, INSTANCE_OF, PASSES_ARGUMENT, OBSERVES
 
 EXAMPLES:
-  violation(X) :- node(X, "MODULE").
   violation(X) :- node(X, "FUNCTION"), attr(X, "file", "src/api.js").
-  violation(X) :- node(X, "CALL"), \\+ edge(X, _, "CALLS").
-  violation(F, Ms) :- node(M, "METRIC"), attr(M, "name", "parse_ms"), attr(M, "value", Ms), gte(Ms, 500), edge(M, Mod, "OBSERVES"), attr(Mod, "file", F).`,
+  violation(X) :- node(X, "CALL"), attr(X, "name", "eval").          // one-off invariant
+  violation(X) :- node(X, "CALL"), \\+ edge(X, _, "CALLS").`,
     inputSchema: {
       type: 'object',
       properties: {
         query: {
           type: 'string',
-          description: 'Datalog query (must define violation/1 predicate) or Cypher query (when language is "cypher").',
+          description: 'Datalog query (must define violation/1), Cypher query, or GraphQL document (per language).',
         },
         language: {
           type: 'string',
-          description: 'Query language: "datalog" (default) or "cypher"',
-          enum: ['datalog', 'cypher'],
+          description: 'Query language: "datalog" (default), "cypher", or "graphql"',
+          enum: ['datalog', 'cypher', 'graphql'],
+        },
+        graph: {
+          type: 'string',
+          description: 'Which graph to query: "code" (default) or "knowledge".',
+          enum: ['code', 'knowledge'],
         },
         limit: {
           type: 'number',
@@ -58,7 +68,7 @@ EXAMPLES:
         },
         explain: {
           type: 'boolean',
-          description: 'Show step-by-step query execution to debug empty results',
+          description: 'Show step-by-step query execution to debug empty results (datalog only)',
         },
         count: {
           type: 'boolean',
@@ -66,6 +76,56 @@ EXAMPLES:
         },
       },
       required: ['query'],
+    },
+  },
+  {
+    name: 'find_nodes',
+    description: `Find nodes in a graph by type, name, or file pattern.
+
+Use this when you need to:
+- Find all functions in a specific file: type="FUNCTION", file="src/api.js"
+- Find a class by name: type="CLASS", name="UserService"
+- List all HTTP routes: type="http:route"
+- Get all modules in a directory: type="MODULE", file="services/"
+- Filter knowledge nodes: graph="knowledge", type="decision", file="<domain>" (domain is stored in the file field)
+
+Set \`graph\` to "knowledge" to filter the project knowledge graph instead of the code graph
+(default "code").
+
+Returns semantic IDs that you can pass to get_node, trace, or find_guards.
+
+Supports partial matches on name and file. When a name filter returns no exact matches on the
+code graph, automatically falls back to fuzzy name matching (CamelCase/snake_case aware).
+Use limit/offset for pagination.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        type: {
+          type: 'string',
+          description: 'Node type (e.g., FUNCTION, CLASS, MODULE, PROPERTY_ACCESS)',
+        },
+        name: {
+          type: 'string',
+          description: 'Node name pattern',
+        },
+        file: {
+          type: 'string',
+          description: 'File path pattern (code graph) or domain (knowledge graph)',
+        },
+        graph: {
+          type: 'string',
+          description: 'Which graph to search: "code" (default) or "knowledge".',
+          enum: ['code', 'knowledge'],
+        },
+        limit: {
+          type: 'number',
+          description: `Max results (default: ${DEFAULT_LIMIT}, max: ${MAX_LIMIT})`,
+        },
+        offset: {
+          type: 'number',
+          description: 'Skip first N results (default: 0)',
+        },
+      },
     },
   },
   {
@@ -102,313 +162,113 @@ Returns file, line, and whether the call target is resolved (linked to its defin
     },
   },
   {
-    name: 'find_nodes',
-    description: `Find nodes in the graph by type, name, or file pattern.
+    name: 'trace',
+    description: `Trace relationships transitively from a source node — the unified traversal tool.
 
-Use this when you need to:
-- Find all functions in a specific file: type="FUNCTION", file="src/api.js"
-- Find a class by name: type="CLASS", name="UserService"
-- List all HTTP routes: type="http:route"
-- Get all modules in a directory: type="MODULE", file="services/"
+Set \`along\` to pick what to follow:
+- "data" — data flow (ASSIGNED_FROM, PASSES_ARGUMENT, FLOWS_INTO). "Where does this value flow
+  to / come from?"
+- "calls" — the call graph (CALLS, CALLS_REMOTE), incl. cross-language hops. "What does this call /
+  who calls this?"
+- "effects" — transitive side effects through the call graph (IO, MUTATION, THROW…), using the
+  effects-db. direction is ignored (always forward).
+- "alias" — an alias chain back to its original source (const alias = obj.method; alias()).
+  requires \`file\`; direction is ignored.
+- "edges" — generic BFS following the given \`edge_types\` (impact analysis, dependency trees,
+  reachability). Requires edge_types.
 
-Returns semantic IDs that you can pass to get_context, get_node, get_neighbors, or find_guards.
+Set \`direction\`: "forward" (default), "backward", or "both" (data/calls/edges).
 
-Supports partial matches on name and file. When a name filter returns no exact matches, automatically falls back to fuzzy name matching using token similarity (CamelCase/snake_case aware). Use limit/offset for pagination.`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        type: {
-          type: 'string',
-          description: 'Node type (e.g., FUNCTION, CLASS, MODULE, PROPERTY_ACCESS)',
-        },
-        name: {
-          type: 'string',
-          description: 'Node name pattern',
-        },
-        file: {
-          type: 'string',
-          description: 'File path pattern',
-        },
-        limit: {
-          type: 'number',
-          description: `Max results (default: ${DEFAULT_LIMIT}, max: ${MAX_LIMIT})`,
-        },
-        offset: {
-          type: 'number',
-          description: 'Skip first N results (default: 0)',
-        },
-      },
-    },
-  },
-  {
-    name: 'trace_alias',
-    description: `Trace an alias chain to find the original source.
-For code like: const alias = obj.method; alias();
-This traces "alias" back to "obj.method".`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        variableName: {
-          type: 'string',
-          description: 'Variable name to trace',
-        },
-        file: {
-          type: 'string',
-          description: 'File path where the variable is defined',
-        },
-      },
-      required: ['variableName', 'file'],
-    },
-  },
-  {
-    name: 'trace_dataflow',
-    description: `Trace data flow paths from or to a variable/expression.
+Set \`graph\` to "knowledge" to traverse the project knowledge graph instead of the code graph
+(generic relation BFS; pass edge_types to filter relations, default "code").
 
-Use this when you need to:
-- Forward trace: "Where does this value flow to?" (assignments, function calls, returns)
-- Backward trace: "Where does this value come from?" (sources, assignments)
-- Both: Full data lineage from sources to sinks
-
-Direction options:
-- forward: Follow ASSIGNED_FROM, PASSES_ARGUMENT, FLOWS_INTO edges downstream
-- backward: Follow edges upstream to find data sources
-- both: Trace in both directions for complete context
-
-Use cases:
-- Track tainted data: "Does user input reach database query?" (forward from input)
-- Find data sources: "What feeds this API response?" (backward from response)
-- Impact analysis: "If I change this variable, what breaks?" (forward trace)
-
-Returns: List of nodes in the data flow chain with edge types and depth.
-Tip: Start with max_depth=5, increase if needed.`,
+Examples:
+  trace(source="userInput", along="data", direction="forward")
+  trace(source="handleRequest", along="calls", direction="backward")
+  trace(source="processOrder", along="effects")
+  trace(source="<modId>", along="edges", edge_types=["IMPORTS_FROM"], max_depth=10)
+  trace(source="RFDB", along="edges", graph="knowledge", edge_types=["depends_on","uses"])`,
     inputSchema: {
       type: 'object',
       properties: {
         source: {
           type: 'string',
-          description: 'Variable or node ID to trace from',
+          description: 'Variable, function/method name, or semantic ID to trace from',
         },
         file: {
           type: 'string',
-          description: 'File path',
+          description: 'File path to disambiguate (required for along="alias")',
+        },
+        along: {
+          type: 'string',
+          description: 'What to follow: "data", "calls", "effects", "alias", or "edges" (default: "calls")',
+          enum: ['data', 'calls', 'effects', 'alias', 'edges'],
         },
         direction: {
           type: 'string',
-          description: 'forward, backward, or both (default: forward)',
+          description: 'forward (default), backward, or both (data/calls/edges)',
           enum: ['forward', 'backward', 'both'],
+        },
+        edge_types: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Edge/relation types to follow for along="edges" (e.g., ["CALLS","DEPENDS_ON"]).',
         },
         max_depth: {
           type: 'number',
-          description: 'Maximum trace depth (default: 10)',
-        },
-        limit: {
-          type: 'number',
-          description: `Max results (default: ${DEFAULT_LIMIT})`,
+          description: 'Maximum traversal depth (default: 10; edges default 5, max 20)',
         },
         detail: {
           type: 'string',
-          description: 'Level of detail: summary (counts only), normal (auto-compressed, default), full (every node)',
+          description: 'Detail level for along="data": summary, normal (default), full',
           enum: ['summary', 'normal', 'full'],
         },
-      },
-      required: ['source'],
-    },
-  },
-  {
-    name: 'trace_calls',
-    description: `Trace call chains from or to a function/method, following CALLS and CALLS_REMOTE edges transitively.
-
-Use this when you need to:
-- "What does this function eventually call?" (forward) — full call tree including cross-language hops
-- "Who calls this function?" (backward) — all callers up the stack
-- "Show the full call chain from handler to database" (forward with depth)
-
-Unlike trace_dataflow (which follows data assignments), this follows function CALLS edges:
-- CALLS: same-language function/method invocation
-- CALLS_REMOTE: cross-process/language boundary (IPC, HTTP, socket)
-
-Returns: Indented call tree showing each hop with file:line location.`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        source: {
+        graph: {
           type: 'string',
-          description: 'Function/method name or semantic ID to trace from',
+          description: 'Which graph to traverse: "code" (default) or "knowledge" (along="edges").',
+          enum: ['code', 'knowledge'],
         },
-        file: {
-          type: 'string',
-          description: 'File path to disambiguate (optional)',
-        },
-        direction: {
-          type: 'string',
-          description: 'forward (callees), backward (callers), or both (default: forward)',
-          enum: ['forward', 'backward', 'both'],
-        },
-        max_depth: {
+        limit: {
           type: 'number',
-          description: 'Maximum chain depth (default: 10)',
+          description: `Max results for along="data" (default: ${DEFAULT_LIMIT})`,
         },
       },
       required: ['source'],
     },
   },
   {
-    name: 'trace_effects',
-    description: `Trace transitive side effects of a function through its call graph.
+    name: 'explain_datalog',
+    description: `Explain or simulate derived (Datalog) facts — the provenance/what-if tool.
 
-For any function, traverses CALLS edges (DFS) and collects effects from leaf nodes
-using the effects-db (Node.js builtins, npm packages).
+Set \`mode\`:
+- "fact" — explain WHY a derived fact holds: the rule that derived it + supporting body facts.
+  Requires predicate + key. "Why does module A depend on B?"
+  explain_datalog(mode="fact", predicate="depends", key=["<A_id>","<B_id>"])
+- "gap" — explain why a fact does NOT hold (why-not): the satisfied premise prefix and the first
+  premise no binding satisfies (a MISSING positive premise, or a PRESENT negated one).
+  Requires predicate + key.
+- "sim" — predict which NEW derived facts a hypothetical overlay of nodes/edges would create,
+  WITHOUT committing anything. Requires predicate + at least one hypothetical node or edge.
+  explain_datalog(mode="sim", predicate="depends", edges=[{src:"<A_id>",dst:"<B_id>",edgeType:"IMPORTS_FROM"}])
 
-Use this when you need to:
-- "What side effects does this function have?" → direct + transitive effects
-- "Does this handler do IO?" → trace shows IO:FILE:READ from fs.readFileSync at depth 3
-- "Where does the fetch() call come from?" → leaf_sources shows the origin at depth N
-- "What crosses module boundaries?" → boundary_crossings shows file-to-file effect flow
-
-Effect types: PURE, MUTATION, IO (with subtypes like IO:FILE:READ, IO:HTTP:REQUEST),
-THROW, ASYNC, NONDETERMINISTIC, SPAWN, MESSAGE_PASSING, UNKNOWN.
-
-UNKNOWN means: unresolved call, external package not in effects-db, or depth limit reached.
-
-Returns: direct effects, transitive effects, boundary crossings, leaf sources.`,
+Default program is the bundled depends.dl (so the common predicate is "depends"). Pass \`source\`
+for a custom Datalog program. Keys/ids are wire-string terms (node ids as decimal).`,
     inputSchema: {
       type: 'object',
       properties: {
-        node: {
+        mode: {
           type: 'string',
-          description: 'Function/method name or semantic ID',
+          description: 'Which explanation: "fact" (why), "gap" (why-not), or "sim" (what-if).',
+          enum: ['fact', 'gap', 'sim'],
         },
-        file: {
-          type: 'string',
-          description: 'File path to disambiguate (optional)',
-        },
-        max_depth: {
-          type: 'number',
-          description: 'Maximum call graph traversal depth (default: 10)',
-        },
-      },
-      required: ['node'],
-    },
-  },
-  {
-    name: 'get_shape',
-    description: `Get the shape (methods + properties) of a CLASS, INTERFACE, or typed variable.
-
-Shows all members including inherited ones via EXTENDS chain. For variables,
-follows INSTANCE_OF to find the type, then returns its shape.
-
-Use this to understand:
-- "What methods does GraphBackend have?" → get_shape(target="GraphBackend")
-- "What can I call on this variable?" → get_shape(target="db", file="handlers.ts")
-- "What does this interface require?" → get_shape(target="NodeRecord")
-
-Returns: members (methods + properties), extends chain, implements list.`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        target: {
-          type: 'string',
-          description: 'CLASS, INTERFACE, or variable name (or semantic ID)',
-        },
-        file: {
-          type: 'string',
-          description: 'File path to disambiguate (optional)',
-        },
-      },
-      required: ['target'],
-    },
-  },
-  {
-    name: 'explain',
-    description: `Explain a code element using graph data — returns structured context + prompt for the LLM to summarize.
-
-Unlike other tools that return raw data, this tool returns graph query results
-PLUS a natural-language prompt asking the calling LLM to explain the results
-to the user. The LLM uses its own reasoning to produce a human-readable summary.
-
-No extra API calls needed — the calling model (Claude, GPT, etc.) does the summarization.
-
-Use cases:
-- "Explain where this value comes from" → dataflow trace + summarization prompt
-- "What does this function do?" → structure + calls + prompt to describe
-- "How is this variable used?" → forward trace + prompt to explain usage patterns
-
-The question parameter guides what graph data to fetch and how to frame the summary.`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        target: {
-          type: 'string',
-          description: 'Variable, function, or node name to explain',
-        },
-        file: {
-          type: 'string',
-          description: 'File path to narrow scope',
-        },
-        question: {
-          type: 'string',
-          description: 'What to explain: "where does this value come from?", "what does this function do?", "how is this used?" (default: general explanation)',
-        },
-      },
-      required: ['target'],
-    },
-  },
-  {
-    name: 'explain_fact',
-    description: `Explain WHY a derived (Datalog) fact holds — returns the rule that derived it plus the supporting body facts (why()/provenance).
-
-This is the inverse of "what holds": instead of listing results, it justifies ONE
-result. Provenance is computed on demand against the current graph snapshot.
-
-Default program is the bundled depends.dl, so the common use is explaining a
-MODULE→MODULE dependency edge:
-- "Why does module A depend on B?" → explain_fact(predicate="depends", key=["<A_id>", "<B_id>"])
-
-For a custom rule, pass its source. \`key\` is the fact's ground tuple as wire-string
-terms (node ids as their decimal id). A null/"no derivation" result means the fact
-is not derivable by the program (it does not hold as a derived fact).`,
-    inputSchema: {
-      type: 'object',
-      properties: {
         predicate: {
           type: 'string',
-          description: 'The derived predicate to explain (e.g. "depends").',
+          description: 'The derived predicate (e.g. "depends").',
         },
         key: {
           type: 'array',
           items: { type: 'string' },
-          description: 'The fact\'s ground key tuple as wire-string terms (node ids as decimal).',
-        },
-        source: {
-          type: 'string',
-          description: 'Optional Datalog program (derive engine); empty/omitted ⇒ the bundled depends.dl.',
-        },
-      },
-      required: ['predicate', 'key'],
-    },
-  },
-  {
-    name: 'sim_datalog',
-    description: `Predict which NEW derived facts a hypothetical change would create — WITHOUT committing anything (what-if simulation).
-
-Give it hypothetical nodes and/or edges; it evaluates the program over base ∪ overlay
-and returns only the facts that are NEW vs the current graph (sim ∖ base).
-
-Default program is the bundled depends.dl, so the common use is previewing module
-dependencies:
-- "If module A imported B, which NEW dependencies appear?" →
-  sim_datalog(predicate="depends", edges=[{src:"<A_id>", dst:"<B_id>", edgeType:"IMPORTS_FROM"}])
-
-Hypothetical node ids may be NEW (invent a decimal id) — an edge may reference them,
-so you can simulate a wholly new module/import, not only bridge existing nodes.
-The committed graph is never touched. Companion to explain_gap: gap names the missing
-premise, sim verifies that adding it produces the fact.`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        predicate: {
-          type: 'string',
-          description: 'The derived predicate whose NEW facts to predict (e.g. "depends").',
+          description: "The fact's ground key tuple as wire-string terms (required for mode fact/gap).",
         },
         nodes: {
           type: 'array',
@@ -422,7 +282,7 @@ premise, sim verifies that adding it produces the fact.`,
             },
             required: ['id', 'nodeType'],
           },
-          description: 'Hypothetical nodes to overlay.',
+          description: 'Hypothetical nodes to overlay (mode="sim").',
         },
         edges: {
           type: 'array',
@@ -435,85 +295,14 @@ premise, sim verifies that adding it produces the fact.`,
             },
             required: ['src', 'dst', 'edgeType'],
           },
-          description: 'Hypothetical edges to overlay.',
+          description: 'Hypothetical edges to overlay (mode="sim").',
         },
         source: {
           type: 'string',
           description: 'Optional Datalog program (derive engine); empty/omitted ⇒ the bundled depends.dl.',
         },
       },
-      required: ['predicate'],
-    },
-  },
-  {
-    name: 'explain_gap',
-    description: `Explain why a derived (Datalog) fact does NOT hold — the why-not dual of explain_fact.
-
-Returns the rule whose gap it characterizes, the body premises that WERE satisfiable
-(with the head bound), and the first premise no binding satisfies:
-- a MISSING positive premise → the gap closes by ADDING such a fact (verify with sim_datalog)
-- a PRESENT negated premise → the gap closes by REMOVING the blocking fact
-
-Default program is the bundled depends.dl, so the common use is explaining a missing
-MODULE→MODULE dependency:
-- "Why does module A NOT depend on B?" → explain_gap(predicate="depends", key=["<A_id>", "<B_id>"])
-
-A "no gap" result means the fact actually IS derivable (use explain_fact), or no rule
-head matches the key.`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        predicate: {
-          type: 'string',
-          description: 'The derived predicate of the missing fact (e.g. "depends").',
-        },
-        key: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'The missing fact\'s ground key tuple as wire-string terms (node ids as decimal).',
-        },
-        source: {
-          type: 'string',
-          description: 'Optional Datalog program (derive engine); empty/omitted ⇒ the bundled depends.dl.',
-        },
-      },
-      required: ['predicate', 'key'],
-    },
-  },
-  {
-    name: 'check_invariant',
-    description: `Check a one-off code invariant using a Datalog rule. Returns violations if broken.
-
-Use this for ad-hoc checks without saving a permanent guarantee.
-For persistent rules, use create_guarantee + check_guarantees instead.
-
-Use cases:
-- Quick check: "Are there any eval() calls?" — rule: violation(X) :- node(X, "CALL"), attr(X, "name", "eval").
-- Audit: "Functions over 100 lines?" — check for excessive complexity
-- Pre-commit: "Any new SQL injection risks?" — one-time check before pushing
-
-Returns: List of nodes violating the rule, with file and line info.`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        rule: {
-          type: 'string',
-          description: 'Datalog rule defining violation/1',
-        },
-        description: {
-          type: 'string',
-          description: 'Human-readable description',
-        },
-        limit: {
-          type: 'number',
-          description: `Max violations (default: ${DEFAULT_LIMIT})`,
-        },
-        offset: {
-          type: 'number',
-          description: 'Skip first N violations (default: 0)',
-        },
-      },
-      required: ['rule'],
+      required: ['mode', 'predicate'],
     },
   },
   {

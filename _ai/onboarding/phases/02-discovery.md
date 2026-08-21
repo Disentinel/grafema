@@ -26,7 +26,7 @@ Framework detection heuristics:
 
 For each entry point:
 ```
-trace_dataflow(source=<entry>, direction="forward", max_depth=15)
+trace(source=<entry>, along="data", direction="forward", max_depth=15)
 ```
 
 Collect: nodes, effects (IO/MUTATION), files touched.

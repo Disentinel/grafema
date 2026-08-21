@@ -53,7 +53,7 @@ Plan mode is **mandatory** for all non-trivial tasks. Trivial tasks (typo, singl
 - Check error handling paths (null, undefined, empty, wrong type)
 - Check async/timing paths (races, ordering, cleanup on failure)
 - If touching a public API — check all consumers, not just the obvious ones
-- Use `find_nodes`, `find_calls`, `query_graph`, `trace_dataflow` — real search, not "I think there are no other callers"
+- Use `find_nodes`, `find_calls`, `query_graph`, `trace` — real search, not "I think there are no other callers"
 
 **Siblings — same pattern, same fix, same plan:**
 - If fixing a bug in one visitor/handler/resolver — search for the same anti-pattern in ALL siblings (every visitor, every handler, every resolver)

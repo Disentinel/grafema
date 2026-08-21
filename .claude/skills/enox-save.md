@@ -23,11 +23,9 @@ graph as structured nodes and assertions.
 ### Step 1: Load Enox tools
 
 ```
-ToolSearch("+enox recall")
-ToolSearch("+enox add_assertion")
-ToolSearch("+enox semantic_search")
-ToolSearch("+enox remember")
-ToolSearch("+enox batch_assertions")
+ToolSearch("+grafema recall")
+ToolSearch("+grafema assert")
+ToolSearch("+grafema retract")
 ```
 
 ### Step 2: Extract knowledge from conversation
@@ -45,7 +43,7 @@ For each item, determine:
 - **Subject** (source node): what entity is this about?
 - **Object** (target node): what is it related to?
 - **Relation**: which Enox relation type fits? (see relation table below)
-- **Context**: rich description with dates, numbers, URLs — this is what semantic_search finds
+- **Context**: rich description with dates, numbers, URLs — this is what `recall` searches over
 - **Confidence**: 0.0-1.0 based on evidence strength
 - **Node types**: concept, decision, pattern, rejected_alternative, paper, event, effort, etc.
 
@@ -54,7 +52,7 @@ For each item, determine:
 Before creating nodes, check if they already exist:
 
 ```
-semantic_search(query="<concept name or description>", limit=3)
+recall(query="<concept name or description>", top_k=3)
 ```
 
 If a match exists with >0.8 similarity:
@@ -64,23 +62,25 @@ If a match exists with >0.8 similarity:
 
 ### Step 4: Save to Enox
 
-Use `batch_assertions` for efficiency (up to 50 at once). Group by theme.
-
-For simple standalone facts, use `remember(subject, fact)`.
-
-For structured relationships, use `add_assertion` or `batch_assertions`:
+`assert` is BATCH-NATIVE — pass an array of assertions (group by theme, up to ~50
+at once). One fact is an array of one; there is no separate `remember` /
+`add_assertion` / `batch_assertions`:
 
 ```
-add_assertion(
-  source="<entity>",
-  source_type="concept",       // concept|decision|pattern|rejected_alternative|paper|effort|event
-  target="<related entity>",
-  target_type="concept",
-  relation="outperforms",      // see relation table
-  context="<rich description with dates, numbers, evidence>",
-  confidence=0.9
-)
+assert(assertions=[
+  {
+    from: "<entity>",
+    relation: "outperforms",      // see relation table
+    to: "<related entity>",
+    context: "<rich description with dates, numbers, evidence>",
+    confidence: 0.9,
+    domain: "<knowledge domain>"
+  }
+])
 ```
+
+To replace an older finding, just assert with `relation: "supersedes"`. To delete a
+fact, use `retract(fact_ids=[...])`.
 
 ### Step 5: Present summary to user
 
