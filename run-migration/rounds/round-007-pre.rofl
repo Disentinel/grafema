@@ -1,0 +1,276 @@
+-- Round 007-pre (2026-08-22) — P2 pre-registered expectations, committed BEFORE
+-- the P2 implementation (FactStore trait §7.2 + Capabilities §7.3 over TODAY's
+-- own-LSM, no format change; phase table §10.4 row P2 of rofl-fact-model.md
+-- rev 2.0). Mirrors the round-005-pre precedent (commit 4ab648ce): this file is
+-- its OWN commit ahead of any implementation commit, so the pre-registration
+-- ordering is git-auditable. Assert-only, never retract. round-007.rofl will
+-- carry the run evidence (expected-vs-found per claim, zero groundless claims).
+--
+-- Baselines captured on unmodified HEAD 6d87873b before any code change:
+--   suite: cargo test --lib in packages/rfdb-server (package name `rfdb`; the
+--     governance alias `-p rfdb-server` does not resolve in this tree —
+--     recorded verbatim in round-007 with the exact command used). Governance
+--     baseline 1463 passed / 0 failed / 25 ignored; the exact pre-change
+--     counts are recorded in round-007.
+--   harness: rounds/round-005.report.json is the verdict oracle — tier-0
+--     120 seeds / 0 divergences (witness 325/0, whynot 554/0), tier-1
+--     5 GREEN / 25 RED. P2 must leave every verdict unchanged.
+--   known flaky (pre-existing, registered round-006 F4):
+--     storage_v2::multi_shard::tests::test_commit_batch_performance_scaling
+--     may red-flag under parallel load; re-run in isolation before attributing.
+
+-- ── Hypotheses ──────────────────────────────────────────────────────
+
+-- H1: the full lib suite stays green after P2. Ground: P2 is ADDITIVE — a new
+-- module src/facts/ (mod.rs types+trait, lsm.rs adapter) with zero edits to
+-- storage_v2 serialization/format writers, zero edits to storage_glue.rs
+-- (StorageView stays THE executor access path, I10), zero planner/dispatch
+-- change; the only permitted touches outside facts/ are visibility adjustments
+-- and a re-export shim. Pass count grows by the new facts tests.
+claim_of[a](exp_p2_suite_green).
+ground[a](exp_p2_suite_green, additive_module_zero_format_writer_or_glue_edits).
+expected[m](exp_p2_suite_green, zero_failures_pass_count_geq_1463_ignored_geq_25).
+
+-- H2: conformance harness verdicts BYTE-UNCHANGED: tier-0 120/0, tier-1
+-- exactly 5 GREEN / 25 RED, same members as rounds/round-005.report.json.
+-- Ground: NOTHING consumes FactStore in prod in P2 (the planner still
+-- dispatches on string names until P3, by design of the phase order); the
+-- wire/engine path is untouched, so the oracle cannot observe P2.
+claim_of[a](exp_p2_harness_verdicts_unchanged).
+ground[a](exp_p2_harness_verdicts_unchanged, nothing_consumes_factstore_in_prod_until_p3).
+expected[m](exp_p2_harness_verdicts_unchanged, tier0_120_0_tier1_5green_25red_same_members).
+
+-- H3: zero on-disk byte changes. Ground: the adapter only READS through the
+-- existing *_at snapshot surface and WRITES through the existing
+-- commit_batch_private path (same NodeRecordV2/EdgeRecordV2 bytes, author/tick
+-- round-tripped as metadata _source/_generation). Gate: git diff shows no
+-- storage_v2 format-writer change; a store written before P2 code existed
+-- reads identically through legacy paths after.
+claim_of[a](exp_p2_zero_format_change).
+ground[a](exp_p2_zero_format_change, reads_via_star_at_writes_via_commit_batch_private_only).
+expected[m](exp_p2_zero_format_change, git_diff_no_storage_v2_writer_changes).
+
+-- H4: the capability vector own-LSM declares equals the §7.4-grounded values:
+-- sorted_runs=false (write_buffer.rs L0 unsorted; adapter sorts on materialize
+-- — which is exactly WHY the flag is false), prefix_scan=false (bloom-gate +
+-- linear scan, multi_shard.rs get_outgoing_edges_at/get_node_at),
+-- merge_operator=true (compaction/tag_fold.rs exists; aid-key change is a
+-- P4/P5 blocker, not a P2 falsifier), bulk_ingest=true (begin/end_bulk_load),
+-- snapshot_isolation=true (ReadSnapshot MVCC *_at path), as_of_tick=false
+-- (§2.8: no tick query machinery), compression=false (none in tree),
+-- reshard=false (no code; shard_count survives clear_durable). One unit
+-- assertion per flag, each named after its evidence anchor.
+claim_of[a](exp_p2_capability_vector_grounded).
+ground[a](exp_p2_capability_vector_grounded, each_flag_pinned_to_live_code_anchor_per_7_4).
+expected[m](exp_p2_capability_vector_grounded, eight_flag_tests_green_vector_false_false_true_true_true_false_false_false).
+
+-- H5: the E-VAL-001/002 write boundary demonstrably lives at assert_batch —
+-- the P1-ledgered inheritance (round-005-pre.rofl H4: «the store boundary
+-- inherits validate_canonical in P2»). Every tuple Value is validated
+-- recursively (through Term) BEFORE any store mutation; a violation aborts the
+-- WHOLE batch pre-commit, store unchanged (verified by canonical_state_sha
+-- before == after).
+claim_of[a](exp_p2_eval_boundary_at_assert_batch).
+ground[a](exp_p2_eval_boundary_at_assert_batch, validate_canonical_called_pre_commit_abort_whole_batch).
+expected[m](exp_p2_eval_boundary_at_assert_batch, e_val_001_002_abort_tests_green_sha_unchanged_on_abort).
+
+-- H6: E-CAT-001 flows through FactStore::declare (delegation to the P1
+-- catalog); identical redeclare idempotent, conflicting redeclare rejected on
+-- every axis (reusing the P1 catalog tests as oracle).
+claim_of[a](exp_p2_ecat_via_declare).
+ground[a](exp_p2_ecat_via_declare, declare_delegates_to_p1_catalog_declare).
+expected[m](exp_p2_ecat_via_declare, redeclare_axis_tests_green_through_trait).
+
+-- H7: E-CAP-001 is typed and fired for every absent capability / phase-
+-- deferred operation: supersede ("supersession", §10.4 P4), resolve_functional
+-- ("functional-resolution", §10.4 P5), compact(Some(p))
+-- ("per-predicate-compaction", SegmentType has exactly {Nodes, Edges}),
+-- assert_batch with persp != main ("perspectives", §10.1: unrepresentable in
+-- today's format), sub-record granularity — a lone attr on an existing entity
+-- ("assertion-granularity", §2.1: «половину записи сегодня заменить нельзя»),
+-- Reverse order on a reverse:None predicate. Each carries the named missing
+-- capability in detail; none panics; none silently no-ops. E-CAP-001 is NOT
+-- wired into the planner (P3) — negotiation-surface only, by phase design.
+claim_of[a](exp_p2_ecap_typed_rejections).
+ground[a](exp_p2_ecap_typed_rejections, phase_deferred_ops_loudly_rejected_not_emulated).
+expected[m](exp_p2_ecap_typed_rejections, six_rejection_tests_green_named_capability_in_detail).
+
+-- H8: FactRow synthesis is the §10.1 conversion table restricted to base-five:
+-- exactly ONE Assertion per row; author ← interned metadata._source (missing →
+-- interned "$legacy"); tick ← metadata._generation (missing → 0); tag = Bool
+-- (SGV2-v2 prod segments carry no TAG_DIR columns — §2.2 MEASURED 359/359);
+-- tx_created = 0; tx_invalidated = TX_OPEN. _source/_generation move OUT of
+-- the attr projection into assertion fields (§6.2 «0 доп. фактов» row) — the
+-- differential asserts BOTH absence-as-attr AND presence-as-author/tick
+-- (losslessness). fid = BLAKE3(canon(persp, pred, tuple))[0..16] LE over the
+-- canonical NAME strings (never interned u32 ids, §9.2); the exact byte layout
+-- is pinned by a golden test vector so it can never drift silently.
+claim_of[a](exp_p2_factrow_synthesis_lossless).
+ground[a](exp_p2_factrow_synthesis_lossless, conversion_table_10_1_restricted_to_base_five_names_not_ids).
+expected[m](exp_p2_factrow_synthesis_lossless, synthesis_tests_green_fid_golden_vector_pinned).
+
+-- H9: the 12-pair read differential FactStore ≡ StorageView/multi_shard is
+-- green — both sides on the SAME version-pinned ReadSnapshot, result MULTISETS
+-- compared via BLAKE3 over sorted canon bytes per pair: (1) sorted_run(node) ≡
+-- StorageView node run; (2) prefix_scan(type, Reverse, [ty]) ≡
+-- scan_nodes_by_type for EVERY distinct type; (3) sorted_run(edge) ≡ edge run
+-- + per-type ≡ scan_edges_by_type; (4) prefix_scan(edge, [src]) ≡ edges_from
+-- incl. zero-fanout; (5) prefix_scan(incoming, [dst]) ≡ edges_to; (6)
+-- prefix_scan(node, [id]) + get_fact ≡ get_node incl. absent ids (None ≡
+-- empty); (7) attr projection ≡ privileged fields + non-reserved metadata keys
+-- (node_metadata as ground truth), minus _source/_generation (moved), and
+-- attr-Reverse ≡ nodes_by_attr for sampled (k,v); (8) synthesis audit +
+-- tuple(fid) round-trip + live_filter identity on the full run; (9) counts ≡
+-- node_count_at / edge_count_at / count_by_type_at; (10) canonical_state_sha
+-- cross-process deterministic, compact(None)-invariant, write-variant; (11)
+-- write commutativity square commutes both directions (legacy write → FactStore
+-- read; assert_batch → both reads, _source/_generation stamped from
+-- author/tick); (12) every pair re-run with persp = "other" is EMPTY on the
+-- FactStore side (exact-match, §5.4a — a valid empty answer, not an error).
+-- Fixture variant non-ignored in cargo test --lib; real-base variant
+-- ignored-by-default, run once for round-007 with digests ledgered.
+claim_of[a](exp_p2_differential_12_pairs_green).
+ground[a](exp_p2_differential_12_pairs_green, same_pinned_snapshot_multiset_blake3_per_pair).
+expected[m](exp_p2_differential_12_pairs_green, fixture_pairs_in_ci_real_base_digests_in_round_007).
+
+-- H10: live_filter is the REAL §2.4 anti-join, degenerately exact in P2: drop
+-- assertions with tx_invalidated != TX_OPEN (cache rule 1), anti-join
+-- surviving aids against live supersedes(_, aid) facts. Over P2 data
+-- supersedes has ZERO facts and every synthesized row is TX_OPEN, so it
+-- provably passes everything — NOT an identity stub: a hand-constructed row
+-- with tx_invalidated != TX_OPEN is dropped by the same code path.
+claim_of[a](exp_p2_live_filter_real_antijoin).
+ground[a](exp_p2_live_filter_real_antijoin, rule_1_plus_antijoin_over_provably_empty_supersedes).
+expected[m](exp_p2_live_filter_real_antijoin, passes_all_p2_rows_drops_tx_invalidated_row).
+
+-- H11: hygiene gates ship as mechanical tests (CI runs no cargo workflows,
+-- §8's own caveat — so the tests ARE the gate, run by the phase checklist):
+-- (a) §8 rule-1 proxy: facts/mod.rs references no storage_v2 path; (b) §5.4a
+-- level-3: no PerspectiveId constructed by literal/default outside src/facts/
+-- (defense in depth: the PerspectiveId field is PRIVATE, so foreign
+-- construction is also a compile error); (c) perspective parameter present on
+-- every read method NOW (§5.4a level 1; Snapshot carries NO perspective) so
+-- the ТЗ-phase P2A namespace lands without a breaking trait change.
+claim_of[a](exp_p2_hygiene_gates_mechanical).
+ground[a](exp_p2_hygiene_gates_mechanical, grep_tests_plus_private_field_type_defense).
+expected[m](exp_p2_hygiene_gates_mechanical, import_hygiene_and_perspective_grep_tests_green).
+
+-- ── Deliberate calls (registered BEFORE implementation; C-numbering continues
+-- round-006's C4/C6) ──────────────────────────────────────────────────
+
+-- C7: TYPED-ERROR RETURN SHAPE. §7.2's verbatim signatures return bare
+-- iterators / Option from sorted_run / prefix_scan / resolve_functional /
+-- supersede, but the P2 contract ALSO requires every absent-capability /
+-- phase-deferred operation to be a TYPED E-CAP-001-family rejection («not a
+-- silent empty run», I5 no-silent-failures) with no panic. The two
+-- requirements conflict on the literal return types. CALL: sorted_run and
+-- prefix_scan return Result<Box<dyn Iterator<Item = FactRow> + 'a>,
+-- FactStoreError>; resolve_functional and supersede return Result<…,
+-- FactStoreError>. The payload types (FactRow-yielding iterators; FactRow the
+-- ONLY read unit) are §7.2-verbatim; only the error envelope is added. The
+-- alternative (panic or silent empty) violates I5, which outranks signature
+-- literalism. Registered as the P2 analog of C6.
+claim_of[a](c7_result_envelope_on_read_errors).
+ground[a](c7_result_envelope_on_read_errors, i5_no_silent_failures_outranks_literal_signature).
+
+-- C8: TagV2 REACHES facts/mod.rs VIA A derive/tag REEXPORT. Assertion.tag is
+-- TagV2 (storage_v2/types.rs), but §8 rule 1 (proxied: facts/mod.rs imports no
+-- storage_v2) forbids the direct path, and §8's crate table assigns TagV2 +
+-- derive/tag.rs to the future rfdb-facts crate. CALL: derive/tag.rs gains
+-- `pub use crate::storage_v2::types::TagV2` (+ TX_OPEN) and facts/mod.rs
+-- imports from crate::derive::tag — the import points at TagV2's §8
+-- DESTINATION, so the mechanical proxy stays honest. Moving TagV2 out of
+-- storage_v2 now would be the drive-by refactor Q3 already declines.
+claim_of[a](c8_tagv2_via_derive_tag_reexport).
+ground[a](c8_tagv2_via_derive_tag_reexport, section8_assigns_tagv2_to_rfdb_facts_reexport_points_at_destination).
+
+-- C9: STATE-SHA AUTHOR COMPONENT IS A DATA-DERIVED RANK. §9.1's formula says
+-- u32(author), but runtime-interned author u32s depend on encounter/process
+-- order — exactly what §9.2 forbids for predicates/perspectives («не по
+-- интернированным u32») and what the cross-process determinism gate would
+-- trip over. CALL: the sha's u32(author) = the rank of the author NAME in the
+-- byte-sorted set of live author names of the hashed state (dense, 0-based) —
+-- fully determined by the data, invariant to process, declaration order,
+-- compaction, and shard layout. The runtime AuthorId stays a free interner.
+-- Same spirit as the tick component call (max live assertion tick, spec Q8).
+claim_of[a](c9_sha_author_rank_data_derived).
+ground[a](c9_sha_author_rank_data_derived, section_9_2_names_not_interned_ids_extended_to_authors).
+
+-- C10: ERROR-CODE BUDGET FOR CALLER-BUG INPUTS. The P2 code budget is fixed
+-- (E-VAL-001/002, E-CAT-001, E-CAP-001; E-CAT-002 is P3's read-path gate). A
+-- read/write naming a CatalogPredicateId absent from the catalog, or an
+-- AuthorId never interned, is a caller bug that must not be silent and must
+-- not mint new codes. CALL: both reject with E-CAT-001 and an explicit
+-- "unknown id" detail (the catalog is the authority that cannot resolve
+-- them); when P3 lands E-CAT-002, the read-path case migrates there.
+claim_of[a](c10_unknown_ids_e_cat_001_until_p3).
+ground[a](c10_unknown_ids_e_cat_001_until_p3, fixed_code_budget_catalog_is_the_failing_authority).
+
+-- C11: CompactionTier AND SupersedeScope ARE FACTS-LEVEL TYPES. §7.2 names
+-- both in trait signatures; neither exists as a storage_v2 type today
+-- (compaction takes CompactionConfig{segment_threshold, l1_fanout}). CALL:
+-- facts/mod.rs defines CompactionTier {Tiered, FullMerge} (lsm.rs maps them to
+-- the existing CompactionConfig) and SupersedeScope/SubjectSet verbatim from
+-- §5.5 (consumed only by the E-CAP-001 rejection until P4).
+claim_of[a](c11_facts_level_tier_and_scope_types).
+ground[a](c11_facts_level_tier_and_scope_types, trait_names_them_storage_has_no_such_types).
+
+-- C12: WRITE SCOPE = spec Q1 verbatim. Minimal write-through assert_batch IS
+-- in P2 (round-005-pre.rofl H4 presupposes the store write boundary),
+-- restricted to perspective=main and record-shaped groups (node/2 [+ attr/3
+-- same subject] → one NodeRecordV2; edge/3 → one EdgeRecordV2) delegating to
+-- commit_batch_private with EMPTY changed_files (additive; author/tick →
+-- _source/_generation, lossless inverse of the read map). A group naming any
+-- OTHER predicate (type/2 is a derived view of node/2; open-space predicates
+-- are unrepresentable in today's record format) → E-CAP-001
+-- ("record-vocabulary"). supersede / resolve_functional / lone-attr writes →
+-- E-CAP-001 (P4/P5 by name in §10.4); emulation via tombstones would silently
+-- change semantics when P4 lands.
+claim_of[a](c12_write_scope_record_shaped_main_only).
+ground[a](c12_write_scope_record_shaped_main_only, spec_q1_plus_round_005_pre_h4_inheritance).
+
+-- C13: stats() IN P2 = spec Q9 with the computation point named: live_facts /
+-- live_asserts for the base five are computed ONCE at adapter construction
+-- from a snapshot (node_count_at / edge_count_at; attr via the projection),
+-- refreshed only by constructing a new adapter; distinct/max_fanout stay 0
+-- with updated_at_tx = 0 as the documented "not computed" sentinel. Nothing
+-- consumes stats in P2 (planner is string-dispatched until P3) — a ledgered
+-- phase deferral, not a hidden stub.
+claim_of[a](c13_stats_construction_time_snapshot_counts).
+ground[a](c13_stats_construction_time_snapshot_counts, spec_q9_p3_owns_real_maintenance).
+
+-- C14: get_fact/tuple COST = spec Q10: per-snapshot lazily-built memoized
+-- fid→row index living INSIDE the Snapshot payload (first call O(n), then
+-- O(1); build-count probe test). §7.2/§8.3 ban get_fact in the fixpoint hot
+-- loop, so the first-touch cost is contractual.
+claim_of[a](c14_lazy_fid_index_in_snapshot).
+ground[a](c14_lazy_fid_index_in_snapshot, spec_q10_hot_loop_ban_makes_cost_contractual).
+
+-- C15: REAL-BASE NUMBERS ARE RE-MEASURED AT RUN TIME. The doc's MEASURED
+-- corpus (503,443 nodes / 1,107,838 edges / 60 node types / 48 edge types)
+-- was taken on the 543 MB base at doc-writing time; the round-007 real-base
+-- differential runs on a FRESH read-only /tmp copy of
+-- /home/dev/grafema/.grafema/graph.rfdb (lsof-checked per the shared-db
+-- skill; the live base and /home/dev/grafema are never written). Whatever
+-- counts the copy actually holds are recorded as the oracle numbers — the
+-- differential's identities, not the doc's absolute counts, are the gate.
+claim_of[a](c15_real_base_recounted_fresh_copy).
+ground[a](c15_real_base_recounted_fresh_copy, doc_counts_are_snapshot_dated_identities_are_the_gate).
+
+-- C16: INHERITED P1 CALLS CONSULTED (spec Q11). C4: FactStore runs are
+-- canon-ordered (§9.2), StorageView runs keep exec order; the differential
+-- compares MULTISETS, never interleaves the two orders. C6: P2 builds fid and
+-- state-sha on canon BYTES (arity explicit), no new as_str text surface, so
+-- the bare-functor convention is consulted and does not bite. E-VAL
+-- enforcement point: assert_batch, per round-005-pre H4.
+claim_of[a](c16_p1_calls_consulted_c4_c6_eval_point).
+ground[a](c16_p1_calls_consulted_c4_c6_eval_point, multiset_compare_canon_bytes_only_no_text_surface).
+
+-- C17: CRATE SPLIT DEFERRED = spec Q3. src/facts/ is a MODULE inside
+-- rfdb-server; §8 rule 1 proxied by the import-hygiene test, rule 3 by the
+-- PerspectiveId grep + private field; the cargo-tree-checkable rfdb-facts
+-- split (dragging TagV2/Value/canon/catalog moves) is registered as deferred
+-- work attached to the layer rewrite (P6/P8 territory). Flagged for owner
+-- confirmation.
+claim_of[a](c17_module_not_crate_split_deferred).
+ground[a](c17_module_not_crate_split_deferred, spec_q3_governance_forbids_drive_by_moves).
