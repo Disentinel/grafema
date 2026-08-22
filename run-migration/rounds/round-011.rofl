@@ -231,3 +231,65 @@
 -- wont_fix); legacy read paths (find_nodes_at 92-vs-53 class, C22/R1
 -- winner-collapse, get_node_at physics) keep today's behavior until P6 —
 -- proven by the byte-identical real-base digests above.
+
+-- ── Review-round resolutions (finalize, repairs-as-repairs) ────────
+-- F1 (minor, process note — NO code change): during the reviewer's perf
+--   re-verification only 1 of 3 timed windows was strictly quiescent — a
+--   parallel workflow agent kept launching heavy cargo runs (its own perf
+--   window, then a second real-base differential) on the shared worktree,
+--   so reviewer windows 1-2 overlapped concurrent cargo. All 3 reviewer
+--   windows still passed with margin (depends median 5.137s = 1.043x,
+--   method_calls 8.712s = 1.000x, axum 5.344s = 0.994x; ceilings
+--   5.419/9.579/5.914) and contention can only inflate times, so passing
+--   under contention is a-fortiori evidence; the implementer's own 3
+--   serialized quiescent runs (G6 above) are corroborated. Process rule
+--   going forward (extends round-010 F3): the workflow orchestrator must
+--   hand the timed perf window to exactly ONE agent at a time (explicit
+--   lockfile or phase ordering) — reviewer and test-runner agents sharing
+--   /home/dev/grafema-rofl otherwise contend on cargo and taint each
+--   other's quiescence probes.
+
+-- ── Finalize full gate re-run (post-review, all serialized, quiescence
+--    probe pgrep -fa 'rustup.*(cargo|rustc)' clean before timed runs) ──
+-- cargo test --lib: 1557 passed / 0 failed / 28 ignored (26.69s);
+--   known-flaky test_commit_batch_performance_scaling passed in-suite.
+-- crash_recovery: 9/9 (0.06s); git diff --stat -- packages/rfdb-server/
+--   tests/ = EMPTY.
+-- bench_c2_bulkload (release): 4/4 (17.81s).
+-- plan_golden: p3_plan_fingerprints_match_pre_p3_golden green; golden file
+--   src/derive/golden/p3_plan_fingerprints.txt = 40,816 lines, ZERO diff.
+-- Conformance harness: exit 0 (16.9s wallclock); tier-0 120 seeds /
+--   0 divergences, why 325/325 sound, whynot 554/554 sound; tier-1 oracle
+--   self-check 30/30; verdicts GREEN 5 / RED 25 / DIVERGENCE 0 /
+--   HARNESS_GAP 0 — verdict-identical to baseline. The 3 generated files
+--   restored via git checkout; tree clean afterwards.
+-- Re-pinned real-base differential (release, 1378.98s,
+--   ROFL_P2_REAL_BASE=/tmp/rofl-p2-real-base/graph.rfdb, 567,405,250 B,
+--   /home/dev/grafema never touched): multi_live_subjects 39; winner
+--   GLOBAL_DEFINITION 39/39 == storage winner 39/39; conflict5_keys 39;
+--   counterfactual_empty_table EXTERNAL_FUNCTION 39/39; counterfactual
+--   min-fid split GLOBAL 19 / EXTERNAL 20; min_fid_vector_blake3
+--   fc81d041d47abac6f4e7b27797cad021629af0565c21d3cf7130928c7f1ab782
+--   (matches the round-011 pinned artifact); ALL pre-existing digests
+--   byte-identical (pair1/pair2 8f4f2c1c…, pair3 23cb1070…, pair45
+--   c1b4c07c…, pair7 3ae2142d…, pair9 6d2fb3c8…, pair10_state_sha
+--   ed520009…, pair2_shadowed 39, pair7_shadowed 0).
+-- Perf proxy p3_pack_baseline_on_real_corpus (release, 3 serialized runs,
+--   quiescence probe clean before each, gate <=1.10x of round-010
+--   governance medians 4.926/8.708/5.376):
+--     depends      5.001/4.944/5.005 -> MEDIAN 5.001s (1.015x) PASS
+--     method_calls 8.674/8.488/8.442 -> MEDIAN 8.488s (0.975x) PASS
+--     axum_routes  5.462/5.538/5.342 -> MEDIAN 5.462s (1.016x) PASS
+--   writeback (+0,-0) on all three, all runs.
+-- Forbidden-pattern scan of the round diff (307a64de..fa40b361, added
+--   lines): clean — the single grep hit is the lsm.rs doc comment stating
+--   the prior E-CAP-001 "functional-resolution" stub CEASES to exist.
+-- Scope check: implementation commit touches exactly the 6 declared src
+--   files + round-011-pre.rofl; actuals commit touches round-011.rofl only.
+-- Implementation commit STANDS at fa40b361 (no history rewrite): this
+--   file and round-011-pre pin the audited SHA ordering 0e609864 <
+--   fa40b361 < 87ed0ada; amending the message to the workflow-template
+--   one-liner would re-SHA the chain and break the committed pre-before-
+--   implementation proof. The template's semantic content (Functional
+--   cardinality, R-1a resolution, conflict/5, E-FUNC-001, derived-merge
+--   fold-key value fix) is already carried verbatim by fa40b361's message.
