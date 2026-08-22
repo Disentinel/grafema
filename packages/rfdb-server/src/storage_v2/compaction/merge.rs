@@ -94,17 +94,25 @@ pub fn merge_edge_segments(
 //     record model: newest-wins collapse, identical to the base merge under BOTH
 //     merge routings (this is what keeps the projection's v2 winner-collapse
 //     sha-invariant across compaction — ledger round-010-pre D8/D9);
-//   * record from a v3 segment → `(record_key, assertion identity)` where the
-//     assertion identity is `_source`/`_generation` from the metadata blob (the
-//     §10.1 author/tick carriers, ledger D5) falling back to the ProvenanceV2
-//     columns (`rule_ast_hash`, `generation`) for rule-written records.
+//   * record from a v3 segment → `(record_key, VALUE column, assertion identity)`
+//     where the assertion identity is `_source`/`_generation` from the metadata
+//     blob (the §10.1 author/tick carriers, ledger D5) falling back to the
+//     ProvenanceV2 columns (`rule_ast_hash`, `generation`) for rule-written
+//     records. The VALUE column (node_type) joins the fold identity for v3
+//     records (P5, ledger round-011-pre E8): the aid is `(fid, author, tick)`
+//     and the fid CONTAINS the value — two same-(id, author, tick) records with
+//     different node_type (reachable cross-batch) are two DISTINCT aids and must
+//     never fold. Legacy (v2) records keep the per-id record-model collapse
+//     (D8/D9 — the value is deliberately NOT in their key).
 //
 // ⊕ (`fold_tags`) applies ONLY within one key — a true same-aid duplicate from a
 // re-write of the same assertion. Across different aids records are BOTH kept: a
 // CountTag fact asserted by two authors keeps two live assertions with separate
 // weights (the §9.1/§10.5 C3 gate). Payload within one key takes newest-wins
-// (first insert, segments are newest-first). Output goes through `add_derived`
-// (v3), preserving the columns. Mismatched semiring_ids fold to E-FMT-002 (§9.3).
+// (first insert, segments are newest-first); metadata stays OUT of the fold
+// identity (R-3: meta-only differences remain ONE record). Output goes through
+// `add_derived` (v3), preserving the columns. Mismatched semiring_ids fold to
+// E-FMT-002 (§9.3).
 
 /// Assertion-identity component of the derived-merge fold key (§3.2: the fold key
 /// is the aid, not the record key).
@@ -169,7 +177,16 @@ pub fn merge_node_segments_derived(
     segments: &[&NodeSegmentV2],
     tombstones: &TombstoneSet,
 ) -> Result<Vec<(NodeRecordV2, DerivedFields)>> {
-    let mut records: HashMap<(u128, AssertIdent), (NodeRecordV2, DerivedFields)> = HashMap::new();
+    // Fold key = (record id, value column for v3 records, assertion identity)
+    // — §3.2 aid semantics (round-011-pre E8): the value component is
+    // `Some(node_type)` for Assertion idents (the fid contains the value; a
+    // different value is a different aid) and `None` for Legacy idents (the
+    // v2 record model: per-id newest-wins collapse, D8/D9).
+    #[allow(clippy::type_complexity)]
+    let mut records: HashMap<
+        (u128, Option<String>, AssertIdent),
+        (NodeRecordV2, DerivedFields),
+    > = HashMap::new();
 
     for seg in segments {
         let derived = seg.has_derived_columns();
@@ -183,13 +200,17 @@ pub fn merge_node_segments_derived(
                 tx_invalidated: seg.tx_invalidated(i),
             };
             let ident = assert_ident(derived, &record.metadata, &fields.provenance);
-            match records.entry((id, ident)) {
+            let value = match &ident {
+                AssertIdent::Legacy => None,
+                AssertIdent::Assertion { .. } => Some(record.node_type.clone()),
+            };
+            match records.entry((id, value, ident)) {
                 Entry::Vacant(e) => {
                     e.insert((record, fields));
                 }
                 Entry::Occupied(mut e) => {
-                    // Same assertion key re-written: keep the newer payload
-                    // (already present = newest-first); ⊕-fold the tag.
+                    // Same aid re-written: keep the newer payload (already
+                    // present = newest-first); ⊕-fold the tag.
                     let folded = fold_tags(&e.get().1.tag, &fields.tag)?;
                     e.get_mut().1.tag = folded;
                 }
@@ -197,14 +218,19 @@ pub fn merge_node_segments_derived(
         }
     }
 
-    records.retain(|(id, _), _| !tombstones.contains_node(*id));
-    let mut sorted: Vec<((u128, AssertIdent), (NodeRecordV2, DerivedFields))> =
-        records.into_iter().collect();
+    records.retain(|(id, _, _), _| !tombstones.contains_node(*id));
+    #[allow(clippy::type_complexity)]
+    let mut sorted: Vec<(
+        (u128, Option<String>, AssertIdent),
+        (NodeRecordV2, DerivedFields),
+    )> = records.into_iter().collect();
     // Deterministic output: record key asc, then tick desc (newest assertion
-    // first — the §2.3 storage-order winner stays deterministic), then identity.
-    sorted.sort_by(|((ida, ka), _), ((idb, kb), _)| {
+    // first — the §2.3 storage-order winner stays deterministic), then
+    // identity, then the value component (total with the extended key).
+    sorted.sort_by(|((ida, va, ka), _), ((idb, vb, kb), _)| {
         ida.cmp(idb)
             .then_with(|| ident_sort_key(kb).cmp(&ident_sort_key(ka)))
+            .then_with(|| va.cmp(vb))
     });
     Ok(sorted.into_iter().map(|(_, v)| v).collect())
 }
@@ -630,6 +656,94 @@ mod tests {
             .collect();
         assert_eq!(by_id[&n1.id], 3);
         assert_eq!(by_id[&n2.id], 9);
+    }
+
+    /// P5 fold-key regression (round-011-pre E8, §3.2): two v3 records with the
+    /// SAME (id, author-carrier, tick) but DIFFERENT node_type are DIFFERENT
+    /// aids (the fid contains the value column — different tuples hash to
+    /// different fids), reachable cross-batch. The fold must keep BOTH with
+    /// their separate tags — never ⊕-fold across the two aids.
+    #[test]
+    fn derived_merge_keeps_distinct_values_at_same_author_tick() {
+        let mut a = make_node("shared", "GLOBAL_DEFINITION", "n", "f.rs");
+        a.metadata = r#"{"_source":"alice","_generation":2}"#.to_string();
+        let mut b = make_node("shared", "EXTERNAL_FUNCTION", "n", "f.rs");
+        b.metadata = r#"{"_source":"alice","_generation":2}"#.to_string();
+        assert_eq!(a.id, b.id, "one subject");
+        let seg_a = make_derived_node_segment(vec![(a.clone(), count_fields(5, 2))]);
+        let seg_b = make_derived_node_segment(vec![(b.clone(), count_fields(3, 2))]);
+
+        let merged =
+            merge_node_segments_derived(&[&seg_a, &seg_b], &TombstoneSet::new()).unwrap();
+        assert_eq!(
+            merged.len(),
+            2,
+            "same (id, author, tick), different value = two aids → two records"
+        );
+        let mut by_type: Vec<(String, i64)> = merged
+            .iter()
+            .map(|(r, f)| {
+                (
+                    r.node_type.clone(),
+                    CountTag::from_le_bytes(&f.tag.bytes).unwrap().0,
+                )
+            })
+            .collect();
+        by_type.sort();
+        assert_eq!(
+            by_type,
+            vec![
+                ("EXTERNAL_FUNCTION".to_string(), 3),
+                ("GLOBAL_DEFINITION".to_string(), 5)
+            ],
+            "separate per-aid weights — no cross-aid ⊕"
+        );
+    }
+
+    /// R-3 guard (round-011-pre E8): a META-ONLY difference at the same
+    /// (id, node_type, assertion identity) is still ONE record — metadata is
+    /// NOT part of the fold identity; the newest payload wins and the tags
+    /// fold within the one aid.
+    #[test]
+    fn derived_merge_meta_only_difference_still_collapses() {
+        let mut newer = make_node("shared", "DERIVED", "n", "f.rs");
+        newer.metadata = r#"{"_source":"alice","_generation":2,"note":"new"}"#.to_string();
+        let mut older = make_node("shared", "DERIVED", "n", "f.rs");
+        older.metadata = r#"{"_source":"alice","_generation":2,"note":"old"}"#.to_string();
+        let new_seg = make_derived_node_segment(vec![(newer.clone(), count_fields(5, 2))]);
+        let old_seg = make_derived_node_segment(vec![(older.clone(), count_fields(3, 2))]);
+        let merged =
+            merge_node_segments_derived(&[&new_seg, &old_seg], &TombstoneSet::new()).unwrap();
+        assert_eq!(merged.len(), 1, "meta-only difference = one aid = one record");
+        assert!(
+            merged[0].0.metadata.contains("new"),
+            "newest payload wins within the aid"
+        );
+        assert_eq!(
+            CountTag::from_le_bytes(&merged[0].1.tag.bytes),
+            Some(CountTag(8)),
+            "3 ⊕ 5 = 8 within the one aid"
+        );
+    }
+
+    /// The extended fold key keeps the output order TOTAL and deterministic:
+    /// same (id, ident) with two values orders by the value component,
+    /// independent of segment input order.
+    #[test]
+    fn derived_merge_output_order_deterministic_with_value_component() {
+        let mut a = make_node("shared", "TYPE_B", "n", "f.rs");
+        a.metadata = r#"{"_source":"alice","_generation":1}"#.to_string();
+        let mut b = make_node("shared", "TYPE_A", "n", "f.rs");
+        b.metadata = r#"{"_source":"alice","_generation":1}"#.to_string();
+        let seg_a = make_derived_node_segment(vec![(a.clone(), count_fields(1, 1))]);
+        let seg_b = make_derived_node_segment(vec![(b.clone(), count_fields(2, 1))]);
+        let one = merge_node_segments_derived(&[&seg_a, &seg_b], &TombstoneSet::new()).unwrap();
+        let two = merge_node_segments_derived(&[&seg_b, &seg_a], &TombstoneSet::new()).unwrap();
+        let types = |v: &Vec<(NodeRecordV2, DerivedFields)>| -> Vec<String> {
+            v.iter().map(|(r, _)| r.node_type.clone()).collect()
+        };
+        assert_eq!(types(&one), types(&two), "input-order independent");
+        assert_eq!(types(&one), vec!["TYPE_A", "TYPE_B"], "value-asc within one ident");
     }
 
     #[test]

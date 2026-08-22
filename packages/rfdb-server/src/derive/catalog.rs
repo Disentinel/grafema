@@ -58,13 +58,19 @@ pub enum PhysStrategy {
     Reified,
 }
 
-/// Fact multiplicity per key (§2.3). `Functional` is DECLARABLE in P1 but attaches no
-/// behavior — conflict resolution (`conflict/5`, `E-FUNC-001`) is P5.
+/// Fact multiplicity per key (§2.3). REAL since P5: a `Functional` predicate's
+/// subject admits ONE live value — read-time conflict resolution under the
+/// OWNER-RULINGS R-1a order (max tick → per-predicate `author_priority` table
+/// → author canon-order → min fid) with `conflict/5` emission, plus the
+/// intra-batch `E-FUNC-001` write gate. The facts backend amends the base
+/// `node`/`type` decls to `Functional` at construction
+/// ([`PredicateCatalog::amend_functional`], ledger round-011-pre E3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Cardinality {
     /// Any number of live facts per key — the default.
     MultiValued,
-    /// At most one live fact per key (enforcement lands in P5).
+    /// At most one live value per subject in one perspective; conflicting live
+    /// facts are resolved at READ time (the store stays monotone, §2.3).
     Functional,
 }
 
@@ -305,6 +311,73 @@ impl PredicateCatalog {
             reverse: Some(Box::new([1, 0])),
             author_priority: Box::new([]),
             stats: PredicateStats::default(),
+        }
+    }
+
+    /// P5 (rofl-fact-model.md §2.3, ledger round-011-pre E4): the canonical
+    /// declaration of the reserved `conflict/5` predicate — the audit-
+    /// perspective record of every multi-live Functional resolution:
+    /// `conflict(Subject, PredicateName, WinnerFid, LoserFid, WinnerTick)`.
+    /// The predicate column travels as the canonical NAME (`Value::Str`), not
+    /// an interned id (§9.2 — recorded doc-deviation DEV-2). `Nary` /
+    /// `MultiValued` / `Timeless`, declared by the FACTS backend at
+    /// construction alongside [`Self::supersedes_decl`] — deliberately NOT
+    /// part of [`Self::with_base_relations`] (plan-golden-pinned id-space).
+    pub fn conflict_decl() -> PredicateDecl {
+        PredicateDecl {
+            id: CatalogPredicateId(0), // assigned by declare()
+            name: "conflict".to_string(),
+            arity: 5,
+            strategy: PhysStrategy::Nary,
+            cardinality: Cardinality::MultiValued,
+            temporal: TemporalScope::Timeless,
+            semiring: crate::storage_v2::types::BOOLTAG_SEMIRING_ID,
+            key_cols: Box::new([0]),
+            reverse: None,
+            author_priority: Box::new([]),
+            stats: PredicateStats::default(),
+        }
+    }
+
+    /// P5 (ledger round-011-pre E3): the explicit facts-backend-owned catalog
+    /// AMENDMENT that gives an already-declared predicate `Functional`
+    /// cardinality and its `author_priority` table (§2.3/§3.1 — the catalog
+    /// is the ONE place a predicate gets physics; R-1a seeds exactly one
+    /// pair on `node`/`type`). This is NOT a redeclare: it can never CHANGE a
+    /// conflicting existing table —
+    /// - the decl is already `Functional` with an EQUAL table → idempotent;
+    /// - the decl is `MultiValued` with an EMPTY table (the base state) →
+    ///   amended in place;
+    /// - anything else (a differing table either way) → `E-CAT-001`;
+    /// - an undeclared name → `E-CAT-002` (the unknown-predicate class).
+    pub fn amend_functional(
+        &mut self,
+        name: &str,
+        author_priority: Box<[AuthorId]>,
+    ) -> Result<CatalogPredicateId, CatalogError> {
+        let Some(&id) = self.ids.get(name) else {
+            return Err(CatalogError {
+                code: "E-CAT-002",
+                detail: format!("cannot amend undeclared predicate '{name}'"),
+            });
+        };
+        let decl = &mut self.decls[id.0 as usize];
+        match decl.cardinality {
+            Cardinality::Functional if decl.author_priority == author_priority => Ok(id),
+            Cardinality::MultiValued if decl.author_priority.is_empty() => {
+                decl.cardinality = Cardinality::Functional;
+                decl.author_priority = author_priority;
+                Ok(id)
+            }
+            _ => Err(CatalogError {
+                code: "E-CAT-001",
+                detail: format!(
+                    "conflicting Functional amendment of '{name}': existing ({:?}, priority \
+                     {:?}) vs requested (Functional, priority {author_priority:?}) — the amend \
+                     API cannot change an existing table",
+                    decl.cardinality, decl.author_priority,
+                ),
+            }),
         }
     }
 
@@ -671,6 +744,62 @@ mod tests {
             cat.get("supersedes").unwrap().semiring,
             crate::storage_v2::types::BOOLTAG_SEMIRING_ID
         );
+    }
+
+    /// P5 (round-011-pre E3/X9): the facts-backend amendment path — amend in
+    /// place from the base MultiValued/empty state, idempotent re-amend,
+    /// conflicting re-amend E-CAT-001 (never a silent table change),
+    /// undeclared name E-CAT-002; declare()'s E-CAT-001 identity subsequently
+    /// compares against the AMENDED decl.
+    #[test]
+    fn amend_functional_amends_idempotent_and_rejects_conflicts() {
+        let mut cat = PredicateCatalog::with_base_relations();
+        let pair: Box<[AuthorId]> = Box::new([AuthorId(0), AuthorId(1)]);
+        let node_id = cat.get("node").unwrap().id;
+        // Base MultiValued/empty → amended in place.
+        assert_eq!(cat.amend_functional("node", pair.clone()).unwrap(), node_id);
+        let node = cat.get("node").unwrap();
+        assert_eq!(node.cardinality, Cardinality::Functional);
+        assert_eq!(node.author_priority, pair);
+        // Idempotent re-amend.
+        assert_eq!(cat.amend_functional("node", pair.clone()).unwrap(), node_id);
+        // Conflicting re-amend: a DIFFERENT table can never be installed.
+        let err = cat
+            .amend_functional("node", Box::new([AuthorId(1), AuthorId(0)]))
+            .unwrap_err();
+        assert_eq!(err.code, "E-CAT-001");
+        let err = cat.amend_functional("node", Box::new([])).unwrap_err();
+        assert_eq!(err.code, "E-CAT-001");
+        assert_eq!(
+            cat.get("node").unwrap().author_priority,
+            pair,
+            "rejected amendments leave the table unchanged"
+        );
+        // Undeclared name → the unknown-predicate class.
+        let err = cat.amend_functional("nosuch", pair.clone()).unwrap_err();
+        assert_eq!(err.code, "E-CAT-002");
+        // declare()'s identity now compares against the AMENDED decl: the
+        // amended shape is idempotent, the ORIGINAL base shape is E-CAT-001.
+        let amended = cat.get("node").unwrap().clone();
+        assert_eq!(cat.declare(amended).unwrap(), node_id);
+        let mut original = cat.get("node").unwrap().clone();
+        original.cardinality = Cardinality::MultiValued;
+        original.author_priority = Box::new([]);
+        assert_eq!(cat.declare(original).unwrap_err().code, "E-CAT-001");
+    }
+
+    /// P5: the reserved conflict/5 decl shape (round-011-pre E4).
+    #[test]
+    fn conflict_decl_is_nary_multivalued_timeless_arity_5() {
+        let decl = PredicateCatalog::conflict_decl();
+        assert_eq!(decl.name, "conflict");
+        assert_eq!(decl.arity, 5);
+        assert_eq!(decl.strategy, PhysStrategy::Nary);
+        assert_eq!(decl.cardinality, Cardinality::MultiValued);
+        assert_eq!(decl.temporal, TemporalScope::Timeless);
+        assert_eq!(decl.semiring, crate::storage_v2::types::BOOLTAG_SEMIRING_ID);
+        assert!(decl.reverse.is_none());
+        assert!(decl.author_priority.is_empty());
     }
 
     #[test]

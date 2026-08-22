@@ -1130,6 +1130,37 @@ fn duplicate_id_conflict_class_is_coherent_and_explained() {
             .any(|d| d.starts_with("pair2_shadowed_duplicate_rows") && d.ends_with(": 1")),
         "the explained-exception accounting must record exactly 1 shadowed row: {digests:?}"
     );
+    // ── P5 legs (round-011-pre X1 fixture arm): resolve_functional over the
+    // same §2.3 fixture — "node" and "type" agree; the winner COHERES with
+    // the projected sorted_run row (this fixture is a case where storage and
+    // R-1a agree: the GLOBAL_DEFINITION record carries the strictly newer
+    // tick 2, so max-tick == newest-segment); exactly one conflict key per
+    // resolution; the resolution never writes (sha unchanged).
+    let sha_before = fs.canonical_state_sha(&s);
+    for pred_name in ["node", "type"] {
+        let (row, conflicts) = fs
+            .resolve_functional(&s, pred(&fs, pred_name), PERSPECTIVE_MAIN, dup)
+            .expect("Functional resolution")
+            .expect("dup subject is live");
+        assert_eq!(
+            row.key.tuple[1],
+            Value::Str("GLOBAL_DEFINITION".to_string()),
+            "{pred_name}: R-1a winner (max tick 2) == storage winner"
+        );
+        assert_eq!(conflicts.len(), 1, "{pred_name}: one loser fact");
+        // Winner-coherence with the projected full-run row (storage and R-1a
+        // agree here): same fid, same tuple.
+        let projected = run(&fs, &s, pred_name, SortOrder::Forward, &[Value::Id(dup)]);
+        assert_eq!(projected.len(), 1);
+        assert_eq!(projected[0].fid, row.fid, "{pred_name}: winner coheres");
+        assert_eq!(projected[0].key.tuple, row.key.tuple);
+    }
+    let s2 = fs.snapshot();
+    assert_eq!(
+        sha_before,
+        fs.canonical_state_sha(&s2),
+        "resolution is a pure read — no store mutation"
+    );
 }
 
 // ── pair 11: the write commutativity square ────────────────────────
@@ -1651,4 +1682,156 @@ fn differential_real_base() {
     for d in &digests {
         println!("{d}");
     }
+    // The pair2 shadowed accounting IS the §2.3 conflict class on this base.
+    assert!(
+        digests
+            .iter()
+            .any(|d| d.starts_with("pair2_shadowed_duplicate_rows") && d.ends_with(": 39")),
+        "pair2 shadowed accounting must record the 39 measured conflicts: {digests:?}"
+    );
+
+    // ── P5 RE-PIN (round-011-pre X1 — THE settled differential) ──
+    use super::lsm::{SUPERSEDES_NODE_TYPE};
+    use std::collections::HashMap;
+    let s = fs.snapshot();
+    let pinned = fs.read_snapshot_of(&s);
+    // ONE O(base) enumeration pass (the measured-cheaper alternative to 503k
+    // per-subject probes), then per-subject point resolutions.
+    let versions = {
+        let store = fs.store_read();
+        store
+            .iter_node_versions_at(&pinned)
+            .expect("readable node segments")
+    };
+    let mut per_id: HashMap<u128, Vec<(String, String)>> = HashMap::new();
+    for (rec, _) in &versions {
+        if rec.node_type == SUPERSEDES_NODE_TYPE {
+            continue;
+        }
+        let gen = {
+            // The §10.1 carrier, as the R8a probe read it (string form).
+            let m: serde_json::Value =
+                serde_json::from_str(&rec.metadata).unwrap_or(serde_json::Value::Null);
+            m.get("_generation")
+                .map(|v| match v {
+                    serde_json::Value::Number(n) => n.to_string(),
+                    serde_json::Value::String(x) => x.clone(),
+                    other => other.to_string(),
+                })
+                .unwrap_or_else(|| "0".to_string())
+        };
+        per_id
+            .entry(rec.id)
+            .or_default()
+            .push((rec.node_type.clone(), gen));
+    }
+    assert_eq!(per_id.len(), 503_404, "distinct node ids (manifest 000171)");
+    let mut multi: Vec<u128> = per_id
+        .iter()
+        .filter(|(_, v)| v.len() > 1)
+        .map(|(&id, _)| id)
+        .collect();
+    multi.sort_unstable();
+    assert_eq!(multi.len(), 39, "EXACTLY the 39 measured multi-record subjects");
+
+    let node_pred = pred(&fs, "node");
+    let mut conflict_keys_total = 0usize;
+    let mut winner_global = 0usize;
+    let mut counterfactual_external = 0usize;
+    let mut minfid_global = 0usize;
+    let mut minfid_external = 0usize;
+    let mut minfid_vector: Vec<u128> = Vec::new();
+    for &subject in &multi {
+        // Tick-tie ground (R8a falsifier): generation multiset ('1','1').
+        let mut gens: Vec<&str> = per_id[&subject].iter().map(|(_, g)| g.as_str()).collect();
+        gens.sort_unstable();
+        assert_eq!(gens, vec!["1", "1"], "subject {subject:x}: both records tick 1");
+        // THE resolution: winner == GLOBAL_DEFINITION via the seeded pair at
+        // the tick-tie step; node and type agree.
+        let (row, conflicts) = fs
+            .resolve_functional(&s, node_pred, PERSPECTIVE_MAIN, subject)
+            .expect("resolves")
+            .expect("live subject");
+        let (row_ty, conflicts_ty) = fs
+            .resolve_functional(&s, pred(&fs, "type"), PERSPECTIVE_MAIN, subject)
+            .expect("resolves")
+            .expect("live subject");
+        assert_eq!(row.key.tuple[1], row_ty.key.tuple[1], "node/type agree");
+        assert_eq!(conflicts.len(), conflicts_ty.len());
+        conflict_keys_total += conflicts.len();
+        let winner_ty = match &row.key.tuple[1] {
+            Value::Str(t) => t.clone(),
+            other => panic!("winner tuple: {other:?}"),
+        };
+        if winner_ty == "GLOBAL_DEFINITION" {
+            winner_global += 1;
+        }
+        // winner == storage winner (get_node_at physics).
+        let storage_ty = {
+            let store = fs.store_read();
+            store
+                .get_node_at(&pinned, subject)
+                .expect("subject exists")
+                .node_type
+        };
+        assert_eq!(winner_ty, storage_ty, "subject {subject:x}: winner == storage winner");
+        // Counterfactual 1: EMPTY table (pure R-1) → canon-order picks
+        // haskell-local-refs → EXTERNAL_FUNCTION (the documented would-be
+        // 39/39 flip — WHY the seeded pair exists).
+        let (cf_row, _) = fs
+            .resolve_functional_with_priority(&s, node_pred, PERSPECTIVE_MAIN, subject, &[])
+            .expect("resolves")
+            .expect("live subject");
+        if cf_row.key.tuple[1] == Value::Str("EXTERNAL_FUNCTION".to_string()) {
+            counterfactual_external += 1;
+        }
+        // Counterfactual 2: min-fid-only split over the two node fids (the
+        // fid layout is the one pinned by the golden vector
+        // b0093490018cd3e0…, mod.rs fid_golden_vector test — round-011-pre E12).
+        let fids: Vec<(u128, &str)> = per_id[&subject]
+            .iter()
+            .map(|(ty, _)| {
+                (
+                    super::fid(
+                        "main",
+                        "node",
+                        &[Value::Id(subject), Value::Str(ty.clone())],
+                    )
+                    .expect("canonical"),
+                    ty.as_str(),
+                )
+            })
+            .collect();
+        let &(min_fid, min_ty) = fids.iter().min_by_key(|(f, _)| *f).expect("two");
+        minfid_vector.push(min_fid);
+        match min_ty {
+            "GLOBAL_DEFINITION" => minfid_global += 1,
+            "EXTERNAL_FUNCTION" => minfid_external += 1,
+            other => panic!("unexpected conflict type {other}"),
+        }
+    }
+    assert_eq!(winner_global, 39, "GLOBAL_DEFINITION wins 39/39 (R-1a re-pin)");
+    assert_eq!(conflict_keys_total, 39, "exactly 39 conflict/5 keys");
+    assert_eq!(
+        counterfactual_external, 39,
+        "empty-table counterfactual: EXTERNAL_FUNCTION 39/39 (R8a falsifier re-verified)"
+    );
+    // R8a: min-fid-only counterfactual splits 20/19.
+    let mut split = [minfid_global, minfid_external];
+    split.sort_unstable();
+    assert_eq!(split, [19, 20], "min-fid counterfactual split is 20/19");
+    // Pinned digest of the sorted min-fid winner vector (E12 — recorded as
+    // the ledger artifact).
+    minfid_vector.sort_unstable();
+    let mut h = blake3::Hasher::new();
+    for f in &minfid_vector {
+        h.update(&f.to_le_bytes());
+    }
+    println!("── P5 re-pin (round-011 ledger evidence) ──");
+    println!("multi_live_subjects: 39");
+    println!("winner GLOBAL_DEFINITION: {winner_global}/39 == storage winner 39/39");
+    println!("conflict5_keys: {conflict_keys_total}");
+    println!("counterfactual_empty_table EXTERNAL_FUNCTION: {counterfactual_external}/39");
+    println!("counterfactual_min_fid split: GLOBAL {minfid_global} / EXTERNAL {minfid_external}");
+    println!("min_fid_vector_blake3: {}", h.finalize().to_hex());
 }

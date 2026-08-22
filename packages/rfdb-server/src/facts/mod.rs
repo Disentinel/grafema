@@ -309,7 +309,12 @@ pub struct Capabilities {
 /// (P2 budget): `E-VAL-001`/`E-VAL-002` (canonical boundary, inherited from the
 /// P1 canon layer at the `assert_batch` write boundary — round-005-pre H4),
 /// `E-CAT-001` (catalog), `E-CAP-001` (absent capability / phase-deferred
-/// operation — round-007-pre C7/C10/C12).
+/// operation — round-007-pre C7/C10/C12), and since P5 (ledger round-011-pre
+/// E6/E7): `E-FUNC-001` (§2.3 — ONE author asserting TWO distinct values of a
+/// Functional predicate about ONE subject in ONE batch; pre-commit whole-batch
+/// abort, E-MAT-002/E-EXEC-001 class) and `E-FUNC-002` (a NEW code under this
+/// convention — `resolve_functional` called on a MultiValued predicate: a
+/// caller contract violation, never a panic, never a silent `None`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FactStoreError {
     /// The stable taxonomy code (load-bearing, I5).
@@ -515,8 +520,36 @@ pub trait FactStore: Sync {
         rows: Box<dyn Iterator<Item = FactRow> + 'a>,
     ) -> Box<dyn Iterator<Item = FactRow> + 'a>;
 
-    /// Functional-conflict resolution (§2.3). P2: `E-CAP-001`
-    /// (`functional-resolution`) — §10.4 assigns it to P5 by name.
+    /// Functional-conflict resolution (§2.3, REAL since P5 — OWNER-RULINGS
+    /// R-1a, ledger round-011-pre).
+    ///
+    /// For a `Functional` predicate `p`, perspective `persp`, snapshot `s` and
+    /// subject `S`: the candidate set is ALL LIVE assertions (§2.4 liveness —
+    /// the same killed-aid set [`FactStore::live_filter`] uses) of ALL facts
+    /// of `p` in `persp` whose c0 == `S`. Then:
+    /// - 0 candidates → `Ok(None)`;
+    /// - all live assertions on ONE fid (agreement) → `Ok(Some((row, [])))` —
+    ///   NO conflict;
+    /// - ≥2 distinct live fids → the winning ASSERTION is picked by the R-1a
+    ///   order (deviates from doc §2.3's priority→tick→fid; recorded):
+    ///   (i) max tick; (ii) the decl's `author_priority` table — optional,
+    ///   empty = skip, undecided (any unlisted author / all one rank) = skip;
+    ///   (iii) author canon-order — LESSER canonical author NAME in canon Str
+    ///   order (shortlex, `cmp_len_prefixed`), NOT plain `str::cmp`;
+    ///   (iv) min fid (numeric u128). Fid uniqueness makes the order TOTAL:
+    ///   the read side always decides and never errors — the read-side
+    ///   E-FUNC-001 arm is unreachable by construction (pinned by test).
+    ///
+    /// On EVERY multi-live resolution one `conflict/5` [`FactKey`] per LOSER
+    /// fact is RETURNED (k live facts → k−1 keys): perspective `audit`,
+    /// tuple `[Id(subject), Str(predicate_name), Id(winner_fid),
+    /// Id(loser_fid), Int(winner_tick)]` — the predicate travels as its
+    /// canonical NAME per §9.2. Emission is the return channel ONLY: the
+    /// store stays monotone, the read path pure; durable audit-perspective
+    /// materialization is converter/C7 policy (recorded deviation).
+    ///
+    /// Calling this on a `MultiValued` predicate is a caller contract
+    /// violation: typed `E-FUNC-002`.
     fn resolve_functional(
         &self,
         s: &Snapshot,

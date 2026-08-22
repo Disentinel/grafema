@@ -49,7 +49,7 @@ use super::{
 use crate::datalog::Value;
 use crate::derive::canon::push_varint;
 use crate::derive::catalog::{
-    AuthorId, CatalogPredicateId, PredicateCatalog, PredicateDecl, PredicateStats,
+    AuthorId, Cardinality, CatalogPredicateId, PredicateCatalog, PredicateDecl, PredicateStats,
 };
 use crate::derive::tag::{TagV2, TX_OPEN};
 use crate::storage_v2::compaction::CompactionConfig;
@@ -81,6 +81,21 @@ pub const SUPERSEDES_FILE: &str = "$rofl/supersedes";
 /// Metadata keys carrying the supersedes tuple on a reserved record (32-hex).
 const SUPERSEDES_META_NEW: &str = "aid_new";
 const SUPERSEDES_META_OLD: &str = "aid_old";
+
+/// The R-1a seeded `author_priority` pair (OWNER-RULINGS R-1a, ledger
+/// round-011-pre E3): exactly ONE pair on the `node`/`type` decls —
+/// haskell-runtime-globals > haskell-local-refs. Grounds: the 39 measured
+/// conflicts are prelude names whose canonical home is
+/// runtime-globals/GLOBAL_DEFINITION (W23/Q2); EXTERNAL_FUNCTION from
+/// haskell-local-refs is the retired representation, and the pair restores
+/// zero behavior flip vs today's storage winner on all 39.
+pub const SEEDED_PRIORITY_HIGH: &str = "haskell-runtime-globals";
+/// The lower-priority member of the R-1a seeded pair.
+pub const SEEDED_PRIORITY_LOW: &str = "haskell-local-refs";
+
+/// The audit perspective carrying `conflict/5` emissions (§2.3; interned at
+/// construction, round-011-pre E4).
+pub const PERSPECTIVE_AUDIT_NAME: &str = "audit";
 
 /// Metadata-blob keys shadowed by the record COLUMNS (ledger round-008 R2): a
 /// legacy blob may carry `name`/`file`/`semantic_id` (the JS reader strips them
@@ -159,6 +174,8 @@ pub struct LsmFactStore {
     /// Returned for ids declared after construction (zeroed, same sentinel).
     zero_stats: PredicateStats,
     base: BaseIds,
+    /// The audit perspective (P5, E4): `conflict/5` FactKeys are emitted here.
+    audit_persp: PerspectiveId,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -170,6 +187,8 @@ struct BaseIds {
     attr: CatalogPredicateId,
     /// The reserved supersedes/2 predicate (P4, D13 — declared at construction).
     supersedes: CatalogPredicateId,
+    /// The reserved conflict/5 predicate (P5, E4 — declared at construction).
+    conflict: CatalogPredicateId,
 }
 
 impl LsmFactStore {
@@ -206,6 +225,28 @@ impl LsmFactStore {
         catalog
             .declare(PredicateCatalog::supersedes_decl())
             .expect("fresh catalog accepts supersedes");
+        // P5 (round-011-pre E3/E4, same ownership precedent): the facts
+        // backend interns the R-1a seeded pair into ITS author table (AuthorId
+        // is store-interner-local — with_base_relations has no author table
+        // and stays plan-golden-pinned), amends the base node/type decls to
+        // Functional with that pair, and declares the reserved conflict/5
+        // predicate plus the audit perspective.
+        let mut authors = AuthorTable::default();
+        let seeded_pair: Box<[AuthorId]> = Box::new([
+            authors.intern(SEEDED_PRIORITY_HIGH),
+            authors.intern(SEEDED_PRIORITY_LOW),
+        ]);
+        catalog
+            .amend_functional("node", seeded_pair.clone())
+            .expect("base node decl is amendable");
+        catalog
+            .amend_functional("type", seeded_pair)
+            .expect("base type decl is amendable");
+        catalog
+            .declare(PredicateCatalog::conflict_decl())
+            .expect("fresh catalog accepts conflict");
+        let mut perspectives = PerspectiveTable::new();
+        let audit_persp = perspectives.intern(PERSPECTIVE_AUDIT_NAME);
         let base = BaseIds {
             node: catalog.get("node").expect("base").id,
             ty: catalog.get("type").expect("base").id,
@@ -213,16 +254,18 @@ impl LsmFactStore {
             incoming: catalog.get("incoming").expect("base").id,
             attr: catalog.get("attr").expect("base").id,
             supersedes: catalog.get("supersedes").expect("declared above").id,
+            conflict: catalog.get("conflict").expect("declared above").id,
         };
         Self {
             store: RwLock::new(store),
             manifest: Mutex::new(manifest),
             catalog,
-            perspectives: RwLock::new(PerspectiveTable::new()),
-            authors: RwLock::new(AuthorTable::default()),
+            perspectives: RwLock::new(perspectives),
+            authors: RwLock::new(authors),
             stats: OnceLock::new(),
             zero_stats: PredicateStats::default(),
             base,
+            audit_persp,
         }
     }
 
@@ -640,7 +683,11 @@ impl LsmFactStore {
     /// One live node-record candidate per assertion (D8): every record version
     /// of an id, newest-first, deduped to
     /// - at most ONE v2 candidate per id (the winner — the record model), and
-    /// - one v3 candidate per distinct (author, tick).
+    /// - one v3 candidate per distinct aid identity (value, author, tick) —
+    ///   the VALUE column is part of the key since P5 (round-011-pre E8a):
+    ///   the aid is (fid, author, tick) and the fid contains the value, so
+    ///   two same-(author, tick) records with different node_type are two
+    ///   DISTINCT assertions, both projected.
     fn node_candidates(
         &self,
         store: &MultiShardStore,
@@ -649,12 +696,14 @@ impl LsmFactStore {
         let versions = store
             .iter_node_versions_at(snap)
             .expect("readable node segments");
-        let mut seen: HashMap<u128, (bool, HashSet<(Option<String>, u64)>)> = HashMap::new();
+        #[allow(clippy::type_complexity)]
+        let mut seen: HashMap<u128, (bool, HashSet<(String, Option<String>, u64)>)> =
+            HashMap::new();
         let mut out = Vec::new();
         for (rec, fields) in versions {
             let entry = seen.entry(rec.id).or_default();
             let (source, generation) = provenance(&rec.metadata);
-            let key = (source, generation.unwrap_or(0));
+            let key = (rec.node_type.clone(), source, generation.unwrap_or(0));
             match &fields {
                 None => {
                     // v2 record: winner-collapse — only the NEWEST v2 version
@@ -1206,18 +1255,21 @@ impl FactStore for LsmFactStore {
         }))
     }
 
+    /// Functional-conflict resolution (§2.3, REAL since P5 — OWNER-RULINGS
+    /// R-1a order, ledger round-011-pre E1/E5): candidates are ALL LIVE
+    /// assertions of ALL facts of `p` whose c0 == `subject`, enumerated
+    /// through the pre-dedup multi-candidate point read; the winner is picked
+    /// by max tick → author_priority table → author canon-order → min fid
+    /// (total — always decides, never errors); one conflict/5 FactKey per
+    /// loser fact is RETURNED (never written — the store stays monotone).
     fn resolve_functional(
         &self,
-        _s: &Snapshot,
-        _p: CatalogPredicateId,
-        _persp: PerspectiveId,
-        _subject: u128,
+        s: &Snapshot,
+        p: CatalogPredicateId,
+        persp: PerspectiveId,
+        subject: u128,
     ) -> FactResult<Option<(FactRow, Vec<FactKey>)>> {
-        // §10.4 assigns Functional resolution (+ conflict/5, E-FUNC-001) to P5.
-        Err(FactStoreError::cap(
-            "functional-resolution",
-            "Functional cardinality resolution is phase P5 (§10.4); P2 must not fake it",
-        ))
+        self.resolve_functional_with(s, p, persp, subject, None)
     }
 
     fn assert_batch(&self, b: AssertBatch) -> FactResult<CommitToken> {
@@ -1246,10 +1298,37 @@ impl FactStore for LsmFactStore {
         // Lazily-built aid → tick map of the pre-commit snapshot (only when a
         // Supersedes group is present — the boundary must resolve victims).
         let mut ticks: Option<HashMap<u128, (u64, AuthorId)>> = None;
+        // E-FUNC-001 gate (§2.3 exact firing set, round-011-pre E6): ONE
+        // author asserting TWO DISTINCT values of the Functional node/type
+        // predicates about ONE subject within ONE batch is a producer bug —
+        // pre-commit whole-batch abort (E-MAT-002/E-EXEC-001 class).
+        // Identical-tuple re-assert (same fid) is idempotent, NOT a firing;
+        // the same shape across DIFFERENT batches is legal (read-time
+        // resolution). subject → asserted node_type of this batch:
+        let mut functional_values: HashMap<u128, String> = HashMap::new();
         for group in &b.groups {
             match group {
                 FactGroup::Node { facts } => {
-                    nodes.push(self.build_node_record(facts, &author_name, b.tick)?)
+                    let rec = self.build_node_record(facts, &author_name, b.tick)?;
+                    match functional_values.get(&rec.id) {
+                        Some(prev) if prev != &rec.node_type => {
+                            return Err(FactStoreError {
+                                code: "E-FUNC-001",
+                                detail: format!(
+                                    "intra-batch double assertion of the Functional node/type \
+                                     value for subject {:x}: '{prev}' vs '{}' by one author \
+                                     ('{author_name}') in one batch (§2.3 — producer bug; the \
+                                     WHOLE batch is aborted pre-commit, store unchanged)",
+                                    rec.id, rec.node_type
+                                ),
+                            })
+                        }
+                        Some(_) => {}
+                        None => {
+                            functional_values.insert(rec.id, rec.node_type.clone());
+                        }
+                    }
+                    nodes.push(rec)
                 }
                 FactGroup::Edge { fact } => {
                     edges.push(self.build_edge_record(fact, &author_name, b.tick)?)
@@ -1935,6 +2014,202 @@ impl LsmFactStore {
         self.supersedes_record_of(aid_new, aid_old, author_name, tick)
     }
 
+    /// Test seam (round-011-pre E11): run the resolution with an OVERRIDDEN
+    /// priority table (`Some(&[])` = pure R-1: tick → canon-order → fid)
+    /// without touching the production decl — the empty-table degeneration
+    /// and the real-base counterfactual legs run through this.
+    #[cfg(test)]
+    pub(crate) fn resolve_functional_with_priority(
+        &self,
+        s: &Snapshot,
+        p: CatalogPredicateId,
+        persp: PerspectiveId,
+        subject: u128,
+        priority: &[AuthorId],
+    ) -> FactResult<Option<(FactRow, Vec<FactKey>)>> {
+        self.resolve_functional_with(s, p, persp, subject, Some(priority))
+    }
+
+    /// The R-1a resolution core (round-011-pre E1/E5). Pure function of
+    /// (snapshot live set, catalog decl / `priority_override`, author names):
+    /// independent of shard layout, segment order, insertion order and
+    /// assertion-vector order.
+    fn resolve_functional_with(
+        &self,
+        s: &Snapshot,
+        p: CatalogPredicateId,
+        persp: PerspectiveId,
+        subject: u128,
+        priority_override: Option<&[AuthorId]>,
+    ) -> FactResult<Option<(FactRow, Vec<FactKey>)>> {
+        let decl = self.read_decl(p)?;
+        if decl.cardinality != Cardinality::Functional {
+            // E7: a caller contract violation, not a capability gap — the
+            // predicate's declared cardinality says its subjects are
+            // multi-valued, so "the one live value" does not exist as a
+            // question (typed, never a panic, never a silent None).
+            return Err(FactStoreError {
+                code: "E-FUNC-002",
+                detail: format!(
+                    "resolve_functional on MultiValued predicate '{}' — cardinality is \
+                     declared in the catalog (§2.3); only Functional predicates resolve",
+                    decl.name
+                ),
+            });
+        }
+        let pred_name = decl.name.clone();
+        let priority: Vec<AuthorId> = priority_override
+            .map(<[AuthorId]>::to_vec)
+            .unwrap_or_else(|| decl.author_priority.to_vec());
+        let payload = self.payload(s)?;
+        // §5.4a exact-match: a perspective with no facts is a valid EMPTY
+        // answer (only main has facts pre-P6), checked after decl validation
+        // so errors stay typed regardless of perspective.
+        if persp != PERSPECTIVE_MAIN {
+            return Ok(None);
+        }
+        // Killed set BEFORE our own store lock (it takes its own short read
+        // lock; std RwLock re-entrant reads can deadlock against a queued
+        // writer — the canonical_state_sha precedent).
+        let killed = self.superseded_set(payload);
+        let store = self.store.read().unwrap();
+        let versions = store
+            .node_versions_of_at(&payload.snap, subject)
+            .map_err(store_err)?;
+        drop(store);
+        // Candidate dedup by aid identity (value, author-carrier, tick) —
+        // newest-first input, first wins (same-aid re-write: M1 is P7).
+        let mut seen: HashSet<(String, Option<String>, u64)> = HashSet::new();
+        let mut rows: Vec<FactRow> = Vec::new();
+        for (rec, fields) in versions {
+            if rec.node_type == SUPERSEDES_NODE_TYPE {
+                continue; // reserved records never project as node/type facts
+            }
+            let (source, generation) = provenance(&rec.metadata);
+            if !seen.insert((rec.node_type.clone(), source, generation.unwrap_or(0))) {
+                continue;
+            }
+            rows.push(self.node_row_with(&pred_name, &rec, fields.as_ref()));
+        }
+        // fid-major grouping + §2.4 liveness: resolution reads LIVE
+        // assertions only (supersession interplay, E9).
+        let mut rows = self.group_rows(rows);
+        rows.retain_mut(|row| {
+            self.retain_live(&mut row.assertions, killed);
+            !row.assertions.is_empty()
+        });
+        // Deterministic row order regardless of segment order.
+        rows.sort_by_key(|row| row.fid);
+        if rows.is_empty() {
+            return Ok(None);
+        }
+        if rows.len() == 1 {
+            // Agreement: all live assertions on ONE fid — NO conflict.
+            let row = rows.pop().expect("one row");
+            return Ok(Some((row, Vec::new())));
+        }
+
+        // ≥2 distinct live fids: the R-1a total order as successive filters
+        // over the live candidate ASSERTIONS (E1 — a pairwise mixed
+        // listed/unlisted comparator would not be transitive).
+        struct Cand {
+            row: usize,
+            tick: u64,
+            author: AuthorId,
+            fid: u128,
+        }
+        let mut cands: Vec<Cand> = rows
+            .iter()
+            .enumerate()
+            .flat_map(|(i, row)| {
+                row.assertions.iter().map(move |a| Cand {
+                    row: i,
+                    tick: a.tick,
+                    author: a.author,
+                    fid: a.fid,
+                })
+            })
+            .collect();
+        // F1: max tick (freshness dominates — R-1a ground (d)).
+        let max_tick = cands.iter().map(|c| c.tick).max().expect("non-empty");
+        cands.retain(|c| c.tick == max_tick);
+        // F2: the priority table — applies IFF every survivor's author is
+        // listed AND not all at one rank; otherwise skipped (the doc's
+        // partial order: unlisted-vs-listed / both-unlisted / same-author =
+        // undecided; no "listed beats everyone" surprise).
+        if cands.len() > 1 && !priority.is_empty() {
+            let ranks: Vec<Option<usize>> = cands
+                .iter()
+                .map(|c| priority.iter().position(|&x| x == c.author))
+                .collect();
+            if ranks.iter().all(Option::is_some) {
+                let ranks: Vec<usize> = ranks.into_iter().map(Option::unwrap).collect();
+                let min = *ranks.iter().min().expect("non-empty");
+                let max = *ranks.iter().max().expect("non-empty");
+                if min != max {
+                    let mut keep = ranks.iter().map(|&r| r == min);
+                    cands.retain(|_| keep.next().expect("aligned"));
+                }
+            }
+        }
+        // F3: author canon-order — LESSER canonical NAME in canon Str order
+        // wins (shortlex cmp_len_prefixed via Ord-for-Value, NOT plain
+        // str::cmp).
+        if cands.len() > 1 {
+            let authors = self.authors.read().unwrap();
+            let canon_name = |a: AuthorId| -> Value {
+                Value::Str(
+                    authors
+                        .name(a)
+                        .expect("interned during projection")
+                        .to_string(),
+                )
+            };
+            let min_name = cands
+                .iter()
+                .map(|c| canon_name(c.author))
+                .min()
+                .expect("non-empty");
+            cands.retain(|c| canon_name(c.author) == min_name);
+        }
+        // F4: min fid — total by construction (survivors share (tick,
+        // author); same-(fid, author, tick) is one aid, so fids are
+        // distinct). The read side ALWAYS decides: the read-side E-FUNC-001
+        // arm is unreachable (round-011-pre E1, pinned by test).
+        let winner = cands
+            .iter()
+            .min_by_key(|c| c.fid)
+            .expect("non-empty after filters");
+        let winner_row = winner.row;
+        let winner_fid = rows[winner_row].fid;
+        let winner_tick = winner.tick;
+
+        // DEV-1 superset emission: one conflict/5 FactKey per LOSER FACT on
+        // EVERY multi-live resolution (k live facts → k−1 keys), loser-fid
+        // ascending for determinism. Tick column = the WINNER's tick (DEV-4).
+        let winner_tick_int = i64::try_from(winner_tick)
+            .expect("winner tick fits the §2.3 Int conflict column");
+        let conflicts: Vec<FactKey> = rows
+            .iter()
+            .enumerate()
+            .filter(|&(i, _)| i != winner_row)
+            .map(|(_, row)| FactKey {
+                perspective: self.audit_persp,
+                predicate: self.base.conflict,
+                tuple: vec![
+                    Value::Id(subject),
+                    Value::Str(pred_name.clone()),
+                    Value::Id(winner_fid),
+                    Value::Id(row.fid),
+                    Value::Int(winner_tick_int),
+                ]
+                .into(),
+            })
+            .collect();
+        let winner_row = rows.swap_remove(winner_row);
+        Ok(Some((winner_row, conflicts)))
+    }
+
     /// The facts commit path (D4): additive derived commit, v3 segments,
     /// provenance.generation = tick (D5), Bool tag, TX_OPEN (D6 — P4 writes no
     /// cache).
@@ -2260,19 +2535,28 @@ mod tests {
         fs.supersede(scope, 100).expect("monotone tick supersedes");
     }
 
+    /// P5 flip (round-011-pre E7, the round's ONLY pre-existing expectation
+    /// change): the E-CAP-001("functional-resolution") stub ceases to exist —
+    /// resolve_functional on the Functional `type` predicate now RESOLVES
+    /// (single-record subject 11 → agreement, no conflict), and calling it on
+    /// a MultiValued predicate is the typed E-FUNC-002 contract violation
+    /// (never a panic, never a silent None) — see the P5 battery below.
     #[test]
-    fn resolve_functional_is_e_cap_001_functional_resolution() {
+    fn resolve_functional_flipped_from_e_cap_001_to_real() {
         let fs = fixture_store();
         let s = fs.snapshot();
-        let err = fs
+        let (row, conflicts) = fs
             .resolve_functional(&s, base_id(&fs, "type"), PERSPECTIVE_MAIN, 11)
-            .unwrap_err();
-        assert_eq!(err.code, "E-CAP-001");
-        assert!(
-            err.detail.contains("functional-resolution"),
-            "{}",
-            err.detail
-        );
+            .expect("Functional predicate resolves")
+            .expect("subject 11 exists");
+        assert_eq!(row.key.tuple[1], Value::Str("FUNCTION".into()));
+        assert!(conflicts.is_empty(), "single-fact subject: no conflict");
+        for name in ["edge", "incoming", "attr", "supersedes"] {
+            let err = fs
+                .resolve_functional(&s, base_id(&fs, name), PERSPECTIVE_MAIN, 11)
+                .unwrap_err();
+            assert_eq!(err.code, "E-FUNC-002", "{name}: {}", err.detail);
+        }
     }
 
     #[test]
@@ -3437,4 +3721,498 @@ mod tests {
         assert_eq!(node.live_asserts, 1);
     }
 
+    // ── P5 Functional battery (ledger round-011-pre E1–E11, X2–X9) ──
+
+    /// One node group asserting (id, ty) by `author` at `tick`.
+    fn assert_typed(fs: &LsmFactStore, author: &str, tick: u64, id: u128, ty: &str) {
+        assert_nodes(fs, author, tick, vec![node_group(fs, id, ty, &[])]);
+    }
+
+    fn resolve(
+        fs: &LsmFactStore,
+        s: &Snapshot,
+        pred: &str,
+        subject: u128,
+    ) -> Option<(FactRow, Vec<FactKey>)> {
+        fs.resolve_functional(s, base_id(fs, pred), PERSPECTIVE_MAIN, subject)
+            .expect("Functional resolution never errors on the read path")
+    }
+
+    fn winner_type(row: &FactRow) -> String {
+        match &row.key.tuple[1] {
+            Value::Str(t) => t.clone(),
+            other => panic!("node tuple value: {other:?}"),
+        }
+    }
+
+    /// E3/E4 (X9): from_parts amends node/type to Functional with the seeded
+    /// pair; conflict/5 + audit perspective declared at construction; the
+    /// conflict relation reads as an honest EMPTY relation (DEV-3 — no
+    /// durable materialization).
+    #[test]
+    fn from_parts_seeds_functional_decls_conflict_and_audit() {
+        let fs = fixture_store();
+        let high = fs.intern_author(SEEDED_PRIORITY_HIGH);
+        let low = fs.intern_author(SEEDED_PRIORITY_LOW);
+        for name in ["node", "type"] {
+            let decl = fs.catalog().get(name).expect("base");
+            assert_eq!(decl.cardinality, Cardinality::Functional, "{name}");
+            assert_eq!(
+                decl.author_priority,
+                vec![high, low].into_boxed_slice(),
+                "{name}: exactly the ONE seeded pair (R-1a)"
+            );
+        }
+        for name in ["edge", "incoming", "attr", "supersedes"] {
+            let decl = fs.catalog().get(name).expect("declared");
+            assert_eq!(decl.cardinality, Cardinality::MultiValued, "{name}");
+            assert!(decl.author_priority.is_empty(), "{name}");
+        }
+        let conflict = fs.catalog().get("conflict").expect("declared at construction");
+        assert_eq!(conflict.arity, 5);
+        assert_eq!(conflict.cardinality, Cardinality::MultiValued);
+        // Audit perspective interned at construction (idempotent re-intern
+        // returns the same id — and it is NOT main).
+        let audit = fs.intern_perspective(PERSPECTIVE_AUDIT_NAME);
+        assert_ne!(audit, PERSPECTIVE_MAIN);
+        assert_eq!(audit, fs.audit_persp);
+        // The conflict relation is an honest empty relation on read.
+        let s = fs.snapshot();
+        assert!(collect(fs.sorted_run(&s, conflict.id, PERSPECTIVE_MAIN, SortOrder::Forward))
+            .is_empty());
+    }
+
+    /// X3-i: max tick dominates the priority table — a NEWER tick from the
+    /// LOWER-priority author wins; the conflict is still emitted (DEV-1
+    /// superset: emission also when tick decides).
+    #[test]
+    fn resolve_step_i_max_tick_dominates_priority_table() {
+        let fs = LsmFactStore::ephemeral(2);
+        assert_typed(&fs, SEEDED_PRIORITY_HIGH, 1, 30, "GLOBAL_DEFINITION");
+        assert_typed(&fs, SEEDED_PRIORITY_LOW, 2, 30, "EXTERNAL_FUNCTION");
+        let s = fs.snapshot();
+        let (row, conflicts) = resolve(&fs, &s, "node", 30).expect("two live facts");
+        assert_eq!(
+            winner_type(&row),
+            "EXTERNAL_FUNCTION",
+            "tick 2 beats the higher-priority author's tick 1 (freshness first)"
+        );
+        assert_eq!(conflicts.len(), 1, "superset emission: tick decided, still emitted");
+    }
+
+    /// X3-ii: the seeded table decides EXACTLY the tick-tie, and AGAINST
+    /// canon-order (which would pick the shorter haskell-local-refs name);
+    /// empty-table counterfactual (pure R-1) flips the winner — WHY the pair
+    /// exists. "node" and "type" agree.
+    #[test]
+    fn resolve_step_ii_priority_decides_tick_tie_against_canon() {
+        let fs = LsmFactStore::ephemeral(2);
+        assert_typed(&fs, SEEDED_PRIORITY_HIGH, 1, 31, "GLOBAL_DEFINITION");
+        assert_typed(&fs, SEEDED_PRIORITY_LOW, 1, 31, "EXTERNAL_FUNCTION");
+        let s = fs.snapshot();
+        for pred in ["node", "type"] {
+            let (row, conflicts) = resolve(&fs, &s, pred, 31).expect("two live facts");
+            assert_eq!(
+                winner_type(&row),
+                "GLOBAL_DEFINITION",
+                "{pred}: the seeded pair decides the tie (R-1a)"
+            );
+            assert_eq!(conflicts.len(), 1);
+        }
+        // Empty-table counterfactual: canon shortlex picks haskell-local-refs
+        // (len 18 < 23) — the R-1a falsifier's 39/39 would-be flip.
+        let (row, _) = fs
+            .resolve_functional_with_priority(&s, base_id(&fs, "node"), PERSPECTIVE_MAIN, 31, &[])
+            .expect("resolves")
+            .expect("two live facts");
+        assert_eq!(
+            winner_type(&row),
+            "EXTERNAL_FUNCTION",
+            "pure R-1 (empty table) degenerates to tick → canon → fid"
+        );
+    }
+
+    /// X3-iii: unlisted-vs-listed is UNDECIDED by the table (no "listed beats
+    /// everyone") — falls through to canon-order, where the short unlisted
+    /// name beats the listed haskell-runtime-globals.
+    #[test]
+    fn resolve_step_iii_unlisted_vs_listed_falls_to_canon() {
+        let fs = LsmFactStore::ephemeral(2);
+        assert_typed(&fs, SEEDED_PRIORITY_HIGH, 1, 32, "GLOBAL_DEFINITION");
+        assert_typed(&fs, "aa", 1, 32, "OTHER_TYPE");
+        let s = fs.snapshot();
+        let (row, conflicts) = resolve(&fs, &s, "node", 32).expect("two live facts");
+        assert_eq!(
+            winner_type(&row),
+            "OTHER_TYPE",
+            "table skipped (one author unlisted); canon: 'aa' < 'haskell-runtime-globals'"
+        );
+        assert_eq!(conflicts.len(), 1);
+    }
+
+    /// X3-iv: author canon-order is SHORTLEX (canon Str order,
+    /// cmp_len_prefixed), not plain lex: 'zz' beats 'aaa'.
+    #[test]
+    fn resolve_step_iv_canon_shortlex_zz_beats_aaa() {
+        let fs = LsmFactStore::ephemeral(2);
+        assert_typed(&fs, "aaa", 1, 33, "TYPE_FROM_AAA");
+        assert_typed(&fs, "zz", 1, 33, "TYPE_FROM_ZZ");
+        let s = fs.snapshot();
+        let (row, _) = resolve(&fs, &s, "node", 33).expect("two live facts");
+        assert_eq!(
+            winner_type(&row),
+            "TYPE_FROM_ZZ",
+            "shortlex: len 2 < len 3 — plain str::cmp would pick 'aaa'"
+        );
+    }
+
+    /// X3-v (and the E6 cross-batch arm of X5): the SAME author asserting two
+    /// values across TWO batches at the same tick is NOT E-FUNC-001 — both
+    /// live, decided at the final min-fid step.
+    #[test]
+    fn resolve_step_v_min_fid_same_author_same_tick_cross_batch() {
+        let fs = LsmFactStore::ephemeral(2);
+        assert_typed(&fs, "alice", 1, 34, "TYPE_ONE");
+        assert_typed(&fs, "alice", 1, 34, "TYPE_TWO"); // separate batch: legal
+        let s = fs.snapshot();
+        let (row, conflicts) = resolve(&fs, &s, "node", 34).expect("two live facts");
+        let fid_of = |ty: &str| {
+            super::super::fid(
+                "main",
+                "node",
+                &[Value::Id(34), Value::Str(ty.to_string())],
+            )
+            .unwrap()
+        };
+        let expect = if fid_of("TYPE_ONE") < fid_of("TYPE_TWO") {
+            "TYPE_ONE"
+        } else {
+            "TYPE_TWO"
+        };
+        assert_eq!(
+            winner_type(&row),
+            expect,
+            "tick tie → same-author table skip → canon equal skip → min u128 fid"
+        );
+        assert_eq!(row.fid, fid_of("TYPE_ONE").min(fid_of("TYPE_TWO")));
+        assert_eq!(conflicts.len(), 1);
+    }
+
+    /// X2: totality + determinism — the resolution is a pure function of the
+    /// live set: permuting insertion order and shard count changes NOTHING
+    /// (winner tuple, winner assertion, loser fid set); it always decides
+    /// (Some, no error) — the read-side E-FUNC-001 arm is unreachable.
+    #[test]
+    fn resolve_total_and_deterministic_under_permutation() {
+        let writes: [(&str, u64, &str); 3] = [
+            (SEEDED_PRIORITY_HIGH, 1, "GLOBAL_DEFINITION"),
+            (SEEDED_PRIORITY_LOW, 1, "EXTERNAL_FUNCTION"),
+            ("zz", 1, "ZZ_TYPE"),
+        ];
+        let mut outcomes: Vec<(String, String, u64, Vec<u128>)> = Vec::new();
+        for shards in [1u16, 2, 4] {
+            // All 6 insertion orders of the three writes.
+            for perm in [
+                [0usize, 1, 2],
+                [0, 2, 1],
+                [1, 0, 2],
+                [1, 2, 0],
+                [2, 0, 1],
+                [2, 1, 0],
+            ] {
+                let fs = LsmFactStore::ephemeral(shards);
+                for &i in &perm {
+                    let (author, tick, ty) = writes[i];
+                    assert_typed(&fs, author, tick, 35, ty);
+                }
+                let s = fs.snapshot();
+                let (row, conflicts) =
+                    resolve(&fs, &s, "node", 35).expect("three live facts always decide");
+                let a = &row.assertions[0];
+                let mut losers: Vec<u128> = conflicts
+                    .iter()
+                    .map(|k| match &k.tuple[3] {
+                        Value::Id(f) => *f,
+                        other => panic!("loser fid column: {other:?}"),
+                    })
+                    .collect();
+                losers.sort_unstable();
+                outcomes.push((
+                    winner_type(&row),
+                    fs.author_name(a.author).expect("interned"),
+                    a.tick,
+                    losers,
+                ));
+            }
+        }
+        for o in &outcomes[1..] {
+            assert_eq!(o, &outcomes[0], "layout/order/shard-invariant resolution");
+        }
+        // The tick-tie among {listed, listed, unlisted}: the table is skipped
+        // (E1 F2 — 'zz' unlisted), canon picks 'zz' (shortest name).
+        assert_eq!(outcomes[0].0, "ZZ_TYPE");
+        assert_eq!(outcomes[0].3.len(), 2, "3 live facts → 2 conflict keys");
+    }
+
+    /// X4: conflict/5 emission — key shape [Id, Str(name), Id, Id, Int] in
+    /// the audit perspective; k−1 keys; agreement (two authors, ONE fid) →
+    /// NO conflict.
+    #[test]
+    fn conflict_emission_shape_agreement_and_counts() {
+        let fs = LsmFactStore::ephemeral(2);
+        // Agreement: same tuple, two authors → one fid, no conflict.
+        assert_typed(&fs, "alice", 1, 36, "FUNCTION");
+        assert_typed(&fs, "bob", 2, 36, "FUNCTION");
+        let s = fs.snapshot();
+        let (row, conflicts) = resolve(&fs, &s, "node", 36).expect("live");
+        assert_eq!(row.assertions.len(), 2, "both authors' assertions on the one fid");
+        assert!(conflicts.is_empty(), "agreement is NOT a conflict");
+        // Multi-live: three types → two loser keys, canonical shape.
+        let fs = LsmFactStore::ephemeral(2);
+        assert_typed(&fs, "alice", 3, 37, "T_A");
+        assert_typed(&fs, "bob", 2, 37, "T_B");
+        assert_typed(&fs, "carol", 1, 37, "T_C");
+        let s = fs.snapshot();
+        let (row, conflicts) = resolve(&fs, &s, "node", 37).expect("live");
+        assert_eq!(winner_type(&row), "T_A", "max tick decides");
+        assert_eq!(conflicts.len(), 2, "k live facts → k−1 conflict keys");
+        let audit = fs.intern_perspective(PERSPECTIVE_AUDIT_NAME);
+        let conflict_pred = fs.catalog().get("conflict").unwrap().id;
+        let mut seen_losers: Vec<u128> = Vec::new();
+        for key in &conflicts {
+            assert_eq!(key.perspective, audit, "emitted into the audit perspective");
+            assert_eq!(key.predicate, conflict_pred);
+            match &key.tuple[..] {
+                [Value::Id(subject), Value::Str(pred), Value::Id(winner), Value::Id(loser), Value::Int(tick)] =>
+                {
+                    assert_eq!(*subject, 37);
+                    assert_eq!(pred, "node", "predicate travels as its canonical NAME (§9.2)");
+                    assert_eq!(*winner, row.fid);
+                    assert_ne!(*loser, row.fid);
+                    assert_eq!(*tick, 3, "Tick column = the WINNER's tick (DEV-4)");
+                    seen_losers.push(*loser);
+                }
+                other => panic!("conflict/5 tuple shape: {other:?}"),
+            }
+        }
+        seen_losers.dedup();
+        assert_eq!(seen_losers.len(), 2, "one key per DISTINCT loser fact");
+    }
+
+    /// X5: the E-FUNC-001 intra-batch write gate — two Node groups, same
+    /// subject, different node_type, ONE batch → whole batch aborts
+    /// pre-commit, store byte-identical; identical-tuple re-assert in one
+    /// batch is idempotent (NOT a firing).
+    #[test]
+    fn e_func_001_intra_batch_double_assert_aborts_whole_batch() {
+        let fs = fixture_store();
+        let s = fs.snapshot();
+        let sha_before = fs.canonical_state_sha(&s);
+        let count_before =
+            collect(fs.sorted_run(&s, base_id(&fs, "node"), PERSPECTIVE_MAIN, SortOrder::Forward))
+                .len();
+        // A good group FIRST — the WHOLE batch must abort, not just the pair.
+        let err = fs
+            .assert_batch(batch(
+                &fs,
+                vec![
+                    node_group(&fs, 900, "FUNCTION", &[]),
+                    node_group(&fs, 901, "TYPE_ONE", &[]),
+                    node_group(&fs, 901, "TYPE_TWO", &[]),
+                ],
+            ))
+            .unwrap_err();
+        assert_eq!(err.code, "E-FUNC-001", "{}", err.detail);
+        let s = fs.snapshot();
+        assert_eq!(
+            sha_before,
+            fs.canonical_state_sha(&s),
+            "aborted batch leaves the store byte-identical"
+        );
+        assert_eq!(
+            collect(fs.sorted_run(&s, base_id(&fs, "node"), PERSPECTIVE_MAIN, SortOrder::Forward))
+                .len(),
+            count_before,
+            "no partial write"
+        );
+        // Identical tuple twice in one batch: idempotent, no error.
+        fs.assert_batch(batch(
+            &fs,
+            vec![
+                node_group(&fs, 902, "FUNCTION", &[]),
+                node_group(&fs, 902, "FUNCTION", &[]),
+            ],
+        ))
+        .expect("identical re-assert is not a firing");
+    }
+
+    /// X7 (E9): supersession interplay, both directions — and resolution
+    /// itself never writes (sha byte-identical across resolve calls).
+    #[test]
+    fn resolve_supersession_interplay_both_directions() {
+        let fs = LsmFactStore::ephemeral(2);
+        assert_typed(&fs, SEEDED_PRIORITY_HIGH, 1, 38, "GLOBAL_DEFINITION");
+        assert_typed(&fs, SEEDED_PRIORITY_LOW, 1, 38, "EXTERNAL_FUNCTION");
+        let s = fs.snapshot();
+        let sha_before = fs.canonical_state_sha(&s);
+        let (row, conflicts) = resolve(&fs, &s, "node", 38).expect("live");
+        assert_eq!(winner_type(&row), "GLOBAL_DEFINITION");
+        assert_eq!(conflicts.len(), 1);
+        // Resolution reads, never writes: sha unchanged.
+        assert_eq!(sha_before, fs.canonical_state_sha(&s));
+        // Direction 1: supersede the LOSER's assertions → single-fact subject,
+        // no conflict emitted.
+        fs.supersede(scope_all(&fs, SEEDED_PRIORITY_LOW), 10)
+            .expect("supersede loser");
+        let s = fs.snapshot();
+        let (row, conflicts) = resolve(&fs, &s, "node", 38).expect("winner lives");
+        assert_eq!(winner_type(&row), "GLOBAL_DEFINITION");
+        assert!(conflicts.is_empty(), "single live fact → no conflict");
+        // Direction 2 (fresh store): supersede the WINNER's assertions → the
+        // former loser is now the sole winning fact.
+        let fs = LsmFactStore::ephemeral(2);
+        assert_typed(&fs, SEEDED_PRIORITY_HIGH, 1, 38, "GLOBAL_DEFINITION");
+        assert_typed(&fs, SEEDED_PRIORITY_LOW, 1, 38, "EXTERNAL_FUNCTION");
+        fs.supersede(scope_all(&fs, SEEDED_PRIORITY_HIGH), 10)
+            .expect("supersede winner");
+        let s = fs.snapshot();
+        let (row, conflicts) = resolve(&fs, &s, "node", 38).expect("former loser lives");
+        assert_eq!(winner_type(&row), "EXTERNAL_FUNCTION");
+        assert!(conflicts.is_empty());
+        // Superseding BOTH → no live fact at all.
+        fs.supersede(scope_all(&fs, SEEDED_PRIORITY_LOW), 11)
+            .expect("supersede the rest");
+        let s = fs.snapshot();
+        assert!(resolve(&fs, &s, "node", 38).is_none(), "0 candidates → None");
+    }
+
+    /// E10 (X9 divergence honesty): winner == storage winner is a MEASURED
+    /// real-base property, not a theorem — a LOWER-tick record written LATER
+    /// splits the two: resolve_functional picks max tick, get_node_at picks
+    /// the newest segment. Legacy physics unchanged until P6.
+    #[test]
+    fn resolve_divergence_from_get_node_at_pinned() {
+        let fs = LsmFactStore::ephemeral(2);
+        fs.commit_legacy(
+            vec![node_rec(
+                39,
+                "HIGH_TICK_TYPE",
+                "n",
+                "a.js",
+                &meta_json(Some("alice"), Some(5u64.into())),
+            )],
+            vec![],
+            &[],
+        );
+        fs.commit_legacy(
+            vec![node_rec(
+                39,
+                "LOW_TICK_TYPE",
+                "n",
+                "a.js",
+                &meta_json(Some("bob"), Some(3u64.into())),
+            )],
+            vec![],
+            &[],
+        );
+        let s = fs.snapshot();
+        let (row, conflicts) = resolve(&fs, &s, "node", 39).expect("two candidates");
+        assert_eq!(winner_type(&row), "HIGH_TICK_TYPE", "resolve: max tick");
+        assert_eq!(conflicts.len(), 1);
+        let pinned = fs.read_snapshot_of(&s);
+        let store = fs.store_read();
+        let storage_winner = store.get_node_at(&pinned, 39).expect("record exists");
+        assert_eq!(
+            storage_winner.node_type, "LOW_TICK_TYPE",
+            "get_node_at: newest segment — the documented P5-vs-legacy divergence"
+        );
+    }
+
+    /// Perspective + absent-subject hygiene: non-main perspective → Ok(None)
+    /// (exact-match empty answer); unknown subject → Ok(None).
+    #[test]
+    fn resolve_perspective_and_absent_subject_are_none() {
+        let fs = fixture_store();
+        let other = fs.intern_perspective("other");
+        let s = fs.snapshot();
+        assert!(fs
+            .resolve_functional(&s, base_id(&fs, "node"), other, 11)
+            .expect("typed path")
+            .is_none());
+        assert!(resolve(&fs, &s, "node", 0xdead_0000_0001).is_none());
+    }
+
+    /// X8 (E8/E8a at the facts read level — the C3-class gate): two v3
+    /// records, same (id, author, tick), DIFFERENT node_type, two commits →
+    /// both project as distinct live assertions, FullMerge keeps both, and
+    /// the canonical sha is byte-identical across compaction.
+    #[test]
+    fn fold_key_c3_same_aid_identity_different_value_survives_compaction() {
+        use crate::derive::tag::CountTag;
+        use crate::storage_v2::types::COUNTTAG_SEMIRING_ID;
+        let fs = LsmFactStore::ephemeral(2);
+        let tagged = |ty: &str, weight: i64| {
+            let rec = node_rec(41, ty, "", "c3/p5.rofl", &meta_json(Some("alice"), Some(2u64.into())));
+            let fields = DerivedFields {
+                provenance: ProvenanceV2 { rule_ast_hash: 0, generation: 2 },
+                tag: TagV2 {
+                    semiring_id: COUNTTAG_SEMIRING_ID,
+                    bytes: CountTag(weight).to_le_bytes(),
+                },
+                tx_created: 0,
+                tx_invalidated: TX_OPEN,
+            };
+            (rec, fields)
+        };
+        fs.commit_derived_tagged(vec![tagged("GLOBAL_DEFINITION", 5)], vec![]);
+        fs.commit_derived_tagged(vec![tagged("EXTERNAL_FUNCTION", 3)], vec![]);
+        let check = |fs: &LsmFactStore, label: &str| {
+            let s = fs.snapshot();
+            let rows: Vec<FactRow> = fs
+                .live_filter(
+                    &s,
+                    Box::new(
+                        collect(fs.sorted_run(
+                            &s,
+                            base_id(fs, "node"),
+                            PERSPECTIVE_MAIN,
+                            SortOrder::Forward,
+                        ))
+                        .into_iter(),
+                    ),
+                )
+                .collect();
+            assert_eq!(rows.len(), 2, "{label}: two distinct facts (two fids)");
+            let mut weights: Vec<(String, i64)> = rows
+                .iter()
+                .map(|r| {
+                    assert_eq!(r.assertions.len(), 1, "{label}: one assertion each");
+                    (
+                        winner_type(r),
+                        CountTag::from_le_bytes(&r.assertions[0].tag.bytes)
+                            .expect("count tag survives")
+                            .0,
+                    )
+                })
+                .collect();
+            weights.sort();
+            assert_eq!(
+                weights,
+                vec![
+                    ("EXTERNAL_FUNCTION".to_string(), 3),
+                    ("GLOBAL_DEFINITION".to_string(), 5)
+                ],
+                "{label}: separate per-aid Count weights — never ⊕-folded across aids"
+            );
+            fs.canonical_state_sha(&s)
+        };
+        let sha_before = check(&fs, "pre-compaction");
+        fs.compact(None, CompactionTier::FullMerge).expect("full merge");
+        let sha_after = check(&fs, "post-compaction");
+        assert_eq!(sha_before, sha_after, "C3: sha is physics-invariant");
+        // And the resolver arbitrates the two aids (same author+tick → min fid).
+        let s = fs.snapshot();
+        let (_, conflicts) = resolve(&fs, &s, "node", 41).expect("two live facts");
+        assert_eq!(conflicts.len(), 1);
+    }
 }

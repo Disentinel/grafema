@@ -2809,6 +2809,61 @@ impl MultiShardStore {
         Ok(results)
     }
 
+    /// Per-subject companion of [`Self::iter_node_versions_at`] (P5, ledger
+    /// round-011-pre E5): EVERY live record version of ONE id, newest-first
+    /// (L0 newest→oldest, then L1), tombstone-first, with bloom
+    /// short-circuit, together with derived columns when the segment carries
+    /// them. NO newest-wins dedup — this is the pre-dedup multi-candidate
+    /// point read Functional-conflict resolution enumerates over (the keyed
+    /// point path [`Self::get_node_at`] returns the FIRST hit only and
+    /// [`Self::find_nodes_at`] dedups by id, so neither can surface a §2.3
+    /// conflict's coexisting candidates on a pure-v2 snapshot).
+    pub fn node_versions_of_at(
+        &self,
+        snap: &ReadSnapshot,
+        id: u128,
+    ) -> Result<Vec<(NodeRecordV2, Option<DerivedFields>)>> {
+        if snap.tombstones.contains_node(id) {
+            return Ok(Vec::new());
+        }
+        let mut results: Vec<(NodeRecordV2, Option<DerivedFields>)> = Vec::new();
+        for desc in snap
+            .node_segments
+            .iter()
+            .rev()
+            .chain(snap.l1_node_segments.iter())
+        {
+            let seg_rows = self.with_node_segment(desc, |seg| -> Result<Vec<_>> {
+                if !seg.maybe_contains(id) {
+                    return Ok(Vec::new());
+                }
+                let derived = seg.has_derived_columns();
+                let mut rows = Vec::new();
+                for j in 0..seg.record_count() {
+                    if seg.get_id(j) != id {
+                        continue;
+                    }
+                    let fields = if derived {
+                        Some(DerivedFields {
+                            provenance: seg.provenance(j),
+                            tag: seg.tag(j)?,
+                            tx_created: seg.tx_created(j),
+                            tx_invalidated: seg.tx_invalidated(j),
+                        })
+                    } else {
+                        None
+                    };
+                    rows.push((seg.get_record(j), fields));
+                }
+                Ok(rows)
+            });
+            if let Some(rows) = seg_rows {
+                results.extend(rows?);
+            }
+        }
+        Ok(results)
+    }
+
     /// Edge companion of [`Self::iter_node_versions_at`]: every live edge
     /// record version, newest-first, with optional derived columns.
     pub fn iter_edge_versions_at(
