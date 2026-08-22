@@ -107,3 +107,16 @@ git push / PR / merge to main / release remain Vadim-explicit-only. The two main
 (RESUME-LOOP.md) awaiting his push word. The flaky
 test_commit_batch_performance_scaling robustness task stays recorded (_ai/gaps.md), off the
 critical path.
+
+## R-8. Round-011 open-question acks (2026-08-22 ~11:20, delegation active)
+
+OQ-1 ACK — conflict/5 Tick column = WINNER's tick (snapshot-derivable, deterministic).
+OQ-2 ACK — Predicate column = canonical predicate NAME as Value::Str (§9.2 forbids interned ids
+in canonical artifacts; doc's literal "PredicateId" yields to §9.2).
+OQ-3 ACK — E-FUNC-002 = resolve_functional on a MultiValued predicate (C7 envelope).
+OQ-4 ACK — conflict/5 durable materialization deferred to the P6 converter (C7 report counts
+≥39 from the differential until then); read-side emission is the P5 semantics.
+OQ-5 ACK — attr/3 Functional (file/name) deferred to P6 (compound (id,key) subject; the 39
+measured conflicts are fully covered by node/type).
+Also ratified: fa40b361 commit message stands without history rewrite (audited SHA ordering
+outweighs message template); F1 process rule — ONE agent owns the timed perf window at a time.
