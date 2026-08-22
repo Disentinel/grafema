@@ -1,0 +1,90 @@
+-- Round 005-pre (2026-08-22) — P1 pre-registered expectations, committed BEFORE
+-- the P1 implementation (predicate catalog + Value::{BigInt, Term} + canonization
+-- E-VAL-001/002; phase table §10.4 of rofl-fact-model.md rev 2.0). Assert-only,
+-- never retract. round-005.rofl will carry the run evidence (expected-vs-found
+-- per claim, zero groundless claims).
+--
+-- Baselines captured on unmodified HEAD f08e5d53 before any code change:
+--   suite: cargo test --lib in packages/rfdb-server (recorded in round-005 with
+--     the exact pre/post counts; governance baseline 1428 passed / 0 failed /
+--     25 ignored)
+--   harness: /tmp/p1-baseline-conformance-report.json (copy of the committed
+--     packages/rofl-conformance/conformance-report.json from the round-004 run:
+--     tier-0 120 seeds / 0 divergences, witness 325/0, whynot 554/0;
+--     tier-1 5 GREEN / 25 RED, members as listed in that file)
+--   fact_id goldens: captured from the UNMODIFIED encoder before the new arms
+--     land (recorded as evidence in round-005; the four existing variant arms
+--     must stay byte-identical — invariant I1).
+
+-- H1: the full lib suite stays green after P1. Ground: P1 adds variants +
+-- modules; every existing match arm's behavior for the four existing variants
+-- is untouched by construction (compiler-driven fan-out, explicit new arms
+-- only); pass count grows by the new canon/catalog/value tests.
+claim_of[a](exp_p1_suite_green).
+ground[a](exp_p1_suite_green, new_variants_add_arms_only_existing_arm_behavior_untouched).
+expected[m](exp_p1_suite_green, zero_failures_pass_count_geq_1428_ignored_25_unchanged).
+
+-- H2: the conformance harness verdicts are BYTE-UNCHANGED per test: tier-0
+-- stays 120 seeds / 0 divergences, tier-1 stays exactly 5 GREEN / 25 RED with
+-- the same members. Ground: P1 is observationally invisible to the oracle —
+-- BigInt/Term exist in the engine but NOTHING produces them over the wire this
+-- phase (the only parser widening is the i64-overflow integer literal, which no
+-- tier suite emits; the tier-1 REDs p1-functor-append / p1-arith fail in the
+-- TRANSLATOR as dialect-untranslatable before reaching the engine, so parser
+-- widening cannot flip them). A verdict flip = P1 leaked semantics — investigate,
+-- never accept.
+claim_of[a](exp_p1_harness_verdicts_unchanged).
+ground[a](exp_p1_harness_verdicts_unchanged, nothing_produces_bigint_term_on_wire_reds_fail_in_translator_pre_engine).
+expected[m](exp_p1_harness_verdicts_unchanged, tier0_120_0_tier1_5green_25red_same_members).
+
+-- H3: canonical total order and encoding hold their laws. Ground: Ord is
+-- DEFINED as lexicographic comparison of canon-v1 bytes (§9.2 row 3), so the
+-- property battery (antisymmetry / transitivity / totality / Eq⟺Equal over
+-- ≥1000 deterministic-PRNG canonical values incl. Terms nested ≤4, plus the
+-- mechanical Ord≡canon_bytes-lex consistency check and injectivity probes)
+-- must pass by construction; golden byte vectors (incl. a 2^68 BigInt and a
+-- nested Term) pin cross-process hash stability.
+claim_of[a](exp_p1_canon_order_laws_green).
+ground[a](exp_p1_canon_order_laws_green, ord_defined_as_canon_bytes_lex_so_laws_hold_by_construction).
+expected[m](exp_p1_canon_order_laws_green, all_property_tests_and_golden_vectors_green).
+
+-- H4: the E-VAL abort paths fire with the stable codes. Ground: §2.5 defines
+-- E-VAL-001 (BigInt fitting i64, or non-minimal two's-complement encoding,
+-- incl. recursively inside Term) and E-VAL-002 (non-canonical Float: NaN bits
+-- other than 0x7ff8000000000000, or -0.0); the P1 firing sites are
+-- canon_bytes()/validate_canonical() and TermBlob::new(), since no fact store
+-- exists yet (the store boundary inherits validate_canonical in P2).
+claim_of[a](exp_p1_eval_abort_codes_green).
+ground[a](exp_p1_eval_abort_codes_green, constructors_canonicalize_validators_reject_raw_noncanonical_values).
+expected[m](exp_p1_eval_abort_codes_green, e_val_001_and_e_val_002_rendered_in_stable_string_form).
+
+-- H5: the catalog is consistent with the engine it describes and changes NO
+-- planning decision. Ground: with_base_relations registers exactly
+-- {node/2, type/2, edge/3, incoming/3, attr/3} (arities read from the builtin
+-- registry, builtin.rs:1360-1389) and the drift guard compares the catalog
+-- base-name set against plan.rs BASE_RELATIONS (plan.rs:927); rule-head
+-- registration via declare_default at plan construction is observational-only
+-- in P1, so the plan-equality differential (same fixture program planned
+-- pre-catalog vs with-catalog) must be IDENTICAL.
+claim_of[a](exp_p1_catalog_consistent_zero_plan_change).
+ground[a](exp_p1_catalog_consistent_zero_plan_change, registration_is_observational_no_planner_input_reads_catalog_in_p1).
+expected[m](exp_p1_catalog_consistent_zero_plan_change, drift_guard_and_plan_equality_tests_green).
+
+-- H6: fact_id stays byte-identical for the four existing variants. Ground: the
+-- existing LE u64-length-prefixed encode_value arms are not edited (the two new
+-- arms are additive; canon-v1 is a SEPARATE encoder in derive/canon.rs);
+-- goldens captured on the unmodified encoder must reproduce exactly on the
+-- extended one.
+claim_of[a](exp_p1_fact_id_byte_stable).
+ground[a](exp_p1_fact_id_byte_stable, existing_encode_arms_untouched_new_arms_additive).
+expected[m](exp_p1_fact_id_byte_stable, pre_change_goldens_reproduce_exactly).
+
+-- H7: the parser widening is strictly widening. Ground: an integer literal
+-- overflowing i64 is TODAY a hard ParseError "invalid integer literal"
+-- (datalog/parser.rs:208-210); routing that error case (and only it) to
+-- Value::big_int turns error→value, so no previously-accepted program changes
+-- meaning and 2^68 (ROFL 24h incident #3) becomes representable; i64-range
+-- literals still parse bit-identical to Value::Int.
+claim_of[a](exp_p1_parser_widening_strict).
+ground[a](exp_p1_parser_widening_strict, overflow_literal_was_hard_error_now_bigint_i64_range_unchanged).
+expected[m](exp_p1_parser_widening_strict, existing_literal_tests_untouched_green_new_bignum_literal_test_green).
