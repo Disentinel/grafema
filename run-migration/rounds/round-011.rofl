@@ -1,0 +1,233 @@
+-- Round 011 (2026-08-22) — P5 ACTUALS vs the pre-registered expectations of
+-- round-011-pre.rofl (commit 0e609864, committed BEFORE any implementation —
+-- git-auditable two-commit ordering per the R6 precedent). Assert-only.
+--
+-- P5 = Functional cardinality under OWNER-RULINGS R-1a (rofl-fact-model.md
+-- rev 2.0 §10.4 row P5): read-time conflict resolution (max tick → seeded
+-- author_priority table → author canon-order → min fid), conflict/5 emission
+-- on EVERY multi-live resolution (return channel), E-FUNC-001 intra-batch
+-- write gate, E-FUNC-002 on MultiValued resolve, plus the in-scope P4
+-- fold-key fix (§3.2 value-in-aid-identity). Facts-side-only: NO write-time
+-- loser supersession, legacy read paths untouched, NodeView not materialized,
+-- attr/3 Functional deferred to P6 (OQ-5).
+
+-- ── Files changed (implementation commit fa40b361) ──────────────────
+--   packages/rfdb-server/src/facts/lsm.rs            (resolver + seeding +
+--     E-FUNC-001 gate + E8a candidate-key fix + P5 battery, +~700)
+--   packages/rfdb-server/src/facts/mod.rs            (trait contract, codes)
+--   packages/rfdb-server/src/facts/differential.rs   (fixture legs + re-pin)
+--   packages/rfdb-server/src/derive/catalog.rs       (amend_functional,
+--     conflict_decl, Cardinality docs, amendment tests)
+--   packages/rfdb-server/src/storage_v2/compaction/merge.rs (E8 fold-key fix)
+--   packages/rfdb-server/src/storage_v2/multi_shard.rs (node_versions_of_at)
+--   tests/: ZERO diff hunks (crash_recovery untouched-green gate).
+
+-- ── Gate results (expected → FOUND) ────────────────────────────────
+
+-- G1 suite: expected baseline 1539/0/28 + new P5 tests, 0 failed.
+--   FOUND: cargo test --lib = 1557 passed / 0 failed / 28 ignored (27.0s).
+--   Mechanical diff counts: +18 `#[test]`, −0; +0 `#[ignore]`, −0.
+--   1539 + 18 = 1557 ✓. Known-flaky test passed in-suite (no isolation needed).
+
+-- G2 crash gate: expected 9/9 green AND file absent from the diff.
+--   FOUND: cargo test --test crash_recovery = 9 passed / 0 failed (0.05s);
+--   `git diff --stat -- packages/rfdb-server/tests/` = EMPTY.
+
+-- G3 bench_c2_bulkload: expected 4/4. FOUND: 4 passed / 0 failed (21.2s).
+
+-- G4 plan_golden: expected 40,816 fingerprints bit-identical.
+--   FOUND: derive::plan_golden::p3_plan_fingerprints_match_pre_p3_golden ok
+--   in-suite; golden file = 40,816 lines, ZERO diff. with_base_relations
+--   untouched (the Functional amendment + conflict decl are applied by
+--   LsmFactStore::from_parts — the D13 ownership precedent), so the base
+--   id-space and dispatch cannot have moved. derive/plan.rs: 0 lines changed.
+
+-- G5 conformance harness: expected exit 0, tier-0 120/0, tier-1 5 GREEN/25 RED.
+--   FOUND: exit 0, wallclock 16.6s; tier-0 120 seeds / 0 divergences
+--   (why 325/325, whynot 554/554 sound); tier-1 oracle self-check 30/30,
+--   verdicts GREEN 5 / RED 25 / DIVERGENCE 0 / HARNESS_GAP 0 —
+--   verdict-identical to baseline. The 3 generated report files
+--   (conformance-report.json, conformance-run-meta.json,
+--   _ai/research/rofl-conformance-report.md) restored via git checkout;
+--   working tree afterwards showed ONLY the 6 implementation files.
+
+-- G6 perf proxy: expected medians ≤1.10× of the pinned round-010 medians
+--   (depends 4.926 / method_calls 8.708 / axum_routes 5.376 s ⇒ ceilings
+--   5.419 / 9.579 / 5.914). Environment: same VM, same base
+--   (/tmp/rofl-p2-real-base/graph.rfdb = 567,405,250 B, du -sb; symlink
+--   .grafema/grafema.rfdb → the /tmp copy; /home/dev/grafema never touched);
+--   release profile; quiescence verified before the timed window
+--   (self-excluding probe per round-010 F3 — only the probe's own wrapper
+--   matched); the 3 runs serialized in ONE shell, no concurrent cargo.
+--   FOUND (3 runs, seconds):
+--     depends.dl      4.719 / 4.779 / 4.984  -> MEDIAN 4.779  (0.970×) PASS
+--     method_calls.dl 8.642 / 8.537 / 8.222  -> MEDIAN 8.537  (0.980×) PASS
+--     axum_routes.dl  5.470 / 5.521 / 5.483  -> MEDIAN 5.483  (1.020×) PASS
+--   All ≤1.10×. Expected ~0 delta confirmed (the executor still reads
+--   StorageView; the resolver is a new read path nothing on the eval path
+--   calls; write-back (+0,−0) on all three).
+
+-- ── X1 FOUND: THE RE-PINNED REAL-BASE DIFFERENTIAL (the settled ground
+--    truth, re-verified) ──────────────────────────────────────────────
+-- ROFL_P2_REAL_BASE=/tmp/rofl-p2-real-base/graph.rfdb, release, --ignored;
+-- test facts::differential::differential_real_base ... ok (1388.94s —
+-- round-007 ran 1400.40s, same order).
+--   distinct node ids: 503,404 (manifest 000171) ✓
+--   multi-live node subjects: EXACTLY 39 ✓
+--   winner == GLOBAL_DEFINITION: 39/39, and winner == storage winner
+--     (get_node_at physics) on ALL 39 — asserted per subject ✓
+--   conflict/5 keys: 39 (one loser fact per subject) ✓
+--   "node" and "type" resolutions agree on all 39 ✓
+--   tick-tie ground: generation multiset ('1','1') per subject, 39/39 —
+--     the seeded pair decided at the TICK-TIE step ✓
+--   counterfactual EMPTY table (pure R-1, test seam E11):
+--     EXTERNAL_FUNCTION 39/39 — the R8a falsifier re-verified; this IS the
+--     documented would-be flip and WHY the pair exists ✓
+--   counterfactual min-fid-only: split GLOBAL 19 / EXTERNAL 20 — the R8a
+--     "20/19" split re-measured (multiset {20,19} ✓; side attribution now
+--     PINNED: EXTERNAL_FUNCTION holds 20, GLOBAL_DEFINITION 19).
+--     min-fid winner-vector blake3 (sorted, LE bytes; fid layout = the
+--     golden vector b0093490018cd3e0…, E12):
+--     fc81d041d47abac6f4e7b27797cad021629af0565c21d3cf7130928c7f1ab782
+--     — recorded as the NEW pinned artifact (no committed R8a digest
+--     artifact existed; E12 interpretation stands).
+--   ALL pre-existing digests BYTE-IDENTICAL to the round-007/008 records:
+--     pair1_nodes 503404 rows blake3 8f4f2c1c…7d01; pair2_by_type same;
+--     pair2_shadowed 39; pair3_edges 1107838 rows 23cb1070…4825;
+--     pair45_probes 1002 rows c1b4c07c…3477; pair7_attrs 7850 rows
+--     3ae2142d…16c0f; pair7_shadowed 0; pair9_counts 6d2fb3c8…5745;
+--     pair10_state_sha ed520009…f82bea. Legacy reads and the canonical
+--     state sha are UNCHANGED by P5 — facts-side-only scope held.
+
+-- ── X2 FOUND: totality/determinism ─────────────────────────────────
+-- resolve_total_and_deterministic_under_permutation: 3 authors × 6 insertion
+-- orders × shard counts {1,2,4} → identical (winner tuple, winner assertion
+-- author/tick, sorted loser-fid set) on all 18 runs; always Some, never an
+-- error — the read-side E-FUNC-001 arm is unreachable (fid uniqueness makes
+-- the 4-step order total; E1's filter formulation avoids the non-transitive
+-- pairwise trap for mixed listed/unlisted candidate sets).
+
+-- ── X3 FOUND: step order ───────────────────────────────────────────
+-- (i)  resolve_step_i_max_tick_dominates_priority_table: lower-priority
+--      author's tick 2 beats the seeded-high author's tick 1; conflict still
+--      emitted (DEV-1 superset).
+-- (ii) resolve_step_ii_priority_decides_tick_tie_against_canon: on the tie
+--      the seeded pair picks GLOBAL_DEFINITION on BOTH node and type —
+--      against canon-order; the empty-table seam degenerates to pure R-1
+--      (EXTERNAL_FUNCTION), on the same fixture.
+-- (iii) resolve_step_iii_unlisted_vs_listed_falls_to_canon: listed
+--      runtime-globals vs unlisted 'aa' → table skipped, canon picks 'aa'
+--      (no "listed beats everyone").
+-- (iv) resolve_step_iv_canon_shortlex_zz_beats_aaa: 'zz' beats 'aaa' —
+--      shortlex (cmp_len_prefixed via Ord-for-Value), where plain str::cmp
+--      would pick 'aaa'.
+-- (v)  resolve_step_v_min_fid_same_author_same_tick_cross_batch: same
+--      author, same tick, two values in two batches → NO E-FUNC-001, both
+--      live, min-u128-fid winner (asserted against fid() directly).
+
+-- ── X4 FOUND: conflict/5 ───────────────────────────────────────────
+-- conflict_emission_shape_agreement_and_counts: agreement (two authors, one
+-- fid) → 2 assertions on the row, ZERO conflicts; 3 live facts → exactly 2
+-- keys; every key: perspective == audit (interned at construction),
+-- predicate == conflict/5 decl, tuple [Id(subject), Str("node"),
+-- Id(winner_fid), Id(loser_fid), Int(winner_tick)] — predicate as canonical
+-- NAME (DEV-2), tick = WINNER's tick (DEV-4); distinct loser fids. The
+-- conflict relation itself reads as an honest EMPTY relation (DEV-3 — no
+-- durable materialization; emission is the return channel).
+
+-- ── X5 FOUND: E-FUNC-001 write gate ────────────────────────────────
+-- e_func_001_intra_batch_double_assert_aborts_whole_batch: one batch with a
+-- GOOD group + (901, TYPE_ONE) + (901, TYPE_TWO) → typed E-FUNC-001, WHOLE
+-- batch aborted pre-commit — canonical sha AND node-run count byte-identical
+-- after the abort; identical-tuple re-assert in one batch → commits
+-- (idempotent, not a firing). Cross-batch same-tick arm: X3-v (both live).
+
+-- ── X6 FOUND: E-FUNC-002 ───────────────────────────────────────────
+-- resolve_functional_flipped_from_e_cap_001_to_real (REPLACES the P2 stub
+-- pin test — the round's ONLY pre-existing expectation change, exactly as
+-- pre-registered E7): resolve on edge/incoming/attr/supersedes → typed
+-- E-FUNC-002; on the Functional type/2 it RESOLVES. Never a panic, never a
+-- silent None.
+
+-- ── X7 FOUND: supersession interplay ───────────────────────────────
+-- resolve_supersession_interplay_both_directions: supersede the LOSER →
+-- single-fact subject, Ok(winner), no conflict; supersede the WINNER →
+-- former loser is the sole winner; supersede both → Ok(None). Resolution
+-- writes NOTHING (sha byte-identical across resolve calls — also asserted
+-- on the §2.3 fixture leg in differential.rs).
+
+-- ── X8 FOUND: fold-key C3 regression (E8/E8a) ──────────────────────
+-- TDD order held: the merge tests were written FIRST and FAILED on
+-- pre-fix HEAD — derived_merge_keeps_distinct_values_at_same_author_tick
+-- (1 record instead of 2: cross-aid ⊕-fold observed live) and
+-- derived_merge_output_order_deterministic_with_value_component (the
+-- pre-fix merge was even INPUT-ORDER DEPENDENT for this class: ["TYPE_B"]
+-- vs ["TYPE_A"] depending on segment order — worse than pre-registered).
+-- Post-fix: merge battery 17/17. R-3 guard
+-- (derived_merge_meta_only_difference_still_collapses): meta-only
+-- difference at same (id, type, aid) still ONE record, tags fold within
+-- the aid. Facts-level gate
+-- (fold_key_c3_same_aid_identity_different_value_survives_compaction):
+-- two v3 records same (id, author, tick) diff type, two commits →
+-- 2 distinct live facts with separate Count weights (5/3, never ⊕-folded)
+-- before AND after FullMerge, canonical sha byte-identical across
+-- compaction; the resolver then arbitrates them (min fid) with 1 conflict.
+-- v2 pins untouched-green: derived_merge_collapses_v2_records_newest_wins
+-- + all 12 equivalence pairs (the E8 Legacy-records-keep-collapse
+-- refinement of the phase spec's literal key, pre-registered).
+-- edge merge unchanged (value tuple already in EdgeKey).
+
+-- ── X9 FOUND: catalog amendment + divergence honesty ───────────────
+-- amend_functional_amends_idempotent_and_rejects_conflicts: base
+-- MultiValued/empty → amended; idempotent re-amend; DIFFERENT table (either
+-- direction, incl. empty) → E-CAT-001 with the table unchanged; undeclared
+-- name → E-CAT-002; declare()'s identity now compares against the AMENDED
+-- decl (amended shape idempotent, ORIGINAL base shape E-CAT-001).
+-- conflict_decl_is_nary_multivalued_timeless_arity_5 pins the decl shape.
+-- from_parts_seeds_functional_decls_conflict_and_audit: node/type Functional
+-- with EXACTLY [haskell-runtime-globals, haskell-local-refs]; the other five
+-- decls MultiValued/empty; audit interned ≠ main. The P1 catalog E-CAT-001
+-- identity suite green unchanged. Divergence honesty
+-- (resolve_divergence_from_get_node_at_pinned): lower-tick record written
+-- LATER → resolve picks HIGH_TICK_TYPE (max tick), get_node_at picks
+-- LOW_TICK_TYPE (newest segment) — the documented P5-vs-legacy divergence;
+-- winner==storage-winner is a MEASURED real-base property, not a theorem.
+
+-- ── X10 FOUND: ledger discipline ───────────────────────────────────
+-- round-011-pre committed BEFORE implementation (0e609864 < fa40b361);
+-- #[ignore] delta counted mechanically from the round diff: +0 / −0 (the
+-- real-base differential remains the one ignored facts test, its legs grown
+-- in place). No stash used; reviewer/timed windows serialized.
+
+-- ── Decision refinements DISCOVERED during the round ───────────────
+-- E8-as-implemented (pre-registered in the pre file, confirmed by a pinned
+--   test): the fold-key value component is Some(node_type) for v3
+--   (Assertion-ident) records and None for Legacy — the phase spec's literal
+--   «(id, node_type, AssertIdent)» would have broken the D8/D9 v2
+--   winner-collapse (derived_merge_collapses_v2_records_newest_wins pins a
+--   v2 duplicate id with TWO types collapsing) and, with all-Legacy idents
+--   at tick 0, flipped the post-compaction winner by TYPE order — a C3
+--   violation. §3.2's aid semantics are assertion semantics; v2 records are
+--   the record model.
+-- E8a (pre-registered): node_candidates' dedup key gained the value column
+--   — without it the C3 both-survive gate would be invisible to facts reads.
+-- Candidate dedup in the resolver = (node_type, source, generation) — the
+--   aid identity (fid ⊃ value); same-aid re-writes newest-wins (M1 = P7).
+-- min-fid split side attribution: R8a recorded "20/19" without sides; the
+--   re-measurement pins EXTERNAL_FUNCTION = 20, GLOBAL_DEFINITION = 19.
+-- Winner-tick Int column: a tick that does not fit i64 is a contractual
+--   panic at emission (production ticks are generations ≪ i64; recorded).
+
+-- ── Open questions carried to the owner (from round-011-pre; one-word
+--    acks suffice) ─────────────────────────────────────────────────
+-- OQ-1 winner's-tick Tick column; OQ-2 Str predicate name; OQ-3 E-FUNC-002
+-- code; OQ-4 conflict durability deferred to converter/C7; OQ-5 attr/3
+-- Functional deferred to P6. All implemented per the minimal calls recorded
+-- in the pre file; each reversible in one line.
+
+-- ── P4 carry-forwards untouched (restated) ─────────────────────────
+-- OnceLock stats-cache staleness stays the P6/P7 REQUIRED item (round-010
+-- F2); assert_batch edge groups still require the src node (documented P2
+-- wont_fix); legacy read paths (find_nodes_at 92-vs-53 class, C22/R1
+-- winner-collapse, get_node_at physics) keep today's behavior until P6 —
+-- proven by the byte-identical real-base digests above.
