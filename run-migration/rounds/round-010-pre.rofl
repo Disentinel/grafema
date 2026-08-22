@@ -1,0 +1,301 @@
+-- Round 010-pre (2026-08-22) — P4 pre-registered expectations, committed BEFORE
+-- the P4 implementation (rofl-fact-model.md rev 2.0 §10.4 row P4: «Ассершны:
+-- author/tick/tag, FactRow на чтении, live_filter, supersedes, E-SUP-001 —
+-- ядро модели; требует P3, иначе стоимость anti-join'а не попадает в план»).
+-- Mirrors the round-005-pre / round-007-pre / round-009-pre precedent: this file
+-- is its OWN commit ahead of any implementation commit, so the pre-registration
+-- ordering is git-auditable. Assert-only, never retract. round-010.rofl carries
+-- the run evidence (expected-vs-found per claim), in a separate commit.
+--
+-- Base commit at pre-registration: 0de2f055 (= 807824ec P3 actuals + the owner
+-- rulings ledger commit; no code between 807824ec and here — rulings are ledger
+-- text only, `git diff 807824ec..0de2f055 --stat` touches run-migration/ alone).
+--
+-- OUT OF P4 SCOPE (§10.4, restated so the round cannot creep): P5 Functional
+-- arbitration + conflict/5 + E-FUNC-001; P6 subject routing / full rebuild /
+-- 141-predicate vocabulary / SegmentType opening; P7 re-assert dedup M1 +
+-- supersede_delta in ManifestEdit + the crash-gate rewrite of crash_recovery.rs
+-- onto supersession (P7's precondition, NOT P4's); P8 RocksDB.
+
+-- ── Baselines (inherited; re-verified before finalize) ──────────────
+--   cargo test --lib: 1522 passed / 0 failed / 28 ignored (governance-pinned;
+--     known flaky storage_v2::multi_shard::tests::test_commit_batch_performance_scaling
+--     — isolate before attributing).
+--   tests/crash_recovery.rs: 9/9 green, file MUST be absent from this round's
+--     git diff (untouched-green is itself a P4 gate assertion).
+--   bench_c2_bulkload: 4/4.
+--   plan_golden: 40,816 fingerprints bit-identical.
+--   conformance harness: exit 0, tier-0 120/0, tier-1 5 GREEN / 25 RED; the 3
+--     generated report files restored after runs.
+--   perf proxy derive::differential::p3_pack_baseline_on_real_corpus, medians:
+--     depends 4.88 s / method_calls 8.73 s / axum_routes 5.38 s; pass ceiling
+--     ≤1.10× (re-measure baseline 3× first if /tmp base or machine state
+--     changed; quiescence pgrep -af 'cargo (test|build)|rustc' empty; symlink
+--     .grafema/grafema.rfdb -> /tmp/rofl-p2-real-base/graph.rfdb).
+
+-- ── Pre-registered design decisions D1–D12 (the four open questions of the
+--    phase spec + the calls they force; each is a claim round-010 must verify) ──
+
+-- D1 (spec Q1 — physical encoding of supersedes(aid_new, aid_old)).
+-- A supersedes fact persists as a RESERVED NODE RECORD inside today's closed
+-- {nodes, edges} segment vocabulary:
+--   NodeRecordV2 { id: fid(main, "supersedes", tuple), node_type: "$supersedes",
+--                  file: "$rofl/supersedes", name: "", semantic_id: "",
+--                  content_hash: 0,
+--                  metadata: {"aid_new": <32-hex>, "aid_old": <32-hex>,
+--                             "_source": author, "_generation": tick} }
+-- written through the NEW additive derived commit path (v3 segments, D4).
+-- Rationale with evidence: the edge encoding is FORBIDDEN by the P2 wont_fix —
+-- multi_shard.rs upsert_edges (:506-529) SILENTLY SKIPS edges whose src is not
+-- in node_to_shard, and an aid is not a node id, so the truth source would be
+-- silently lost. record id = fid makes record identity ≡ fact identity (merge
+-- dedup can never lose a distinct supersedes fact). The reserved file routes
+-- every supersedes record to one shard and can never intersect a reanalysis
+-- changed_files set.
+-- LEGACY-VIEW VISIBILITY RULE (pre-registered, differential-pinned): reserved
+-- "$supersedes" records ARE visible to the legacy node surfaces (node_count_at,
+-- find_nodes_at, get_node_at) as ordinary rows — §9.4's `rows` semantics; they
+-- are NEVER projected as node/type/attr FACTS (they project ONLY as supersedes
+-- facts). Post-supersession differential: node-fact count == node_count_at
+-- minus the reserved-record count; no attr/type leakage.
+-- Forgery guard: a node GROUP asserting node_type "$supersedes" through
+-- assert_batch bypasses the supersession boundary and is rejected E-SUP-001.
+
+-- D2 (spec Q2 — first component of a scope-kill supersedes fact).
+-- x := aid(aid_old, author_name, at_tick) — reuse of the aid() combinator with
+-- the victim aid in the fid slot: deterministic, unique per (victim, author,
+-- tick), content-derived, and the supersede assertion's own author/tick remain
+-- recoverable from the record's _source/_generation (audit trail). This is a
+-- per-victim id, a deliberate refinement of the spec's per-operation
+-- recommendation (recorded honestly here): §2.4's liveness rule only ever
+-- consults the SECOND component, so c0 is an identifier, not a join target.
+
+-- D3 (spec Q3 — divergence-abort channel for E-SUP-001's second arm).
+-- Option (b): contractual panic whose message carries "E-SUP-001", from
+-- live_filter AND canonical_state_sha, on an assertion with
+-- tx_invalidated != TX_OPEN that has NO live supersedes(_, aid) in the same
+-- snapshot (precedent: canonical_state_sha's foreign-snapshot panic,
+-- facts/mod.rs:539-546 doc). live_filter's signature is UNCHANGED. The doc's
+-- literal E-SUP-001 (line ~330) is only the tick check; the divergence arm is
+-- the phase brief's addition — recorded here as a P4 interpretation. P2's
+-- silent rule-1 drop test (live_filter_passes_all_p2_rows_and_drops_tx_invalidated)
+-- is UPDATED accordingly (silent-drop was P2 semantics; P4 aborts).
+
+-- D4 (spec Q4 — multi-assertion coexistence through the write path).
+-- Facts-layer writes (assert_batch AND supersede) go through a NEW additive
+-- derived commit path: MultiShardStore::commit_batch_derived — records carry
+-- DerivedFields and flush as v3 (FORMAT_VERSION_DERIVED) segments via a new
+-- Shard::flush_derived_with_ids that mirrors flush_with_ids with add_derived
+-- and bypasses the WriteBuffer entirely. One AssertBatch = one (author, tick)
+-- = one commit = its own L0 segments, so coexisting authors land in separate
+-- segments by construction; within one batch, same-record-key dedup (last
+-- wins) reproduces WriteBuffer semantics and is same-aid M1 territory (P7).
+-- The LEGACY write path (commit_batch/commit_batch_ext, WriteBuffer,
+-- flush_with_ids, tombstones, ManifestEdit shape, checkpoints) is UNTOUCHED —
+-- that is what keeps crash_recovery.rs out of this round's diff.
+
+-- D5 (spec Q5 — author/tick physical carriers). author stays metadata _source,
+-- tick stays metadata _generation (the Q2-synthesis inverse); facts-written v3
+-- records duplicate tick into ProvenanceV2.generation and leave
+-- rule_ast_hash = 0 (the u32 keeps its rule/plugin meaning for derive-written
+-- segments; it is NOT repurposed as an AuthorId — a persisted author interner
+-- is catalog-in-manifest work, P6).
+
+-- D6 (spec Q6 — no cache writes). P4 writes NO tx_invalidated cache; every
+-- written assertion carries TX_OPEN and liveness is paid as the honest
+-- anti-join (§2.4 named cost; §5.6 assigns cache materialization to P7's
+-- checkpoint mechanism). Cold cost on a supersedes-free base stays ~0: the
+-- projection of "$supersedes" is a type-filtered scan pruned by the node_type
+-- zone maps.
+
+-- D7 (round-007-pre C9 — aid canonicalization, forced now). aid() changes to
+-- hash the canonical author NAME (len-prefixed UTF-8): aid = BLAKE3(fid ‖
+-- varint(|name|) ‖ name ‖ tick_le)[0..16] LE. Reason: supersedes fact tuples
+-- now HASH aids into fids (canonical artifacts), and §9.2 forbids interned
+-- u32s in canonical artifacts (process/declaration-order dependent — the
+-- cross-process sha gate would fail). The §2.2 `author_u32` form is read as
+-- the physical shorthand; recorded as a P4 interpretation. The P2 unit test
+-- aid_depends_on_all_three_components is updated to the name-keyed signature.
+
+-- D8 (grouping rule / C22-R1 reversal boundary). FactRow multi-assertion is
+-- real for records in v3 (derived-column) segments: the projection groups all
+-- live record versions by fid; distinct (author, tick) versions coexist as
+-- assertions; same-(author, tick) re-asserts stay newest-wins (M1 dedup is
+-- P7). Records in v2 segments KEEP the P2 winner-collapse (newest record per
+-- record key, C22/R1) — forced by soundness: base v2 merges stay newest-wins
+-- (crash/legacy path untouched), so a v2 multi-author projection would change
+-- the canonical sha across compact(), violating C3 physics-invariance. The
+-- derived merges' Legacy-subkey rule (D4/D9a) makes the two regimes agree
+-- under every merge routing. tag/tx_created/tx_invalidated project from the
+-- v3 derived columns when present; Q2 synthesis (Bool, 0, TX_OPEN) remains
+-- the v2 fallback. Consequence, pre-registered: the P2 lsm test
+-- edge_provenance_is_path_independent_after_reassert (two AUTHORS re-asserting
+-- one edge via assert_batch) pins the P2 collapse and is UPDATED to expect
+-- two coexisting assertions (path-independently); the 12 differential pairs
+-- (all legacy-written v2 fixtures + the commutativity square) stay green
+-- UNCHANGED.
+
+-- D9 (compaction ⊕ rekey — §3.2 normative blocker).
+-- merge_node_segments_derived / merge_edge_segments_derived rekey their fold:
+--   record from a v2 segment            → Legacy(record_key)        (collapse,
+--     newest-wins — identical to the base merge under both routings),
+--   record from a v3 segment            → Assertion(record_key,
+--     _source: Option<String>, rule_ast_hash: u32, tick) with tick =
+--     _generation (metadata) falling back to ProvenanceV2.generation.
+-- ⊕ (fold_tags) applies ONLY within one key = one aid; across different aids
+-- records are BOTH kept. Output sorted deterministically by (record_key,
+-- assertion key). fold_tags itself (E-FMT-001/002/003, E-TAG-001 checked
+-- arithmetic) is unchanged. Base v2 merges untouched.
+-- D9a consequence, pre-registered: the three merge.rs unit tests that pin the
+-- record-key fold across DIFFERENT provenance generations
+-- (derived_merge_folds_count_tags_not_dedup, derived_merge_round_trips_through_writer,
+-- derived_edge_merge_folds_count_tags) encode exactly the fold §3.2 calls
+-- «блокер, а не косметика» and are UPDATED: different (rule, generation) →
+-- both records survive with separate tags; a same-aid duplicate still folds.
+-- Any OTHER test that turns out to pin cross-aid folding will be listed in
+-- round-010 with the same justification or, if it guards real engine
+-- behavior the fact model must serve, will force a re-scope — not a silent
+-- expectation edit.
+
+-- D10 (§5.5 ByAttr in the base-five vocabulary). The doc's ByAttr{pred: file}
+-- names the 141-vocabulary file/1 predicate, which does not exist until P6.
+-- P4 encoding: SubjectSet::ByAttr { pred, values } is accepted iff pred is the
+-- base `attr` predicate and values = [Str(key), matched values…] (first
+-- element = the attribute key); ByAttr{attr, ["file", …changedFiles]}
+-- reproduces today's reanalysis contract exactly. Any other pred →
+-- E-CAP-001 (the per-attribute predicates are P6 vocabulary). Subject of a
+-- fact row for scope matching = column 0, EXCEPT incoming where it is column
+-- 1 (the edge source — incoming is edge's declared reverse view, and §5.5
+-- scopes reproduce record areas in P4). Victims are enumerated from LIVE rows
+-- only (a dead assertion cannot be re-superseded).
+
+-- D11 (E-SUP-001 first arm — tick boundary). supersede(scope, at_tick)
+-- requires at_tick STRICTLY greater than every victim assertion's tick;
+-- violation aborts the WHOLE operation pre-commit (typed E-SUP-001, store
+-- byte-identical by sha). The same boundary guards direct assert_batch writes
+-- into the reserved supersedes predicate (D12): the referenced victim aid must
+-- resolve to a known (live or dead) assertion in the pre-commit snapshot —
+-- an UNRESOLVABLE victim aid is E-SUP-001 (monotonicity unprovable) — and
+-- batch.tick must be strictly greater than the victim's tick. Well-foundedness:
+-- ticks strictly decrease along supersedes chains, so supersedes(x,y) +
+-- supersedes(y,x) is unconstructible through the boundary.
+
+-- D12 (direct supersedes asserts). FactGroup gains a Supersedes { fact:
+-- GroupFact } variant (additive enum extension): arity-2 Id×Id tuple over the
+-- reserved supersedes predicate, subject to D11's boundary, persisted per D1.
+-- Node/Edge groups still reject the supersedes predicate id
+-- (record-vocabulary), and node groups reject the reserved node_type (D1).
+
+-- D13 (supersedes PredicateDecl / planner integration — spec contract (8)).
+-- catalog.rs gains a canonical `supersedes_decl()` (Adjacency, arity 2,
+-- key_cols [0,1], reverse [1,0] — §2.4 "Adjacency с обратным раном по c1",
+-- Bool semiring, MultiValued, Timeless). It is declared by LsmFactStore at
+-- construction into the store's own catalog — NOT added to
+-- with_base_relations: the with_base_relations id-space and base_names
+-- dispatch are pinned by plan_golden (40,816 fingerprints bit-identical) and
+-- by exec's storage dispatch, which has no supersedes service until P6/P7.
+-- The §10.4 rationale «стоимость anti-join'а не попадает в план» is claimed
+-- at the seam P3 built: (i) LsmFactStore::stats(supersedes) returns REAL
+-- live_facts/live_asserts; (ii) a probe proves base_estimate (plan.rs:1305)
+-- costs the supersedes decl+stats generically (catalog-driven, no name
+-- special-case); (iii) a program with a negated supersedes leg registers and
+-- plans WITHOUT the unknown-predicate E-CAT-002 path (§3.1 body-only default
+-- rule; E-CAT-002 scope per round-009-pre H3 unchanged). derive/plan.rs
+-- production code: ZERO changes expected (claim verified by plan_golden).
+
+-- D14 (liveness algorithm — §2.4 definitional recursion). The superseded-aid
+-- set of a snapshot is computed over the supersedes assertion set by
+-- decreasing (tick, aid) order: an assertion of a supersedes fact is live iff
+-- its own aid has not been claimed by an already-live higher-tick supersedes
+-- assertion; victims of live supersedes assertions form the killed set.
+-- Well-founded by D11 (superseder tick strictly exceeds victim tick).
+-- live_filter = rule 1 (tx_invalidated may only CONFIRM death, D3 aborts a
+-- lone cache-death) + anti-join against the killed set; fact live ⟺ ≥1 live
+-- assertion. canonical_state_sha uses the SAME liveness (§9.1) and now
+-- serializes |live assertions| per fact with assertions sorted by
+-- (author-rank, tick) — the multi-assertion case P2's Q8 left to P4; C3
+-- becomes CLAIMABLE and IS claimed (§10.5 C3 tag_fold arm).
+
+-- D15 (read-path guard). The live_filter sole-read-path guard is the
+-- grep-level hygiene test (facts::mod hygiene precedent): outside src/facts/,
+-- ZERO consumers of the FactStore read surface exist (the only permitted
+-- foreign reference is the SortOrder type import in derive/{catalog,plan,exec}
+-- — a dispatch KEY type, not a read path); the test walks src/, skips
+-- src/facts/, and fails listing offenders on any use of the facts store type
+-- or its read methods. Inside facts/, live_filter and canonical_state_sha are
+-- the only liveness authorities; raw sorted_run/prefix_scan remain the
+-- documented physical runs (pair-8 discipline).
+
+-- D16 (perspective discipline). supersede() with a non-main perspective is
+-- E-CAP-001 "perspectives" (same §10.1 gate as assert_batch: today's record
+-- format cannot represent one, so no scope can address one).
+
+-- ── Hypotheses (round-010 verifies each; expected-vs-found) ─────────
+
+-- H1 (C3 reconciliation gate — REQUIRED, claims doc §10.5 C3): one fact with
+-- Count semiring asserted by TWO authors (derived-path fixture) → FullMerge
+-- compact() → |live assertions| == 2 (not folded), canonical_state_sha
+-- byte-identical before/after, and cross-process (subprocess helper precedent
+-- facts::differential::state_sha_deterministic_across_two_processes).
+
+-- H2 (E-SUP-001 both arms): (a) tick boundary per D11 — supersede at
+-- at_tick ≤ victim tick → typed E-SUP-001, sha unchanged; direct supersedes
+-- assert violating monotonicity or naming an unresolvable victim → E-SUP-001;
+-- cycle unconstructible. (b) divergence — a snapshot where an assertion is
+-- cache-dead with no live supersedes(_, aid) → live_filter AND
+-- canonical_state_sha abort with "E-SUP-001" (contractual panic, D3).
+
+-- H3 (author scope absolute, §4.2): A and B assert one fid; A supersedes All
+-- → the fact stays live with exactly B's assertion; no SupersedeScope naming
+-- A can kill B's assertion, including over conflicting Functional fids (two
+-- live conflicting Functional assertions are LEGAL in P4 — arbitration is
+-- P5); ByAttr{attr, ["file", changedFiles]} kills exactly A's assertions on
+-- subjects in the changed files.
+
+-- H4 (recursive liveness): superseding the supersede-assertion itself at a
+-- higher tick resurrects the originally-superseded assertion; re-assert after
+-- supersession at a higher tick = new aid, fact live.
+
+-- H5 (equivalence): the 12 P2 differential pairs green UNCHANGED (handcrafted,
+-- generated 2000/5000, survive-compaction, edge-reassert, tombstone+readd,
+-- §2.3 conflict class, commutativity square, cross-process sha, perspective
+-- floor, real-base ignored variant unchanged in code); NEW post-supersession
+-- pairs: live_filter drops exactly the victim assertions; legacy-view
+-- visibility of reserved records matches D1 (node-fact count == node_count_at
+-- − reserved count; zero attr/type leakage).
+
+-- H6 (planner/stats): stats(supersedes) real; plan_golden 40,816 bit-identical
+-- (with_base_relations untouched, D13); negated-supersedes probe plans without
+-- E-CAT-002; base_estimate costs the supersedes decl generically.
+
+-- H7 (compaction rekey): fold only within one aid (D9); coexisting-author and
+-- coexisting-generation records BOTH survive derived merges with separate
+-- tags; mixed-semiring still E-FMT-002; count overflow still E-TAG-001; base
+-- v2 merges byte-identical behavior (newest-wins).
+
+-- H8 (crash gate): tests/crash_recovery.rs — 9/9 green AND absent from the
+-- round's git diff.
+
+-- H9 (perf): p3_pack_baseline_on_real_corpus ≤ 1.10× the pinned medians
+-- (4.88 / 8.73 / 5.38 s), 3× baseline re-measure first if environment
+-- changed. live_filter enters no legacy read path (the executor still reads
+-- StorageView), so the expected delta is ~0; the gate is measured anyway.
+
+-- H10 (suite): cargo test --lib = baseline 1522/0/28 PLUS this round's new
+-- tests, 0 failed; bench_c2 4/4; harness exit 0 with tier-0 120/0 and tier-1
+-- 5 GREEN / 25 RED verdict-identical, generated report files restored.
+-- Pre-registered P2-test updates (the ONLY intentional expectation changes,
+-- each justified above): live_filter_passes_all_p2_rows_and_drops_tx_invalidated
+-- (D3), edge_provenance_is_path_independent_after_reassert (D8),
+-- aid_depends_on_all_three_components (D7), supersede_is_e_cap_001_supersession
+-- (flips to the real implementation — E-CAP-001 "supersession" ceases to
+-- exist, spec contract (9): only "supersession" flips; functional-resolution /
+-- perspectives / per-predicate-compaction / assertion-granularity /
+-- reverse-run stay typed rejections), and the three D9a merge tests.
+-- #[ignore] additions are counted mechanically from this round's own diff at
+-- finalize (R6 lesson).
+
+-- H11 (inherited unchanged): assert_batch edge groups still require the src
+-- node to exist (P2 wont_fix, documented — commit_batch_derived replicates
+-- the silent-skip routing precondition rather than silently changing it);
+-- C4 dual orders; C6 arity-0 Term rendering; E-VAL/E-CAT boundaries.
