@@ -21,6 +21,37 @@ conflicts; (c) `conflict/5` still records every disagreement as a queryable fact
 author-priority table can be layered on WITHOUT data loss — the conflicts are all still there.
 The doc's §2.3 proposal (author-priority first) is downgraded to an optional future refinement.
 
+## R-1a. AMENDMENT to R-1 (2026-08-22 ~08:4x) — after empirical falsification of ground (b)
+
+The R8 grounding probe falsified R-1's ground (b) BEFORE pre-registration (the escalation clause
+worked as designed): **all 39 measured conflicts are tick ties** (both records carry
+`_generation: 1`, 39/39, direct segment read of manifest 000171), so "max tick" never decides
+them; the canon-order tie-break would pick EXTERNAL_FUNCTION 39/39 while storage physics picks
+GLOBAL_DEFINITION 39/39 — a 39/39 behavior flip, not zero. No configuration-free logical order
+reproduces segment-order physics on ties (segment order is physical, not a function of the
+snapshot; mirroring it read-side would break §9.1 canonical sha).
+
+**Amended order: max tick → author_priority table (optional; empty = skip) → author canon-order
+→ min fid.** The table is seeded with exactly ONE pair:
+`haskell-runtime-globals > haskell-local-refs`, living in `PredicateDecl.author_priority` —
+the P1 normative field that until now was consumed by nothing.
+
+Grounds: (a) SEMANTIC CORRECTNESS decides the tie, not name-length coincidence: the 39 are
+prelude names (`notElem`, `take`, `last`, …) whose canonical home was established by the W23
+haskell-globals migration (Q2 ruling: unify prelude with haskell-globals → HASKELL_GLOBAL /
+GLOBAL_DEFINITION from `<runtime/haskell>`); EXTERNAL_FUNCTION from
+`__grafema_virtual/haskell-local-refs` is the representation that migration retired. Flipping to
+it would regress W23 intent. (b) Zero behavior flip vs today's storage winner is RESTORED
+(GLOBAL_DEFINITION 39/39) — the differential re-pins winner==storage-winner. (c) R-1's rot
+argument targeted a hand-maintained table over 47 authors incl. raw sha256s; a single
+well-known-analyzer pair is not that case, and an EMPTY table degenerates to pure R-1, so the
+configuration burden is one line with a written justification. (d) Freshness still dominates:
+tick is checked FIRST — a newer analysis run beats any priority. (e) conflict/5 is still emitted
+on EVERY multi-live resolution (superset emission stands), so nothing is hidden regardless of
+who wins. Rejected alternatives: last-in-canon-order (data-tuned to these two name lengths,
+fragile); storage-order parity (structurally impossible read-side); pure R-1 with acknowledged
+39/39 flip (semantically regressive per (a)).
+
 ## R-2. Budget exhaustion semantics — O-4
 
 Per ТЗ P1 (explicit): **holes win**. Budget exhaustion produces committed partial results +
