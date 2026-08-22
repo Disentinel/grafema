@@ -1,0 +1,202 @@
+-- Round 009-pre (2026-08-22) — P3 pre-registered expectations, committed BEFORE
+-- the P3 implementation (rofl-fact-model.md rev 2.0 §3.4 / §10.4 row P3:
+-- PredicateStats live in the catalog; base_estimate off the five string names
+-- onto (PredicateDecl, pattern); build-once dispatch onto
+-- (PredicateId, SortOrder, bound_column_mask); E-CAT-002). Mirrors the
+-- round-005-pre precedent (commit 31c74773): this file is its OWN commit ahead
+-- of any implementation commit, so the pre-registration ordering is
+-- git-auditable. Assert-only, never retract. round-009.rofl will carry the run
+-- evidence (expected-vs-found per claim, zero groundless claims).
+--
+-- Committed WITH this file (pre-implementation apparatus, spec HOUSEKEEPING i):
+--   * derive/differential.rs :: p3_pack_baseline_on_real_corpus — the perf-gate
+--     proxy bench (3 bundled packs, full scratch, fresh real-base copy per pack).
+--   * derive/plan_golden.rs + derive/golden/p3_plan_fingerprints.txt — the
+--     plan-equality goldens GENERATED AT HEAD a977886a (pre-P3 planner), one
+--     blake3 fingerprint per (program, stats-profile, rule) over every bundled
+--     stdlib pack in its EVALUATED composition (preludes concatenated) plus the
+--     plan.rs fixture programs, under two stats profiles (prod-magnitude with a
+--     populated per-type oracle, and empty). P3 must reproduce them bit-for-bit.
+--
+-- Baselines captured on worktree HEAD a977886a (+ the bench test only),
+-- MEASURED 2026-08-22 on this VM, release profile, real base
+-- /tmp/rofl-p2-real-base/graph.rfdb = 567,405,250 B (du -sb), symlinked at
+-- .grafema/grafema.rfdb:
+--   depends.dl      full-eval 4.969 / 4.963 / 4.949 s  -> MEDIAN 4.963 s
+--   method_calls.dl full-eval 9.088 / 8.250 / 8.584 s  -> MEDIAN 8.584 s
+--   axum_routes.dl  full-eval 5.186 / 5.527 / 5.517 s  -> MEDIAN 5.517 s
+--   write-back (+0,-0) on all three (edges already present in the copy).
+--   1.10x pass ceilings: depends <= 5.46 s, method_calls <= 9.44 s,
+--   axum_routes <= 6.07 s (median of 3, same machine, same command:
+--   cargo test --release --lib derive::differential::p3_pack_baseline_on_real_corpus -- --ignored --nocapture).
+--   suite: cargo test --lib -- --list = 1535 listed at this commit; run
+--   baseline 1508 passed / 0 failed / 27 ignored once the bench is committed
+--   (26 ignored + this round's bench). Sub-filters (listed):
+--   derive:: 381, datalog:: 268, facts:: 46, graph::engine_v2 72.
+--   harness: tier-0 120 seeds / 0 divergences, tier-1 5 GREEN / 25 RED
+--   (rounds/round-005.report.json members) — every verdict must be unchanged.
+--   known flaky (pre-existing, round-006 F4):
+--   storage_v2::multi_shard::tests::test_commit_batch_performance_scaling —
+--   isolate and re-run solo before attributing.
+
+-- ── Hypotheses ──────────────────────────────────────────────────────
+
+-- H1: PLAN EQUALITY on the base five. The catalog-driven base_estimate
+-- ((PredicateDecl, pattern) with PredicateStats.live_facts populated at plan
+-- time from the derive Stats oracle) and the plan-time (PredicateId, SortOrder)
+-- base-leg resolution produce RulePlans IDENTICAL to HEAD's on (i) the plan.rs
+-- fixture programs and (ii) every bundled stdlib pack (evaluated composition),
+-- under both stats profiles — pinned by the committed golden fingerprints
+-- (struct-level render: literal, pattern, source kind+surface name, join,
+-- estimate, head_domains; not mere acceptance). Ground: with distinct[i] = 0
+-- and max_fanout = 0 (the pre-compaction state) the generalized formulas are
+-- DEFINED to emit exactly today's narrowed_fanout / avg_degree / per-type
+-- oracle values, and live_facts is populated with exactly the magnitudes the
+-- old formulas read (node/type/attr -> total_nodes, edge/incoming ->
+-- total_edges).
+claim_of[a](exp_p3_plan_equality_golden).
+ground[a](exp_p3_plan_equality_golden, unknown_stats_fallbacks_defined_equal_to_head_formulas).
+expected[m](exp_p3_plan_equality_golden, golden_fingerprints_bit_identical_pre_and_post).
+
+-- H2: the two HISTORICAL estimator regression classes stay mechanically dead,
+-- pinned by formula-verbatim unit tests over every (base-five relation x bind
+-- pattern) on a populated Stats:
+--   * bound-endpoint adjacency = avg-degree ceil(E/N), NOT sqrt(E) — the ~300x
+--     hop inflation (920 vs ~3; 3-hop chain 779M = spurious E-PLAN-003);
+--   * const-edge-type narrowing = narrowed_fanout(total_edges) — the depends
+--     54M-vs-1.6k IMPORTS_FROM class;
+--   * attr bound-id = 1; attr key+value = doubly-narrowed; node const-type =
+--     per-type oracle including absent-type ~0.
+-- E-PLAN-003 remains an availability HARD REJECT: zero E-PLAN-003 on the three
+-- real packs (H6) regardless of timing.
+claim_of[a](exp_p3_estimator_regressions_pinned).
+ground[a](exp_p3_estimator_regressions_pinned, formula_verbatim_unit_battery_per_relation_per_pattern).
+expected[m](exp_p3_estimator_regressions_pinned, new_base_estimate_equals_old_formula_output_verbatim).
+
+-- H3: E-CAT-002 lands, with ONE evidence-forced scoping DEVIATION from the
+-- spec's case (a), registered here BEFORE implementation:
+--   SPEC case (a) as written ("positive body atom naming an unregistered
+--   non-builtin predicate -> plan-time E-CAT-002") is UNIMPLEMENTABLE without
+--   breaking two hard gates of the same spec:
+--     * the ROFL F2 fix is regression-pinned: a body literal over a predicate
+--       with no facts and no rules is a LEGAL EMPTY relation
+--       (exec.rs::unknown_predicate_leg_terminates_with_empty_result and
+--       ..._expired_deadline_aborts_with_e_exec_001; harness
+--       translate.ts:329-331 states it verbatim and renderDumpSource depends
+--       on it for factless rels);
+--     * 12 of the 120 tier-0 seeds contain a body literal on a relation with
+--       ZERO defining lines (measured on the committed generator: seeds 22,
+--       31, 42, 43, 55, 76, 81, 82, 85, 88, 97, 117 — seed 97/117 in a
+--       NEGATED position), and the tier-0 baseline 120/0 is a hard gate (5);
+--     * the doc itself (§3.1) normatively grants undeclared predicates the
+--       DEFAULT declaration ("новый предикат не требует ничьего разрешения").
+--   RESOLUTION (recorded, not silent): a body-only predicate at a CONSISTENT
+--   arity is REGISTERED at plan time via the §3.1 default rule and classified
+--   as a legal, catalog-registered EMPTY relation served by the derived-
+--   relation path's missing-relation arm — NEVER by exec.rs:1960-1967's
+--   unknown-name fallback. E-CAT-002 fires at plan time for:
+--     (a-scoped) a program predicate used at an arity CONFLICTING with its
+--       catalog declaration — body-only names used at two arities in one
+--       program (today: silently empty), and rule HEADS conflicting with an
+--       existing decl;
+--     (b) strict head validation per ledger round-005 C3 — INCLUDING a head
+--       shadowing a base-relation name at a different arity (edge/1 over base
+--       edge/3): the base_shadowing_head_still_plans_and_registers_nothing_new
+--       pin is CONSCIOUSLY FLIPPED to expect E-CAT-002. Verified pre-flip: no
+--       bundled stdlib pack and no tier-0 seed heads a base-relation name
+--       (grep of all 43 .dl heads; tier-0 heads are p0-p3/q0-q2);
+--     (d) the FactStore read path: unknown CatalogPredicateId in
+--       sorted_run/prefix_scan migrates E-CAT-001 -> E-CAT-002 (round-007-pre
+--       C10), facts:: tests updated.
+--   CONSEQUENCE for the silent-wrong class: after P3 every predicate name
+--   reaching the executor is either storage-served (Base), registered-derived
+--   (rules or the §3.1 default = explicit empty), or a registry builtin; the
+--   exec.rs:1960-1967 lookup-miss branch is reachable ONLY for the closed
+--   query-engine-shared function set {path, parent_function, resolved_import}
+--   (debug-asserted and documented) — the UNREGISTERED-predicate silently-
+--   empty/vacuous-negation class is dead by construction.
+claim_of[a](exp_p3_ecat002_scoped_and_landed).
+ground[a](exp_p3_ecat002_scoped_and_landed, f2_pin_plus_12_tier0_seeds_plus_doc_3_1_default_rule).
+expected[m](exp_p3_ecat002_scoped_and_landed, ecat002_fires_on_arity_conflict_head_strict_and_read_path_yet_tier0_stays_120_0).
+
+-- H4: build-once dispatch generalizes to ONE form keyed
+-- (PredicateId, SortOrder, bound_column_mask); the four existing
+-- implementations (edge/incoming bound-probe, node membership, attr bound-id,
+-- edge_attr) plus the cached free generators and the anti-join set builder
+-- become instances selected from the plan-resolved key, NOT from string names:
+--   * the type->node alias (exec.rs:1958, :1710) dissolves — a `type` leg is
+--     plan-resolved to node's PredicateId;
+--   * `incoming` is plan-resolved to edge's PredicateId + SortOrder::Reverse
+--     (§6.3: incoming IS edge's reverse run); the catalog KEEPS the P2 alias
+--     decls for the facts layer (Q4 explicitly allows either; the physical
+--     de-aliasing is P6), and additionally maps name -> (id, order) for
+--     dispatch;
+--   * edge_attr (a builtin Function with a build-once arm) keeps an EXPLICITLY
+--     DOCUMENTED builtin-side dispatch per Q2's allowance;
+--   * emission byte-identical: the A/B battery (with_build_once_min_rows 0 vs
+--     usize::MAX) extended over the migrated dispatch; an `incoming` leg and
+--     the equivalent edge-Reverse resolution produce identical tuples;
+--   * the ~240us/probe per-row fallback stays the correctness floor.
+claim_of[a](exp_p3_dispatch_generalized).
+ground[a](exp_p3_dispatch_generalized, four_instances_one_key_ab_multiset_equality).
+expected[m](exp_p3_dispatch_generalized, fast_vs_per_row_byte_identical_and_incoming_equals_edge_reverse).
+
+-- H5: PredicateStats populated at PLAN time from the existing cached oracles
+-- (Q1 resolution): live_facts/live_asserts <- {node,type,attr: total_nodes;
+-- edge,incoming: total_edges} from the engine's version+tombstone-keyed
+-- derive_stats cache — ZERO added per-plan storage cost (engine_v2.rs is NOT
+-- touched); distinct/max_fanout stay 0 and updated_at_tx stays 0 = "compaction
+-- stats never computed" (P6 owns them, with manifest persistence). The
+-- estimator gates its distinct-branch on distinct[i] > 0, so the P3 state
+-- provably reproduces the fallbacks (H1).
+claim_of[a](exp_p3_stats_from_plan_time_oracles).
+ground[a](exp_p3_stats_from_plan_time_oracles, derive_stats_cache_is_the_feed_no_engine_change).
+expected[m](exp_p3_stats_from_plan_time_oracles, live_facts_populated_distinct_zero_updated_at_tx_zero).
+
+-- H6: perf proxy (the bounded stand-in for doc C6's 56.2s-warm pack fence).
+-- Post-P3, 3 runs of p3_pack_baseline_on_real_corpus: per-pack MEDIAN <=
+-- 1.10x the pre-P3 medians (<= 5.46 / 9.44 / 6.07 s); ANY E-PLAN-003 on these
+-- packs is a HARD FAIL regardless of timing (availability — the doc's
+-- regression class). depends_dl_maintain_vs_full_on_real_corpus run once:
+-- maintain stays < full. Caveat carried from the baseline: write-back is
+-- (+0,-0) on the pre-materialized copy — the timed work is parse+plan+join+
+-- diff, which is exactly the derive-path cost C6 polices.
+claim_of[a](exp_p3_perf_proxy_within_fence).
+ground[a](exp_p3_perf_proxy_within_fence, same_command_same_base_median_of_three).
+expected[m](exp_p3_perf_proxy_within_fence, medians_leq_1p10x_and_zero_eplan003_and_maintain_lt_full).
+
+-- H7: full suite green with the CONSCIOUSLY flipped/retired pins, enumerated
+-- here in advance (nothing else flips):
+--   * plan.rs::catalog_registration_changes_no_plan — EXTENDED (the catalog
+--     now HAS a planning effect by design; the test's new form pins that the
+--     threaded and internal-catalog entries still agree, and that base legs
+--     resolve to (id, order));
+--   * plan.rs::base_shadowing_head_still_plans_and_registers_nothing_new —
+--     FLIPPED to expect E-CAT-002 (H3b);
+--   * catalog.rs::base_names_match_plan_base_relations and
+--     catalog.rs::base_relations_registered_with_executor_arities — RETIRED /
+--     REWRITTEN with the BASE_RELATIONS const they guard (the catalog itself
+--     becomes the single owner of the base name set).
+-- Expected counts: 0 failed, 27 ignored, passed >= 1508 + new P3 tests;
+-- sub-filters derive:: / datalog:: / facts:: / graph::engine_v2 individually
+-- green (engine_v2 includes the 60s-bounded method_calls pack fixture test).
+claim_of[a](exp_p3_suite_green_with_named_flips).
+ground[a](exp_p3_suite_green_with_named_flips, flip_list_closed_in_advance).
+expected[m](exp_p3_suite_green_with_named_flips, zero_failures_ignored_27_only_named_pins_changed).
+
+-- H8: conformance harness verdicts unchanged: exit 0, tier-0 120/0 (including
+-- the 12 empty-relation seeds of H3), tier-1 exactly 5 GREEN / 25 RED, same
+-- members; generated report files restored afterwards
+-- (git checkout -- conformance-report.json conformance-run-meta.json
+-- _ai/research/rofl-conformance-report.md).
+claim_of[a](exp_p3_harness_unchanged).
+ground[a](exp_p3_harness_unchanged, engine_acceptance_preserved_for_all_seed_shapes).
+expected[m](exp_p3_harness_unchanged, exit0_tier0_120_0_tier1_5green_25red_same_members).
+
+-- H9: NO storage-format, wire, or manifest change (compaction-computed
+-- distinct/max_fanout + manifest persistence are P6 by name; graph write-back
+-- and eval wire surface untouched). Gate: git diff touches no storage_v2
+-- format writer, no wire handler shapes, no manifest schema.
+claim_of[a](exp_p3_zero_format_wire_manifest_change).
+ground[a](exp_p3_zero_format_wire_manifest_change, p3_is_planner_executor_catalog_facts_readpath_only).
+expected[m](exp_p3_zero_format_wire_manifest_change, git_diff_scope_check_clean).

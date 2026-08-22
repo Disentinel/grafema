@@ -602,6 +602,50 @@ fn depends_dl_maintain_vs_full_on_real_corpus() {
     );
 }
 
+/// P3 perf-gate proxy (rofl-fact-model.md §3.4 sequencing gate / C6): full-scratch
+/// wall-clock of three bundled real rule packs (`depends.dl`, `method_calls.dl`,
+/// `axum_routes.dl`) on the real corpus, each pack on its OWN fresh copy of the store
+/// (so one pack's write-back never shifts another's base). This is the bounded proxy
+/// for the pack-phase baseline this VM cannot run end-to-end: the generalized
+/// `(PredicateId, SortOrder, bound_mask)` dispatch and the catalog-driven
+/// `base_estimate` must keep the MEDIAN of 3 runs of each pack within 1.10× of the
+/// pre-P3 medians recorded in `run-migration/rounds/round-009-pre.rofl`.
+///
+/// Run with:
+///   cargo test --release --lib derive::differential::p3_pack_baseline_on_real_corpus -- --ignored --nocapture
+#[test]
+#[ignore = "manual real-data perf baseline; run with --ignored --release"]
+fn p3_pack_baseline_on_real_corpus() {
+    use crate::graph::GraphEngineV2;
+    use std::time::Instant;
+
+    let dataset = repo_path(".grafema/grafema.rfdb");
+    if !dataset.join("db_config.json").exists() {
+        panic!(
+            "real dataset not found at {} (expected a MultiShardStore dir with db_config.json)",
+            dataset.display()
+        );
+    }
+    let packs: &[(&str, &str)] = &[
+        ("depends.dl", crate::derive::stdlib::DEPENDS_DL),
+        ("method_calls.dl", crate::derive::stdlib::METHOD_CALLS_DL),
+        ("axum_routes.dl", crate::derive::stdlib::AXUM_ROUTES_DL),
+    ];
+    for (name, src) in packs {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let work = tmp.path().join("grafema.rfdb");
+        copy_dir_all(&dataset, &work).expect("copy real dataset into temp dir");
+        let _ = std::fs::remove_file(work.join("LOCK"));
+        let mut engine = GraphEngineV2::open(&work).expect("open real dataset");
+        let t0 = Instant::now();
+        let (added, removed) = engine
+            .eval_derive_materialize_cached(src, EvalLimits::none())
+            .expect("full materialize");
+        let dt = t0.elapsed();
+        println!("[P3 baseline] {name}: full-eval {dt:?} | writeback (+{added},-{removed})");
+    }
+}
+
 /// Ground-truth probe (Stage 2): inspect the SHAPE of `IMPORTS_FROM` edges in the real
 /// store before authoring the `depends.dl` rule. Answers: what node TYPES do the edge
 /// endpoints have, and do those endpoints + MODULE nodes carry a `file` attr whose value

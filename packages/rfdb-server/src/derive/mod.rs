@@ -57,6 +57,9 @@ pub mod stdlib;
 #[cfg(test)]
 mod differential;
 
+#[cfg(test)]
+mod plan_golden;
+
 use crate::datalog::EvalLimits;
 
 use binding::{BindingConflict, BindingTable};
