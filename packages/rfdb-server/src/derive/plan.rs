@@ -1918,6 +1918,62 @@ mod tests {
         }
     }
 
+    // ── P4 (ledger round-010-pre H6/D13): supersedes costs through the ──
+    // ── catalog-driven estimator with ZERO planner code change ───────
+
+    /// §10.4 P4 rationale claimed at the P3 seam: (i) `base_estimate` costs the
+    /// supersedes decl + REAL stats generically (no name special-case — the
+    /// §3.1 open-space arm), so the §2.4 anti-join build side enters the plan
+    /// arithmetic; (ii) a program with a negated supersedes leg registers and
+    /// plans WITHOUT the unknown-predicate E-CAT-002 path (§3.1 body-only
+    /// default; E-CAT-002 scope per round-009-pre H3 unchanged).
+    #[test]
+    fn p4_supersedes_costs_through_base_estimate_and_plans_without_e_cat_002() {
+        // (i) the estimator is a pure function of (decl, atom, pattern, stats).
+        let mut decl = crate::derive::catalog::PredicateCatalog::supersedes_decl();
+        decl.stats.live_facts = 1000;
+        decl.stats.live_asserts = 1000;
+        let atom = Atom::new("supersedes", vec![v("N"), v("O")]);
+        let free = base_estimate(
+            &decl,
+            &atom,
+            &[ArgMode::Free, ArgMode::Free],
+            &stats(0, 0),
+        );
+        assert_eq!(free, 1000, "build side = live supersedes facts");
+        let probed = base_estimate(
+            &decl,
+            &atom,
+            &[ArgMode::Bound, ArgMode::Free],
+            &stats(0, 0),
+        );
+        assert!(
+            probed < free && probed >= 1,
+            "a keyed probe narrows below the build side ({probed} vs {free})"
+        );
+
+        // (ii) negated supersedes leg plans cleanly against a catalog carrying
+        // the P4 decl (the facts backend declares it at construction).
+        let src = r#"
+            dead(X) :- node(X, "FUNCTION"), \+ supersedes(X, X).
+        "#;
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let mut catalog = crate::derive::catalog::PredicateCatalog::with_base_relations();
+        catalog
+            .declare(crate::derive::catalog::PredicateCatalog::supersedes_decl())
+            .expect("declare supersedes");
+        let plans = plan_program_with_catalog(&rules, &strat, &stats(1000, 1000), &mut catalog)
+            .expect("a negated supersedes leg must NOT hit the unknown-predicate path");
+        assert_eq!(plans.len(), 1);
+        // The declared decl survived registration un-conflicted (arity 2,
+        // Adjacency with the §2.4 reverse run on c1).
+        let d = catalog.get("supersedes").expect("still declared");
+        assert_eq!(d.arity, 2);
+        assert_eq!(d.reverse.as_deref(), Some(&[1u8, 0u8][..]));
+    }
+
     // ── P1 catalog wiring: zero planner behavior change ─────────────
 
     /// P3 EXTENSION of the P1 minimal-wiring differential (round-009 H7, consciously

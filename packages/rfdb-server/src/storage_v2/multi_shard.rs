@@ -40,7 +40,7 @@ use crate::storage_v2::read_snapshot::{ReadSnapshot, SegmentCache};
 use crate::storage_v2::segment::{self, EdgeSegmentV2, NodeSegmentV2};
 use crate::storage_v2::shard::{Shard, ShardDiagnostics, TombstoneSet};
 use crate::storage_v2::shard_planner::ShardPlanner;
-use crate::storage_v2::types::{CommitDelta, EdgeRecordV2, NodeRecordV2, SegmentType, extract_file_context};
+use crate::storage_v2::types::{CommitDelta, DerivedFields, EdgeRecordV2, NodeRecordV2, SegmentType, extract_file_context};
 
 // ── Database Config ────────────────────────────────────────────────
 
@@ -2572,6 +2572,285 @@ impl MultiShardStore {
             changed_edge_types,
             manifest_version,
         })
+    }
+}
+
+// ── Facts-path derived commit + version-granular reads (rofl P4) ──────
+//
+// The FactStore adapter's write/read seam for assertion physics (ledger
+// round-010-pre D4/D8): writes land in v3 (derived-column) segments so
+// coexisting-author assertions survive compaction (the rekeyed derived merge),
+// and reads can surface EVERY live record version — not just the newest-wins
+// winner — together with its derived columns. Purely additive: the legacy
+// commit/flush/tombstone machinery above is untouched.
+impl MultiShardStore {
+    /// Additive derived commit: route + flush the given records into fresh v3
+    /// segments (one per shard per kind) and publish a manifest version.
+    /// No changed_files, no tombstoning — a facts-layer batch is additive by
+    /// definition (§5.5: retraction is an explicit SupersedeScope, never a
+    /// side effect of a write).
+    ///
+    /// Inherited P2 wont_fix, kept deliberately: edges whose src node is not
+    /// yet routable (absent from `node_to_shard`) are SILENTLY SKIPPED with a
+    /// warn, exactly like [`Self::upsert_edges`] — the facts layer documents
+    /// the precondition instead of silently changing it.
+    pub fn commit_batch_derived(
+        &mut self,
+        nodes: Vec<(NodeRecordV2, DerivedFields)>,
+        edges: Vec<(EdgeRecordV2, DerivedFields)>,
+        manifest_store: &mut ManifestStore,
+    ) -> Result<u64> {
+        // Within one batch the (author, tick) is constant, so a same-record-key
+        // re-add is a same-aid duplicate: last wins (WriteBuffer semantics).
+        let mut node_dedup: HashMap<u128, (NodeRecordV2, DerivedFields)> = HashMap::new();
+        for (n, f) in nodes {
+            node_dedup.insert(n.id, (n, f));
+        }
+        let mut edge_dedup: HashMap<(u128, u128, String), (EdgeRecordV2, DerivedFields)> =
+            HashMap::new();
+        for (e, f) in edges {
+            edge_dedup.insert((e.src, e.dst, e.edge_type.clone()), (e, f));
+        }
+
+        // Route nodes by file directory (the legacy planner), keeping the
+        // node_to_shard / file_to_node_ids invariants for later edge routing.
+        let mut nodes_by_shard: HashMap<u16, Vec<(NodeRecordV2, DerivedFields)>> = HashMap::new();
+        for (_, (node, fields)) in node_dedup {
+            let shard_id = self.planner.compute_shard_id(&node.file);
+            self.node_to_shard.insert(node.id, shard_id);
+            self.file_to_node_ids
+                .entry(node.file.clone())
+                .or_default()
+                .insert(node.id);
+            nodes_by_shard.entry(shard_id).or_default().push((node, fields));
+        }
+        let mut edges_by_shard: HashMap<u16, Vec<(EdgeRecordV2, DerivedFields)>> = HashMap::new();
+        let mut skipped = 0u64;
+        for (_, (edge, fields)) in edge_dedup {
+            match self.node_to_shard.get(&edge.src).copied() {
+                Some(shard_id) => {
+                    edges_by_shard.entry(shard_id).or_default().push((edge, fields));
+                }
+                None => skipped += 1,
+            }
+        }
+        if skipped > 0 {
+            tracing::warn!(
+                "commit_batch_derived: skipped {} edges with unknown source node",
+                skipped
+            );
+        }
+
+        // Deterministic segment content: sort by (record key, provenance).
+        for batch in nodes_by_shard.values_mut() {
+            batch.sort_by(|(a, fa), (b, fb)| {
+                a.id.cmp(&b.id)
+                    .then_with(|| fa.provenance.generation.cmp(&fb.provenance.generation))
+                    .then_with(|| a.metadata.cmp(&b.metadata))
+            });
+        }
+        for batch in edges_by_shard.values_mut() {
+            batch.sort_by(|(a, fa), (b, fb)| {
+                (a.src, a.dst, &a.edge_type, fa.provenance.generation, &a.metadata)
+                    .cmp(&(b.src, b.dst, &b.edge_type, fb.provenance.generation, &b.metadata))
+            });
+        }
+
+        // Flush per shard into fresh v3 segments (bypassing the WriteBuffer).
+        let mut new_node_descs: Vec<SegmentDescriptor> = Vec::new();
+        let mut new_edge_descs: Vec<SegmentDescriptor> = Vec::new();
+        let shard_ids: Vec<u16> = {
+            let mut ids: HashSet<u16> = nodes_by_shard.keys().copied().collect();
+            ids.extend(edges_by_shard.keys().copied());
+            let mut ids: Vec<u16> = ids.into_iter().collect();
+            ids.sort_unstable();
+            ids
+        };
+        for shard_id in shard_ids {
+            let shard_nodes = nodes_by_shard.remove(&shard_id).unwrap_or_default();
+            let shard_edges = edges_by_shard.remove(&shard_id).unwrap_or_default();
+            let node_seg_id = if shard_nodes.is_empty() {
+                None
+            } else {
+                Some(manifest_store.next_segment_id())
+            };
+            let edge_seg_id = if shard_edges.is_empty() {
+                None
+            } else {
+                Some(manifest_store.next_segment_id())
+            };
+            let flush_result = self.shards[shard_id as usize].flush_derived_with_ids(
+                shard_nodes,
+                shard_edges,
+                node_seg_id,
+                edge_seg_id,
+            )?;
+            if let Some(result) = flush_result {
+                if let (Some(meta), Some(seg_id)) = (&result.node_meta, node_seg_id) {
+                    new_node_descs.push(SegmentDescriptor::from_meta(
+                        seg_id,
+                        SegmentType::Nodes,
+                        Some(shard_id),
+                        meta.clone(),
+                    ));
+                }
+                if let (Some(meta), Some(seg_id)) = (&result.edge_meta, edge_seg_id) {
+                    new_edge_descs.push(SegmentDescriptor::from_meta(
+                        seg_id,
+                        SegmentType::Edges,
+                        Some(shard_id),
+                        meta.clone(),
+                    ));
+                }
+            }
+        }
+
+        // Publish: an O(Δ) manifest edit with NO tombstone delta; checkpoint
+        // sets pass through the current cumulative tombstones unchanged.
+        let manifest_version = manifest_store.current().version + 1;
+        let mut stats = manifest_store.current().stats.clone();
+        for s in &new_node_descs {
+            stats.total_nodes += s.record_count;
+            stats.node_segment_count += 1;
+        }
+        for s in &new_edge_descs {
+            stats.total_edges += s.record_count;
+            stats.edge_segment_count += 1;
+        }
+        let cp_tomb_nodes: Vec<u128> = manifest_store.current().tombstoned_node_ids.clone();
+        let cp_tomb_edges: Vec<(u128, u128, String)> =
+            manifest_store.current().tombstoned_edge_keys.clone();
+        let edit = ManifestEdit {
+            version: manifest_version,
+            parent_version: manifest_version.saturating_sub(1),
+            base_checkpoint: 0,
+            created_at: 0,
+            added_node_segments: new_node_descs,
+            added_edge_segments: new_edge_descs,
+            removed_node_segment_ids: Vec::new(),
+            removed_edge_segment_ids: Vec::new(),
+            added_tombstone_nodes: Vec::new(),
+            removed_tombstone_nodes: Vec::new(),
+            added_tombstone_edges: Vec::new(),
+            removed_tombstone_edges: Vec::new(),
+            l1_node_segments: None,
+            l1_edge_segments: None,
+            last_compaction: None,
+            tags: HashMap::new(),
+            stats,
+        };
+        manifest_store.commit_edit(edit, &cp_tomb_nodes, &cp_tomb_edges)?;
+        Ok(manifest_version)
+    }
+
+    /// Does ANY segment visible in `snap` carry derived (v3) columns? The
+    /// facts projection uses this to dispatch between the legacy winner-collapse
+    /// fast paths (pure-v2 store) and the version-granular grouped projection.
+    pub fn any_derived_segments_at(&self, snap: &ReadSnapshot) -> bool {
+        snap.node_segments
+            .iter()
+            .chain(snap.l1_node_segments.iter())
+            .any(|desc| {
+                self.with_node_segment(desc, |seg| seg.has_derived_columns())
+                    .unwrap_or(false)
+            })
+            || snap
+                .edge_segments
+                .iter()
+                .chain(snap.l1_edge_segments.iter())
+                .any(|desc| {
+                    self.with_edge_segment(desc, |seg| seg.has_derived_columns())
+                        .unwrap_or(false)
+                })
+    }
+
+    /// EVERY live node record version in `snap`, newest-first (L0 newest→oldest,
+    /// then L1 — the same global order the winner paths resolve by), together
+    /// with its derived columns when the segment carries them (`None` = v2
+    /// segment). Tombstones kill ALL versions of an id. NO newest-wins dedup —
+    /// the facts projection groups versions itself (ledger round-010-pre D8).
+    pub fn iter_node_versions_at(
+        &self,
+        snap: &ReadSnapshot,
+    ) -> Result<Vec<(NodeRecordV2, Option<DerivedFields>)>> {
+        let mut results: Vec<(NodeRecordV2, Option<DerivedFields>)> = Vec::new();
+        for desc in snap
+            .node_segments
+            .iter()
+            .rev()
+            .chain(snap.l1_node_segments.iter())
+        {
+            let seg_rows = self.with_node_segment(desc, |seg| -> Result<Vec<_>> {
+                let derived = seg.has_derived_columns();
+                let mut rows = Vec::new();
+                for j in 0..seg.record_count() {
+                    let id = seg.get_id(j);
+                    if snap.tombstones.contains_node(id) {
+                        continue;
+                    }
+                    let fields = if derived {
+                        Some(DerivedFields {
+                            provenance: seg.provenance(j),
+                            tag: seg.tag(j)?,
+                            tx_created: seg.tx_created(j),
+                            tx_invalidated: seg.tx_invalidated(j),
+                        })
+                    } else {
+                        None
+                    };
+                    rows.push((seg.get_record(j), fields));
+                }
+                Ok(rows)
+            });
+            if let Some(rows) = seg_rows {
+                results.extend(rows?);
+            }
+        }
+        Ok(results)
+    }
+
+    /// Edge companion of [`Self::iter_node_versions_at`]: every live edge
+    /// record version, newest-first, with optional derived columns.
+    pub fn iter_edge_versions_at(
+        &self,
+        snap: &ReadSnapshot,
+    ) -> Result<Vec<(EdgeRecordV2, Option<DerivedFields>)>> {
+        let mut results: Vec<(EdgeRecordV2, Option<DerivedFields>)> = Vec::new();
+        for desc in snap
+            .edge_segments
+            .iter()
+            .rev()
+            .chain(snap.l1_edge_segments.iter())
+        {
+            let seg_rows = self.with_edge_segment(desc, |seg| -> Result<Vec<_>> {
+                let derived = seg.has_derived_columns();
+                let mut rows = Vec::new();
+                for j in 0..seg.record_count() {
+                    let src = seg.get_src(j);
+                    let dst = seg.get_dst(j);
+                    let et = seg.get_edge_type(j);
+                    if snap.tombstones.contains_edge(src, dst, et) {
+                        continue;
+                    }
+                    let fields = if derived {
+                        Some(DerivedFields {
+                            provenance: seg.provenance(j),
+                            tag: seg.tag(j)?,
+                            tx_created: seg.tx_created(j),
+                            tx_invalidated: seg.tx_invalidated(j),
+                        })
+                    } else {
+                        None
+                    };
+                    rows.push((seg.get_record(j), fields));
+                }
+                Ok(rows)
+            });
+            if let Some(rows) = seg_rows {
+                results.extend(rows?);
+            }
+        }
+        Ok(results)
     }
 }
 

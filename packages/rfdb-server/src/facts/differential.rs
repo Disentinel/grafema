@@ -1326,6 +1326,307 @@ fn state_sha_deterministic_across_two_processes() {
     );
 }
 
+// ── P4: the C3 reconciliation gate + post-supersession pairs (round-010) ──
+
+/// One derived-committed node record with a Count tag (the C3 fixture shape).
+fn count_tagged_node(
+    id: u128,
+    ty: &str,
+    author: &str,
+    tick: u64,
+    weight: i64,
+) -> (NodeRecordV2, crate::storage_v2::types::DerivedFields) {
+    use crate::derive::tag::CountTag;
+    use crate::storage_v2::types::{DerivedFields, ProvenanceV2, TagV2, COUNTTAG_SEMIRING_ID};
+    let rec = node_rec(
+        id,
+        ty,
+        "",
+        "derived/c3.rofl",
+        &meta(&[
+            ("_source", author.into()),
+            ("_generation", tick.into()),
+        ]),
+    );
+    let fields = DerivedFields {
+        provenance: ProvenanceV2 {
+            rule_ast_hash: 0,
+            generation: tick,
+        },
+        tag: TagV2 {
+            semiring_id: COUNTTAG_SEMIRING_ID,
+            bytes: CountTag(weight).to_le_bytes(),
+        },
+        tx_created: 0,
+        tx_invalidated: TX_OPEN,
+    };
+    (rec, fields)
+}
+
+/// §10.5 C3, the tag_fold arm — CLAIMED (ledger round-010-pre H1): one fact
+/// with the Count semiring asserted by TWO authors keeps |live assertions| == 2
+/// with SEPARATE weights across a FullMerge compact(), and the canonical state
+/// sha is byte-identical before/after AND across two OS processes. This is
+/// exactly the case the record-key tag_fold would have collapsed into one.
+#[test]
+fn c3_two_author_count_fact_survives_compaction_with_identical_sha() {
+    use crate::derive::tag::CountTag;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path().join("c3-store");
+    let subject: u128 = 4242;
+    {
+        let fs = LsmFactStore::create(&dir, 2).expect("create durable store");
+        // Two authors assert the SAME tuple in separate commits (separate v3
+        // segments — ledger D4), each with its own Count weight.
+        fs.commit_derived_tagged(
+            vec![count_tagged_node(subject, "DERIVED", "alice", 1, 3)],
+            vec![],
+        );
+        fs.commit_derived_tagged(
+            vec![count_tagged_node(subject, "DERIVED", "bob", 1, 5)],
+            vec![],
+        );
+
+        let s = fs.snapshot();
+        let sha_before = fs.canonical_state_sha(&s);
+        let check = |fs: &LsmFactStore, label: &str| {
+            let s = fs.snapshot();
+            let rows: Vec<FactRow> = fs
+                .sorted_run(&s, pred(fs, "node"), PERSPECTIVE_MAIN, SortOrder::Forward)
+                .expect("run")
+                .collect();
+            let live: Vec<FactRow> = fs
+                .live_filter(&s, Box::new(rows.into_iter()))
+                .collect();
+            assert_eq!(live.len(), 1, "{label}: ONE fact");
+            let row = &live[0];
+            assert_eq!(
+                row.assertions.len(),
+                2,
+                "{label}: |live assertions| == 2 — never folded across aids (§3.2)"
+            );
+            let mut weights: Vec<(String, i64)> = row
+                .assertions
+                .iter()
+                .map(|a| {
+                    (
+                        fs.author_name(a.author).expect("interned"),
+                        CountTag::from_le_bytes(&a.tag.bytes)
+                            .expect("count tag survives")
+                            .0,
+                    )
+                })
+                .collect();
+            weights.sort();
+            assert_eq!(
+                weights,
+                vec![("alice".to_string(), 3), ("bob".to_string(), 5)],
+                "{label}: separate per-assertion weights"
+            );
+        };
+        check(&fs, "pre-compaction");
+
+        fs.compact(None, super::CompactionTier::FullMerge)
+            .expect("full merge");
+        check(&fs, "post-compaction");
+        let s = fs.snapshot();
+        assert_eq!(
+            sha_before,
+            fs.canonical_state_sha(&s),
+            "C3: compaction is physics, not truth — sha byte-identical"
+        );
+    }
+    let _ = std::fs::remove_file(dir.join("LOCK"));
+
+    // Cross-process: the sha of the compacted two-author store from a second
+    // OS process equals the in-process sha (subprocess helper precedent).
+    let in_process = {
+        let fs = LsmFactStore::open(&dir).expect("reopen");
+        let s = fs.snapshot();
+        hex32(&fs.canonical_state_sha(&s))
+    };
+    let _ = std::fs::remove_file(dir.join("LOCK"));
+    let exe = std::env::current_exe().expect("test exe");
+    let out = std::process::Command::new(exe)
+        .args([
+            "facts::differential::state_sha_subprocess_helper",
+            "--exact",
+            "--nocapture",
+        ])
+        .env("ROFL_P2_SHA_DIR", &dir)
+        .output()
+        .expect("spawn helper process");
+    assert!(
+        out.status.success(),
+        "helper failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let other_process = stdout
+        .lines()
+        .find_map(|l| l.strip_prefix("ROFL_P2_SHA="))
+        .unwrap_or_else(|| panic!("no sha line in helper output: {stdout}"));
+    assert_eq!(
+        in_process, other_process,
+        "C3: multi-assertion sha is process-invariant"
+    );
+}
+
+/// Post-supersession differential (round-010-pre H5): after supersede(), the
+/// live reads drop EXACTLY the victim assertions; the reserved records'
+/// legacy-view visibility matches the pre-registered D1 rule (node facts ==
+/// node_count_at − reserved rows; zero node/type/attr leakage); and the sha
+/// stays physics-invariant across compaction WITH live supersedes facts
+/// present.
+#[test]
+fn post_supersession_reads_and_legacy_visibility() {
+    use super::lsm::SUPERSEDES_NODE_TYPE;
+    use super::{SubjectSet, SupersedeScope};
+
+    let fs = LsmFactStore::ephemeral(2);
+    let (nodes, edges) = handcrafted();
+    fs.commit_legacy(nodes, edges, &[]);
+    // A facts-path author adds two nodes and an edge on top of the fixture.
+    let carol = fs.intern_author("carol");
+    let node_group = |id: u128, name: &str| FactGroup::Node {
+        facts: vec![
+            GroupFact {
+                predicate: pred(&fs, "node"),
+                tuple: vec![Value::Id(id), Value::Str("FUNCTION".into())].into(),
+            },
+            GroupFact {
+                predicate: pred(&fs, "attr"),
+                tuple: vec![
+                    Value::Id(id),
+                    Value::Str("name".into()),
+                    Value::Str(name.into()),
+                ]
+                .into(),
+            },
+        ],
+    };
+    fs.assert_batch(AssertBatch {
+        perspective: PERSPECTIVE_MAIN,
+        author: carol,
+        tick: 50,
+        groups: vec![node_group(500, "f500"), node_group(501, "f501")],
+    })
+    .expect("carol nodes");
+    fs.assert_batch(AssertBatch {
+        perspective: PERSPECTIVE_MAIN,
+        author: carol,
+        tick: 51,
+        groups: vec![FactGroup::Edge {
+            fact: GroupFact {
+                predicate: pred(&fs, "edge"),
+                tuple: vec![Value::Id(500), Value::Id(501), Value::Str("CALLS".into())].into(),
+            },
+        }],
+    })
+    .expect("carol edge");
+
+    // Live baseline BEFORE supersession.
+    let live_multiset = |fs: &LsmFactStore, name: &str| -> Vec<String> {
+        let s = fs.snapshot();
+        let rows: Vec<FactRow> = fs
+            .sorted_run(&s, pred(fs, name), PERSPECTIVE_MAIN, SortOrder::Forward)
+            .expect("run")
+            .collect();
+        fs.live_filter(&s, Box::new(rows.into_iter()))
+            .flat_map(|r| {
+                let tuple = format!("{:?}", r.key.tuple);
+                r.assertions
+                    .iter()
+                    .map(|a| {
+                        format!(
+                            "{tuple}|{}|{}",
+                            fs.author_name(a.author).expect("interned"),
+                            a.tick
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    };
+    let mut expected: std::collections::HashMap<&str, Vec<String>> =
+        std::collections::HashMap::new();
+    for name in ["node", "type", "edge", "incoming", "attr"] {
+        // The expected POST state = pre state minus carol's subject-500/501
+        // assertions (every fixture fact is a foreign author's).
+        expected.insert(
+            name,
+            live_multiset(&fs, name)
+                .into_iter()
+                .filter(|row| !row.contains("|carol|"))
+                .collect(),
+        );
+    }
+
+    // Supersede ALL of carol.
+    fs.supersede(
+        SupersedeScope {
+            author: carol,
+            perspective: PERSPECTIVE_MAIN,
+            predicate: None,
+            subject_set: SubjectSet::All,
+        },
+        100,
+    )
+    .expect("supersede carol");
+
+    for name in ["node", "type", "edge", "incoming", "attr"] {
+        assert_multiset_eq(
+            &format!("post-supersession '{name}'"),
+            live_multiset(&fs, name),
+            expected.remove(name).unwrap(),
+        );
+    }
+
+    // D1 legacy-view visibility rule.
+    let s = fs.snapshot();
+    let pinned = fs.read_snapshot_of(&s);
+    {
+        let store = fs.store_read();
+        let reserved = store
+            .find_nodes_at(&pinned, Some(SUPERSEDES_NODE_TYPE), None)
+            .len();
+        assert!(reserved > 0, "reserved records visible as legacy rows");
+        let node_facts: Vec<FactRow> = fs
+            .sorted_run(&s, pred(&fs, "node"), PERSPECTIVE_MAIN, SortOrder::Forward)
+            .expect("run")
+            .collect();
+        assert_eq!(
+            node_facts.len(),
+            store.node_count_at(&pinned) - reserved,
+            "node facts == legacy node_count − reserved rows (D1)"
+        );
+    }
+
+    // Sha is physics-invariant across compaction WITH live supersedes facts.
+    let sha_before = fs.canonical_state_sha(&s);
+    let pre_compaction: Vec<(&str, Vec<String>)> = ["node", "edge", "attr", "supersedes"]
+        .into_iter()
+        .map(|name| (name, live_multiset(&fs, name)))
+        .collect();
+    fs.compact(None, super::CompactionTier::FullMerge)
+        .expect("compact");
+    let s = fs.snapshot();
+    assert_eq!(
+        sha_before,
+        fs.canonical_state_sha(&s),
+        "supersession state survives compaction physics unchanged"
+    );
+    // And the LIVE reads are unchanged by compaction too.
+    for (name, before) in pre_compaction {
+        assert_multiset_eq(
+            &format!("post-compaction live '{name}'"),
+            live_multiset(&fs, name),
+            before,
+        );
+    }
+}
+
 // ── the real-base variant (ignored; run once for the round-007 ledger) ──
 
 /// Full-corpus differential over a READ-ONLY copy of the production base.

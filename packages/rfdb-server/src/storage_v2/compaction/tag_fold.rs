@@ -1,12 +1,16 @@
-//! Compaction-⊕: the per-key tag fold (spec §8.2).
+//! Compaction-⊕: the per-AID tag fold (spec §8.2; fold key normative in
+//! rofl-fact-model.md §3.2, P4 / ledger round-010-pre D9).
 //!
-//! When compaction merges two records with the SAME fact key (node id /
-//! `(src,dst,type)`), their provenance tags must be combined with the semiring `⊕`
+//! When compaction merges two records with the SAME assertion identity — one
+//! `(record key, author, tick)`, i.e. one aid; the KEYING lives in
+//! `compaction/merge.rs` — their tags must be combined with the semiring `⊕`
 //! (`plus`), NOT deduplicated — deduplication is only correct for the idempotent
 //! `BoolTag` (set semantics). For `CountTag` two derivations of one fact must SUM;
-//! for `ConfTag` the most-confident wins (`min`). This module is the single point
-//! where the byte-level segment tag (`TagV2`) is bridged to the typed semiring
-//! algebra in [`crate::derive::tag`], folded, and re-encoded.
+//! for `ConfTag` the most-confident wins (`min`). Across DIFFERENT aids tags are
+//! never folded (two authors' assertions of one fact stay two assertions — the
+//! §9.1/§10.5 C3 gate). This module is the single point where the byte-level
+//! segment tag (`TagV2`) is bridged to the typed semiring algebra in
+//! [`crate::derive::tag`], folded, and re-encoded.
 //!
 //! Invariants:
 //! * **I10** (compaction output equals an explicit fold on fixtures): the fold here

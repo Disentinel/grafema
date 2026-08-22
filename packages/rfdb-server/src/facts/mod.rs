@@ -240,6 +240,16 @@ pub enum FactGroup {
         /// The `edge/3` fact.
         fact: GroupFact,
     },
+    /// One `supersedes/2` fact (P4, ledger round-010-pre D12): tuple
+    /// `[Id(aid_new), Id(aid_old)]` over the reserved supersedes predicate.
+    /// Subject to the E-SUP-001 store boundary: the victim `aid_old` must
+    /// resolve to a known assertion in the pre-commit snapshot and the batch
+    /// tick must be STRICTLY greater than the victim's tick (§2.4 — this is
+    /// what makes supersedes cycles unconstructible).
+    Supersedes {
+        /// The `supersedes/2` fact.
+        fact: GroupFact,
+    },
 }
 
 /// A write batch (§7.2). `author`/`tick` are stamped onto every asserted fact —
@@ -414,15 +424,21 @@ pub fn fid(
     Ok(u128::from_le_bytes(first16))
 }
 
-/// `aid = BLAKE3(fid ‖ author_u32 ‖ tick_u64)` (§2.1), truncated to u128 LE like
-/// `fid`. Uses the runtime-interned author id — `aid` is NOT part of any P2
-/// canonical artifact (`supersedes` is empty until P4; the P4 owner revisits
-/// aid canonicalization, ledger round-007-pre C9 note).
-pub fn aid(fid: u128, author: AuthorId, tick: u64) -> u128 {
-    let mut input = [0u8; 16 + 4 + 8];
-    input[..16].copy_from_slice(&fid.to_le_bytes());
-    input[16..20].copy_from_slice(&author.0.to_le_bytes());
-    input[20..].copy_from_slice(&tick.to_le_bytes());
+/// `aid = BLAKE3(fid ‖ varint(|author_name|) ‖ author_name ‖ tick_u64)` (§2.1),
+/// truncated to u128 LE like `fid`.
+///
+/// P4 canonicalization (ledger round-010-pre D7, resolving round-007-pre C9):
+/// the aid hashes the canonical author NAME, not the runtime-interned u32 —
+/// supersedes fact tuples HASH aids into fids (canonical artifacts), and §9.2
+/// forbids interned ids in canonical artifacts (they depend on declaration
+/// order and process; the cross-process sha gate would fail). The §2.2
+/// `author_u32` form is the physical shorthand for the same identity.
+pub fn aid(fid: u128, author_name: &str, tick: u64) -> u128 {
+    let mut input = Vec::with_capacity(16 + 1 + author_name.len() + 8);
+    input.extend_from_slice(&fid.to_le_bytes());
+    push_varint(&mut input, author_name.len() as u64);
+    input.extend_from_slice(author_name.as_bytes());
+    input.extend_from_slice(&tick.to_le_bytes());
     let hash = blake3::hash(&input);
     let mut first16 = [0u8; 16];
     first16.copy_from_slice(&hash.as_bytes()[..16]);
@@ -483,10 +499,16 @@ pub trait FactStore: Sync {
     /// derivation witnesses receive fids as VALUES and need this).
     fn tuple(&self, s: &Snapshot, fid: u128) -> Option<Box<[Value]>>;
 
-    /// Liveness (§2.4): drop dead assertions — `tx_invalidated != TX_OPEN` is a
-    /// cache that never lies dead-wards (rule 1), then anti-join surviving aids
-    /// against live `supersedes(_, aid)` facts. An explicit primitive with a
-    /// NAMED cost, not a hidden column check.
+    /// Liveness (§2.4, DEFINITIONAL): an assertion is live ⟺ there is no LIVE
+    /// `supersedes(_, aid)` fact in the snapshot (the definition recurses over
+    /// supersedes' own assertions and is well-founded by tick — E-SUP-001).
+    /// `tx_invalidated != TX_OPEN` is a CACHE that may only CONFIRM death
+    /// (rule 1): an assertion cache-marked dead with NO live `supersedes(_,
+    /// aid)` fact in the same snapshot is CORRUPTION and aborts with a
+    /// contractual panic carrying `E-SUP-001` (divergence arm, ledger
+    /// round-010-pre D3) — never a silent pick of one truth. This primitive is
+    /// the ONLY legal liveness authority on the read path (mechanical guard
+    /// test) and carries the anti-join cost EXPLICITLY.
     fn live_filter<'a>(
         &'a self,
         s: &'a Snapshot,
@@ -509,9 +531,17 @@ pub trait FactStore: Sync {
     /// aborts the WHOLE batch with the store unchanged.
     fn assert_batch(&self, b: AssertBatch) -> FactResult<CommitToken>;
 
-    /// Supersede assertions in scope. P2: `E-CAP-001` (`supersession`) — §10.4
-    /// assigns supersedes + `E-SUP-001` to P4; a tombstone emulation would
-    /// silently change semantics when P4 lands (audit-trail loss).
+    /// Supersede assertions in scope (§5.5, REAL since P4): enumerate the LIVE
+    /// assertions whose author == `scope.author` within (perspective,
+    /// predicate?, subject_set) and write one `supersedes(_, aid_old)` fact
+    /// per victim through the facts commit path. Author scoping is ABSOLUTE
+    /// (§4.2): «Чужие ассершны не трогаются никогда» — no scope can kill a
+    /// foreign author's assertion. E-SUP-001 at the boundary: `at_tick` must
+    /// be STRICTLY greater than every victim's tick, else the WHOLE operation
+    /// aborts pre-commit with the store unchanged.
+    /// `ByAttr { pred: attr, values: [Str(key), matched values…] }` is the P4
+    /// base-five encoding of the doc's `ByAttr{file, changedFiles}` reanalysis
+    /// contract (ledger round-010-pre D10).
     fn supersede(&self, scope: SupersedeScope, at_tick: u64) -> FactResult<CommitToken>;
 
     /// Enter bulk-load mode (deferred durability until the barrier).
@@ -562,6 +592,51 @@ mod hygiene_tests {
         assert!(
             !src.contains(&needle),
             "facts/mod.rs must not reference the physical store layer (§8 rule 1)"
+        );
+    }
+
+    /// P4 (§2.4 / ledger round-010-pre D15): live_filter is the ONLY legal
+    /// liveness authority on the read path. The mechanical guard: outside
+    /// `src/facts/` there exists NO consumer of the FactStore read surface at
+    /// all — any reference to the `FactStore` trait or the `LsmFactStore`
+    /// backend outside the facts module is an offender and is listed. (The
+    /// single permitted foreign coupling is the `SortOrder` TYPE import in
+    /// derive/{catalog,plan,exec} — a dispatch key, not a read path — and it
+    /// does not contain the guarded tokens.) When the fixpoint engine moves
+    /// onto this seam (P6/P7), its call sites must route liveness through
+    /// live_filter and extend this guard's allowlist EXPLICITLY.
+    #[test]
+    fn no_fact_store_consumer_outside_facts() {
+        let src_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut offenders = Vec::new();
+        let mut stack = vec![src_root.clone()];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).expect("readable src dir") {
+                let path = entry.expect("dir entry").path();
+                if path.is_dir() {
+                    if path.file_name().is_some_and(|n| n == "facts") {
+                        continue; // the facts module itself
+                    }
+                    stack.push(path);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    let text = std::fs::read_to_string(&path).expect("readable source");
+                    let needle = format!("Fact{}", "Store"); // avoid self-matching
+                    // CODE references only — doc comments may (and do) NAME the
+                    // seam; they cannot read from it.
+                    let in_code = text.lines().any(|line| {
+                        let t = line.trim_start();
+                        !t.starts_with("//") && t.contains(&needle)
+                    });
+                    if in_code {
+                        offenders.push(path.display().to_string());
+                    }
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "FactStore surface consumed outside src/facts/ — every read path must go \
+             through live_filter (§2.4, ledger D15). Offenders: {offenders:?}"
         );
     }
 
@@ -665,14 +740,19 @@ mod tests {
         assert_eq!(fid("main", "node", &bad).unwrap_err().code, "E-VAL-002");
     }
 
+    /// P4 (ledger round-010-pre D7): the aid is keyed on the canonical author
+    /// NAME — process-invariant, so supersedes tuples (which hash aids into
+    /// fids) stay canonical artifacts under §9.2.
     #[test]
     fn aid_depends_on_all_three_components() {
         let f = 42u128;
-        let base = aid(f, AuthorId(1), 7);
-        assert_ne!(base, aid(f + 1, AuthorId(1), 7));
-        assert_ne!(base, aid(f, AuthorId(2), 7));
-        assert_ne!(base, aid(f, AuthorId(1), 8));
-        // Deterministic.
-        assert_eq!(base, aid(f, AuthorId(1), 7));
+        let base = aid(f, "analyzer", 7);
+        assert_ne!(base, aid(f + 1, "analyzer", 7));
+        assert_ne!(base, aid(f, "enricher", 7));
+        assert_ne!(base, aid(f, "analyzer", 8));
+        // Deterministic, and independent of any interner state.
+        assert_eq!(base, aid(f, "analyzer", 7));
+        // Length-prefixed name: no concatenation ambiguity with the tick bytes.
+        assert_ne!(aid(f, "a", 0x62), aid(f, "ab", 0x62));
     }
 }

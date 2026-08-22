@@ -81,28 +81,98 @@ pub fn merge_edge_segments(
     sorted
 }
 
-// ── Derived (tagged) merge — compaction-⊕ (spec §8.2) ──────────────
+// ── Derived (tagged) merge — compaction-⊕ rekeyed on aid (spec §3.2, P4) ──
 //
 // The base merges above dedup by first-insert-wins, which is correct ONLY for the
-// idempotent BoolTag. When any input segment carries derived columns (provenance /
-// semiring tag / tx), the coordinator routes here instead: the record PAYLOAD still
-// takes newest-wins (first insert, segments are newest-first), but the per-record TAG
-// is ⊕-FOLDED across every version of the key via [`fold_tags`] — so a CountTag fact
-// derived twice carries weight 2, not 1. Provenance and tx take newest-wins (the tag is
-// the only ⊕-folded column at this gate; tombstone-as-negative-weight is a Gate C seam).
-// Output is written via the v3 `add_derived` path, preserving the columns (the base
-// merge would strip them). A fold across mismatched semiring_ids is E-FMT-002 (§9.3).
+// idempotent BoolTag over the record model. When any input segment carries derived
+// columns (provenance / semiring tag / tx), the coordinator routes here instead. In
+// the FACT model two same-key records with different assertion identity are DIFFERENT
+// ASSERTIONS (rofl-fact-model.md §3.2, normative: «ключ свёртки tag_fold — aid, то
+// есть (fid, author, tick), а не fid»), so the fold key is:
+//
+//   * record from a v2 segment (no derived columns) → `Legacy(record_key)` — the
+//     record model: newest-wins collapse, identical to the base merge under BOTH
+//     merge routings (this is what keeps the projection's v2 winner-collapse
+//     sha-invariant across compaction — ledger round-010-pre D8/D9);
+//   * record from a v3 segment → `(record_key, assertion identity)` where the
+//     assertion identity is `_source`/`_generation` from the metadata blob (the
+//     §10.1 author/tick carriers, ledger D5) falling back to the ProvenanceV2
+//     columns (`rule_ast_hash`, `generation`) for rule-written records.
+//
+// ⊕ (`fold_tags`) applies ONLY within one key — a true same-aid duplicate from a
+// re-write of the same assertion. Across different aids records are BOTH kept: a
+// CountTag fact asserted by two authors keeps two live assertions with separate
+// weights (the §9.1/§10.5 C3 gate). Payload within one key takes newest-wins
+// (first insert, segments are newest-first). Output goes through `add_derived`
+// (v3), preserving the columns. Mismatched semiring_ids fold to E-FMT-002 (§9.3).
 
-/// Tag-aware node merge: newest-wins payload, `⊕`-folded tag (spec §8.2). Returns each
-/// surviving node with its folded [`DerivedFields`]. Errors (E-FMT-00x) if a tag fold is
-/// ill-typed (mixed/unknown/corrupt semiring) — never a silent mis-fold (I5).
+/// Assertion-identity component of the derived-merge fold key (§3.2: the fold key
+/// is the aid, not the record key).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+enum AssertIdent {
+    /// v2-segment record: the record model — newest-wins collapse per record key.
+    Legacy,
+    /// v3-segment record: one assertion = one (author-carrier, tick) identity.
+    Assertion {
+        /// `metadata["_source"]` (facts-written records; `None` for rule-written).
+        source: Option<String>,
+        /// `ProvenanceV2.rule_ast_hash` (rule identity for derive-written records).
+        rule: u32,
+        /// `metadata["_generation"]`, falling back to `ProvenanceV2.generation`.
+        tick: u64,
+    },
+}
+
+/// `_source` / `_generation` of a record metadata blob (the §10.1 carriers).
+/// Local to the merge layer on purpose: storage must not depend on the facts
+/// module (§8 rule 1) — the facts projection has its own identical reader.
+fn meta_provenance(metadata: &str) -> (Option<String>, Option<u64>) {
+    if metadata.is_empty() || !metadata.contains("_source") && !metadata.contains("_generation") {
+        return (None, None);
+    }
+    let Ok(serde_json::Value::Object(map)) = serde_json::from_str::<serde_json::Value>(metadata)
+    else {
+        return (None, None);
+    };
+    let source = map
+        .get("_source")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let generation = map.get("_generation").and_then(|v| {
+        v.as_u64()
+            .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+    });
+    (source, generation)
+}
+
+fn assert_ident(
+    derived_segment: bool,
+    metadata: &str,
+    prov: &crate::storage_v2::types::ProvenanceV2,
+) -> AssertIdent {
+    if !derived_segment {
+        return AssertIdent::Legacy;
+    }
+    let (source, generation) = meta_provenance(metadata);
+    AssertIdent::Assertion {
+        tick: generation.unwrap_or(prov.generation),
+        rule: prov.rule_ast_hash,
+        source,
+    }
+}
+
+/// Tag-aware node merge: newest-wins payload WITHIN one assertion key, `⊕`-folded
+/// tag within the key only (spec §3.2 — the fold key is the aid). Coexisting
+/// assertions of one record key are ALL returned. Errors (E-FMT-00x) if a tag
+/// fold is ill-typed (mixed/unknown/corrupt semiring) — never a silent mis-fold (I5).
 pub fn merge_node_segments_derived(
     segments: &[&NodeSegmentV2],
     tombstones: &TombstoneSet,
 ) -> Result<Vec<(NodeRecordV2, DerivedFields)>> {
-    let mut records: HashMap<u128, (NodeRecordV2, DerivedFields)> = HashMap::new();
+    let mut records: HashMap<(u128, AssertIdent), (NodeRecordV2, DerivedFields)> = HashMap::new();
 
     for seg in segments {
+        let derived = seg.has_derived_columns();
         for i in seg.iter_indices() {
             let record = seg.get_record(i);
             let id = record.id;
@@ -112,13 +182,14 @@ pub fn merge_node_segments_derived(
                 tx_created: seg.tx_created(i),
                 tx_invalidated: seg.tx_invalidated(i),
             };
-            match records.entry(id) {
+            let ident = assert_ident(derived, &record.metadata, &fields.provenance);
+            match records.entry((id, ident)) {
                 Entry::Vacant(e) => {
                     e.insert((record, fields));
                 }
                 Entry::Occupied(mut e) => {
-                    // Keep the newer payload/provenance/tx (already present = newest-first);
-                    // fold the tag across this older version.
+                    // Same assertion key re-written: keep the newer payload
+                    // (already present = newest-first); ⊕-fold the tag.
                     let folded = fold_tags(&e.get().1.tag, &fields.tag)?;
                     e.get_mut().1.tag = folded;
                 }
@@ -126,21 +197,30 @@ pub fn merge_node_segments_derived(
         }
     }
 
-    records.retain(|id, _| !tombstones.contains_node(*id));
-    let mut sorted: Vec<(NodeRecordV2, DerivedFields)> = records.into_values().collect();
-    sorted.sort_by_key(|(r, _)| r.id);
-    Ok(sorted)
+    records.retain(|(id, _), _| !tombstones.contains_node(*id));
+    let mut sorted: Vec<((u128, AssertIdent), (NodeRecordV2, DerivedFields))> =
+        records.into_iter().collect();
+    // Deterministic output: record key asc, then tick desc (newest assertion
+    // first — the §2.3 storage-order winner stays deterministic), then identity.
+    sorted.sort_by(|((ida, ka), _), ((idb, kb), _)| {
+        ida.cmp(idb)
+            .then_with(|| ident_sort_key(kb).cmp(&ident_sort_key(ka)))
+    });
+    Ok(sorted.into_iter().map(|(_, v)| v).collect())
 }
 
-/// Tag-aware edge merge: newest-wins payload, `⊕`-folded tag (spec §8.2). Edge dedup key
-/// is `(src, dst, edge_type)`, matching [`merge_edge_segments`].
+/// Tag-aware edge merge: same §3.2 aid-keyed fold; edge record key is
+/// `(src, dst, edge_type)`, matching [`merge_edge_segments`].
 pub fn merge_edge_segments_derived(
     segments: &[&EdgeSegmentV2],
     tombstones: &TombstoneSet,
 ) -> Result<Vec<(EdgeRecordV2, DerivedFields)>> {
-    let mut records: HashMap<(u128, u128, String), (EdgeRecordV2, DerivedFields)> = HashMap::new();
+    type EdgeKey = (u128, u128, String);
+    let mut records: HashMap<(EdgeKey, AssertIdent), (EdgeRecordV2, DerivedFields)> =
+        HashMap::new();
 
     for seg in segments {
+        let derived = seg.has_derived_columns();
         for i in seg.iter_indices() {
             let record = seg.get_record(i);
             let key = (record.src, record.dst, record.edge_type.clone());
@@ -150,7 +230,8 @@ pub fn merge_edge_segments_derived(
                 tx_created: seg.tx_created(i),
                 tx_invalidated: seg.tx_invalidated(i),
             };
-            match records.entry(key) {
+            let ident = assert_ident(derived, &record.metadata, &fields.provenance);
+            match records.entry((key, ident)) {
                 Entry::Vacant(e) => {
                     e.insert((record, fields));
                 }
@@ -162,15 +243,24 @@ pub fn merge_edge_segments_derived(
         }
     }
 
-    records.retain(|(src, dst, edge_type), _| !tombstones.contains_edge(*src, *dst, edge_type));
-    let mut sorted: Vec<(EdgeRecordV2, DerivedFields)> = records.into_values().collect();
-    sorted.sort_by(|(a, _), (b, _)| {
-        a.src
-            .cmp(&b.src)
-            .then(a.dst.cmp(&b.dst))
-            .then(a.edge_type.cmp(&b.edge_type))
+    records
+        .retain(|((src, dst, edge_type), _), _| !tombstones.contains_edge(*src, *dst, edge_type));
+    let mut sorted: Vec<((EdgeKey, AssertIdent), (EdgeRecordV2, DerivedFields))> =
+        records.into_iter().collect();
+    sorted.sort_by(|((ka, ia), _), ((kb, ib), _)| {
+        ka.cmp(kb)
+            .then_with(|| ident_sort_key(ib).cmp(&ident_sort_key(ia)))
     });
-    Ok(sorted)
+    Ok(sorted.into_iter().map(|(_, v)| v).collect())
+}
+
+/// Sort key of an assertion identity within one record key: tick-major so the
+/// newest assertion's record lands first (compared DESC by the callers).
+fn ident_sort_key(k: &AssertIdent) -> (u64, u32, Option<&String>, bool) {
+    match k {
+        AssertIdent::Legacy => (0, 0, None, false),
+        AssertIdent::Assertion { source, rule, tick } => (*tick, *rule, source.as_ref(), true),
+    }
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
@@ -403,12 +493,15 @@ mod tests {
         EdgeSegmentV2::from_bytes(&buf.into_inner()).unwrap()
     }
 
-    /// The I10 evidence test with a NON-Bool fixture (the spec's trap: a BoolTag-only
-    /// check passes even with a broken fold). The same node id appears in two derived
-    /// segments with CountTag weights 5 (newer) and 3 (older); compaction must ⊕-fold to
-    /// 8 — not dedup to one — and keep the newest payload/provenance.
+    /// The I10 evidence test with a NON-Bool fixture, REKEYED per §3.2 (ledger
+    /// round-010-pre D9a): the same node id in two derived segments with
+    /// DIFFERENT assertion identities (generations 1 and 2 = different ticks =
+    /// different aids) is TWO assertions — compaction must keep BOTH records
+    /// with their separate tags, never fold across aids. ⊕ still applies
+    /// WITHIN one aid: a same-identity duplicate genuinely folds (checked in
+    /// [`derived_merge_folds_within_one_aid`]).
     #[test]
-    fn derived_merge_folds_count_tags_not_dedup() {
+    fn derived_merge_keeps_distinct_aids_not_folds() {
         let node = make_node("shared", "DERIVED", "n", "f.rs");
         let new_seg = make_derived_node_segment(vec![(node.clone(), count_fields(5, 2))]);
         let old_seg = make_derived_node_segment(vec![(node.clone(), count_fields(3, 1))]);
@@ -416,21 +509,45 @@ mod tests {
         let tomb = TombstoneSet::new();
         let merged = merge_node_segments_derived(&[&new_seg, &old_seg], &tomb).unwrap();
 
-        assert_eq!(merged.len(), 1);
-        let (rec, fields) = &merged[0];
-        assert_eq!(rec.id, node.id);
+        assert_eq!(merged.len(), 2, "two aids → two surviving records");
+        // Newest assertion first (tick-desc within one record key).
+        assert_eq!(merged[0].0.id, node.id);
+        assert_eq!(merged[1].0.id, node.id);
         assert_eq!(
-            CountTag::from_le_bytes(&fields.tag.bytes),
-            Some(CountTag(8)),
-            "3 ⊕ 5 = 8 (fold), NOT 3 or 5 (dedup)"
+            CountTag::from_le_bytes(&merged[0].1.tag.bytes),
+            Some(CountTag(5)),
+            "newest aid keeps ITS weight — no cross-aid fold"
         );
-        // Newest-wins provenance/tx (generation 2, the newer segment).
-        assert_eq!(fields.provenance.generation, 2);
-        assert_eq!(fields.tx_created, 2);
+        assert_eq!(merged[0].1.provenance.generation, 2);
+        assert_eq!(
+            CountTag::from_le_bytes(&merged[1].1.tag.bytes),
+            Some(CountTag(3)),
+            "older aid keeps ITS weight"
+        );
+        assert_eq!(merged[1].1.provenance.generation, 1);
     }
 
-    /// The full compaction path round-trips: fold → `add_derived` → re-read keeps the
-    /// folded tag AND the v3 derived columns (the base path would have stripped them).
+    /// ⊕ WITHIN one aid: the same assertion identity re-written in two segments
+    /// is a true duplicate — its tags fold (Count sums), one record survives.
+    #[test]
+    fn derived_merge_folds_within_one_aid() {
+        let node = make_node("shared", "DERIVED", "n", "f.rs");
+        let new_seg = make_derived_node_segment(vec![(node.clone(), count_fields(5, 2))]);
+        let dup_seg = make_derived_node_segment(vec![(node.clone(), count_fields(3, 2))]);
+
+        let merged =
+            merge_node_segments_derived(&[&new_seg, &dup_seg], &TombstoneSet::new()).unwrap();
+        assert_eq!(merged.len(), 1, "one aid → one record");
+        assert_eq!(
+            CountTag::from_le_bytes(&merged[0].1.tag.bytes),
+            Some(CountTag(8)),
+            "3 ⊕ 5 = 8 within the aid"
+        );
+    }
+
+    /// The full compaction path round-trips: aid-keyed merge → `add_derived` →
+    /// re-read keeps BOTH assertions' records and the v3 derived columns (the
+    /// base path would have stripped them).
     #[test]
     fn derived_merge_round_trips_through_writer() {
         let node = make_node("shared", "DERIVED", "n", "f.rs");
@@ -440,25 +557,60 @@ mod tests {
 
         let out = make_derived_node_segment(merged);
         assert!(out.has_derived_columns(), "compacted derived segment stays v3");
-        assert_eq!(out.record_count(), 1);
-        let tag = out.tag(0).unwrap();
-        assert_eq!(CountTag::from_le_bytes(&tag.bytes), Some(CountTag(8)), "2 ⊕ 6 = 8 survives round-trip");
+        assert_eq!(out.record_count(), 2, "both aids survive the round-trip");
+        let weights: Vec<i64> = (0..2)
+            .map(|i| CountTag::from_le_bytes(&out.tag(i).unwrap().bytes).unwrap().0)
+            .collect();
+        assert_eq!(weights, vec![6, 2], "newest-first, separate weights");
     }
 
-    /// Edge variant: same `(src,dst,type)` key in two derived segments folds its counts.
+    /// Edge variant: same `(src,dst,type)` key, two assertion identities → both
+    /// records survive with their own weights (metadata-borne `_source`
+    /// identities — the facts write path).
     #[test]
-    fn derived_edge_merge_folds_count_tags() {
-        let edge = make_edge("s", "d", "DEPENDS_ON");
-        let new_seg = make_derived_edge_segment(vec![(edge.clone(), count_fields(4, 2))]);
-        let old_seg = make_derived_edge_segment(vec![(edge.clone(), count_fields(1, 1))]);
+    fn derived_edge_merge_keeps_distinct_authors() {
+        let mut e1 = make_edge("s", "d", "DEPENDS_ON");
+        e1.metadata = r#"{"_source":"alice","_generation":2}"#.to_string();
+        let mut e2 = make_edge("s", "d", "DEPENDS_ON");
+        e2.metadata = r#"{"_source":"bob","_generation":2}"#.to_string();
+        let new_seg = make_derived_edge_segment(vec![(e1.clone(), count_fields(4, 2))]);
+        let old_seg = make_derived_edge_segment(vec![(e2.clone(), count_fields(1, 2))]);
         let merged =
             merge_edge_segments_derived(&[&new_seg, &old_seg], &TombstoneSet::new()).unwrap();
-        assert_eq!(merged.len(), 1);
-        assert_eq!(
-            CountTag::from_le_bytes(&merged[0].1.tag.bytes),
-            Some(CountTag(5)),
-            "1 ⊕ 4 = 5"
-        );
+        assert_eq!(merged.len(), 2, "two authors → two records");
+        let mut weights: Vec<i64> = merged
+            .iter()
+            .map(|(_, f)| CountTag::from_le_bytes(&f.tag.bytes).unwrap().0)
+            .collect();
+        weights.sort_unstable();
+        assert_eq!(weights, vec![1, 4], "separate weights, no cross-author fold");
+    }
+
+    /// v2-origin records inside a MIXED derived merge keep the record model:
+    /// newest-wins collapse per record key (`Legacy` fold key), identical to
+    /// the base merge — the projection's v2 winner-collapse stays sha-invariant
+    /// across compaction (ledger round-010-pre D8/D9).
+    #[test]
+    fn derived_merge_collapses_v2_records_newest_wins() {
+        // v2 (base-format) segments: same id, two versions.
+        let old_node = make_node("shared_id", "FUNCTION", "old_name", "old.rs");
+        let old_seg = make_test_node_segment(vec![old_node.clone()]);
+        let mut new_node = make_node("shared_id", "METHOD", "new_name", "new.rs");
+        new_node.content_hash = 42;
+        let new_seg = make_test_node_segment(vec![new_node.clone()]);
+        // A derived segment for an UNRELATED id routes the merge derived-wards.
+        let other = make_node("other", "DERIVED", "o", "f.rs");
+        let derived_seg = make_derived_node_segment(vec![(other.clone(), count_fields(1, 1))]);
+
+        let merged = merge_node_segments_derived(
+            &[&derived_seg, &new_seg, &old_seg],
+            &TombstoneSet::new(),
+        )
+        .unwrap();
+        assert_eq!(merged.len(), 2, "v2 duplicate collapsed + the derived record");
+        let dup = merged.iter().find(|(r, _)| r.id == new_node.id).unwrap();
+        assert_eq!(dup.0.node_type, "METHOD", "newest v2 version wins");
+        assert_eq!(dup.0.content_hash, 42);
     }
 
     /// Folding two DIFFERENT-key derived facts never collides — distinct counts survive.

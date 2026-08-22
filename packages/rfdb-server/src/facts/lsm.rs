@@ -43,8 +43,8 @@ use smallvec::smallvec;
 use super::{
     aid, fact_key_canon_bytes, fid, AssertBatch, Assertion, Capabilities, CommitToken,
     CompactionTier, FactGroup, FactKey, FactResult, FactRow, FactStore, FactStoreError,
-    PerspectiveId, PerspectiveTable, Snapshot, SortOrder, SupersedeScope, PERSPECTIVE_MAIN,
-    PERSPECTIVE_MAIN_NAME,
+    PerspectiveId, PerspectiveTable, Snapshot, SortOrder, SubjectSet, SupersedeScope,
+    PERSPECTIVE_MAIN, PERSPECTIVE_MAIN_NAME,
 };
 use crate::datalog::Value;
 use crate::derive::canon::push_varint;
@@ -56,7 +56,7 @@ use crate::storage_v2::compaction::CompactionConfig;
 use crate::storage_v2::manifest::{DurabilityMode, ManifestStore};
 use crate::storage_v2::multi_shard::MultiShardStore;
 use crate::storage_v2::read_snapshot::ReadSnapshot;
-use crate::storage_v2::types::{EdgeRecordV2, NodeRecordV2};
+use crate::storage_v2::types::{DerivedFields, EdgeRecordV2, NodeRecordV2, ProvenanceV2};
 
 /// The author name substituted for records with no `_source` (§10.1: 917 nodes /
 /// 33 096 edges on the measured base; the projection must count them, not hide them).
@@ -64,6 +64,23 @@ pub const LEGACY_AUTHOR: &str = "$legacy";
 
 /// Metadata keys that are ASSERTION fields, not attr facts (§6.2 «0 доп. фактов»).
 const RESERVED_META_KEYS: [&str; 2] = ["_source", "_generation"];
+
+/// The reserved node_type carrying `supersedes/2` facts inside today's closed
+/// {nodes, edges} segment vocabulary (P4, ledger round-010-pre D1). Reserved
+/// records are visible to the LEGACY node surfaces as ordinary rows (§9.4
+/// `rows` semantics) but NEVER project as node/type/attr FACTS — they project
+/// ONLY as supersedes facts. Writable exclusively through `supersede()` /
+/// `FactGroup::Supersedes` (the E-SUP-001 boundary); a node GROUP naming this
+/// type is rejected.
+pub const SUPERSEDES_NODE_TYPE: &str = "$supersedes";
+
+/// The reserved virtual file of supersedes records: routes them all to one
+/// shard and can never intersect a reanalysis `changed_files` set (D1).
+pub const SUPERSEDES_FILE: &str = "$rofl/supersedes";
+
+/// Metadata keys carrying the supersedes tuple on a reserved record (32-hex).
+const SUPERSEDES_META_NEW: &str = "aid_new";
+const SUPERSEDES_META_OLD: &str = "aid_old";
 
 /// Metadata-blob keys shadowed by the record COLUMNS (ledger round-008 R2): a
 /// legacy blob may carry `name`/`file`/`semantic_id` (the JS reader strips them
@@ -110,6 +127,15 @@ pub(crate) struct LsmSnapshotPayload {
     pub(crate) snap: ReadSnapshot,
     fid_index: OnceLock<HashMap<u128, FactRow>>,
     index_builds: AtomicU32,
+    /// Does any segment in this snapshot carry derived (v3) columns? Dispatches
+    /// between the P2 winner-collapse fast paths (pure-v2 store — the real
+    /// base) and the version-granular grouped projection (ledger D8). Memoized
+    /// per snapshot; the answer is snapshot-pinned.
+    derived_present: OnceLock<bool>,
+    /// The §2.4 killed-aid set of this snapshot (victims of LIVE supersedes
+    /// assertions, computed by the well-founded decreasing-tick pass — D14).
+    /// Memoized: liveness is asked per read, the set is snapshot-constant.
+    superseded: OnceLock<HashSet<u128>>,
 }
 
 // ── The adapter ────────────────────────────────────────────────────
@@ -142,6 +168,8 @@ struct BaseIds {
     edge: CatalogPredicateId,
     incoming: CatalogPredicateId,
     attr: CatalogPredicateId,
+    /// The reserved supersedes/2 predicate (P4, D13 — declared at construction).
+    supersedes: CatalogPredicateId,
 }
 
 impl LsmFactStore {
@@ -171,13 +199,20 @@ impl LsmFactStore {
     /// Adapt an already-opened (store, manifest) pair. Base-five stats are
     /// computed once at the first `stats()` observation (ledger C13).
     pub fn from_parts(store: MultiShardStore, manifest: ManifestStore) -> Self {
-        let catalog = PredicateCatalog::with_base_relations();
+        let mut catalog = PredicateCatalog::with_base_relations();
+        // P4 (D13): the facts backend owns the reserved supersedes/2 predicate.
+        // Declared here — NOT in with_base_relations — so the planner's base
+        // id-space and dispatch stay golden-pinned.
+        catalog
+            .declare(PredicateCatalog::supersedes_decl())
+            .expect("fresh catalog accepts supersedes");
         let base = BaseIds {
             node: catalog.get("node").expect("base").id,
             ty: catalog.get("type").expect("base").id,
             edge: catalog.get("edge").expect("base").id,
             incoming: catalog.get("incoming").expect("base").id,
             attr: catalog.get("attr").expect("base").id,
+            supersedes: catalog.get("supersedes").expect("declared above").id,
         };
         Self {
             store: RwLock::new(store),
@@ -235,6 +270,23 @@ impl LsmFactStore {
             .commit_batch(nodes, edges, changed_files, HashMap::new(), &mut manifest)
             .expect("legacy commit");
         delta.manifest_version
+    }
+
+    /// Test seam: commit records through the DERIVED facts path with caller-
+    /// chosen DerivedFields (the C3 gate needs Count-tagged assertions, which
+    /// `assert_batch`'s Bool default cannot mint until tags enter the §7.2
+    /// write surface in a later phase).
+    #[cfg(test)]
+    pub(crate) fn commit_derived_tagged(
+        &self,
+        nodes: Vec<(NodeRecordV2, DerivedFields)>,
+        edges: Vec<(EdgeRecordV2, DerivedFields)>,
+    ) -> u64 {
+        let mut store = self.store.write().unwrap();
+        let mut manifest = self.manifest.lock().unwrap();
+        store
+            .commit_batch_derived(nodes, edges, &mut manifest)
+            .expect("derived commit")
     }
 
     /// Test seam: the pinned MVCC read snapshot inside `s` (for building the
@@ -311,29 +363,42 @@ impl LsmFactStore {
         Ok(cols)
     }
 
+    /// Base + supersedes live counts (P4: LIVE per §2.4 — dead assertions and
+    /// facts they emptied are excluded; on a supersedes-free snapshot this is
+    /// numerically identical to the P2 projection counts).
     fn compute_base_stats(&self) -> HashMap<CatalogPredicateId, PredicateStats> {
         let store = self.store.read().unwrap();
         let snap = {
             let manifest = self.manifest.lock().unwrap();
             store.snapshot(&manifest)
         };
-        let nodes = store.node_count_at(&snap) as u64;
-        let edges = store.edge_count_at(&snap) as u64;
-        let attrs = self.project_attr(&store, &snap).len() as u64;
+        let derived = self.derived_in(&store, &snap);
+        let killed = self.compute_superseded(&store, &snap);
         let mut stats = HashMap::new();
-        for (id, count) in [
-            (self.base.node, nodes),
-            (self.base.ty, nodes),
-            (self.base.edge, edges),
-            (self.base.incoming, edges),
-            (self.base.attr, attrs),
+        for id in [
+            self.base.node,
+            self.base.ty,
+            self.base.edge,
+            self.base.incoming,
+            self.base.attr,
+            self.base.supersedes,
         ] {
+            let decl = self.catalog.get_by_id(id).expect("declared");
+            let mut rows = self.project_predicate(&store, &snap, decl, derived);
+            let mut facts = 0u64;
+            let mut asserts = 0u64;
+            for row in &mut rows {
+                self.retain_live(&mut row.assertions, &killed);
+                if !row.assertions.is_empty() {
+                    facts += 1;
+                    asserts += row.assertions.len() as u64;
+                }
+            }
             stats.insert(
                 id,
                 PredicateStats {
-                    live_facts: count,
-                    // One synthesized assertion per projected row (§10.1).
-                    live_asserts: count,
+                    live_facts: facts,
+                    live_asserts: asserts,
                     distinct: Box::new([]),
                     max_fanout: 0,
                     updated_at_tx: 0,
@@ -343,7 +408,17 @@ impl LsmFactStore {
         stats
     }
 
-    fn synth_row(&self, pred_name: &str, tuple: Vec<Value>, metadata: &str) -> FactRow {
+    /// FactRow synthesis, derived-column-aware (P4, ledger D5/D8): author/tick
+    /// ALWAYS come from `_source`/`_generation` (§10.1 carriers); tag/tx come
+    /// from the segment's derived columns when present (v3 records) and fall
+    /// back to the Q2 synthesis (Bool, 0, TX_OPEN) for v2 records.
+    fn synth_row_with(
+        &self,
+        pred_name: &str,
+        tuple: Vec<Value>,
+        metadata: &str,
+        fields: Option<&DerivedFields>,
+    ) -> FactRow {
         let (source, generation) = provenance(metadata);
         let author = self
             .authors
@@ -353,6 +428,10 @@ impl LsmFactStore {
         let tuple: Box<[Value]> = tuple.into();
         let row_fid = fid(PERSPECTIVE_MAIN_NAME, pred_name, &tuple)
             .expect("projected tuples are Id/Str and always canonical");
+        let (tag, tx_created, tx_invalidated) = match fields {
+            Some(f) => (f.tag.clone(), f.tx_created, f.tx_invalidated),
+            None => (TagV2::bool_one(), 0, TX_OPEN),
+        };
         FactRow {
             key: FactKey {
                 perspective: PERSPECTIVE_MAIN,
@@ -368,22 +447,45 @@ impl LsmFactStore {
                 fid: row_fid,
                 author,
                 tick: generation.unwrap_or(0),
-                tag: TagV2::bool_one(),
-                tx_created: 0,
-                tx_invalidated: TX_OPEN,
+                tag,
+                tx_created,
+                tx_invalidated,
             }],
         }
     }
 
+    fn synth_row(&self, pred_name: &str, tuple: Vec<Value>, metadata: &str) -> FactRow {
+        self.synth_row_with(pred_name, tuple, metadata, None)
+    }
+
     fn node_row(&self, pred_name: &str, rec: &NodeRecordV2) -> FactRow {
-        self.synth_row(
+        self.node_row_with(pred_name, rec, None)
+    }
+
+    fn node_row_with(
+        &self,
+        pred_name: &str,
+        rec: &NodeRecordV2,
+        fields: Option<&DerivedFields>,
+    ) -> FactRow {
+        self.synth_row_with(
             pred_name,
             vec![Value::Id(rec.id), Value::Str(rec.node_type.clone())],
             &rec.metadata,
+            fields,
         )
     }
 
     fn edge_row(&self, pred_name: &str, rec: &EdgeRecordV2) -> FactRow {
+        self.edge_row_with(pred_name, rec, None)
+    }
+
+    fn edge_row_with(
+        &self,
+        pred_name: &str,
+        rec: &EdgeRecordV2,
+        fields: Option<&DerivedFields>,
+    ) -> FactRow {
         let tuple = if pred_name == "incoming" {
             vec![
                 Value::Id(rec.dst),
@@ -397,7 +499,43 @@ impl LsmFactStore {
                 Value::Str(rec.edge_type.clone()),
             ]
         };
-        self.synth_row(pred_name, tuple, &rec.metadata)
+        self.synth_row_with(pred_name, tuple, &rec.metadata, fields)
+    }
+
+    /// Decode a reserved supersedes record (D1) into its `supersedes/2` row.
+    /// A malformed reserved record is CORRUPTION of the truth source — the
+    /// projection aborts loudly (contractual panic, same class as the D3
+    /// divergence arm) instead of silently dropping a supersession.
+    fn supersedes_row(&self, rec: &NodeRecordV2, fields: Option<&DerivedFields>) -> FactRow {
+        let parsed: serde_json::Value = serde_json::from_str(&rec.metadata).unwrap_or_else(|e| {
+            panic!("E-SUP-001: corrupt reserved supersedes record {:x}: {e}", rec.id)
+        });
+        let read_aid = |key: &str| -> u128 {
+            parsed
+                .get(key)
+                .and_then(|v| v.as_str())
+                .and_then(|s| u128::from_str_radix(s, 16).ok())
+                .unwrap_or_else(|| {
+                    panic!(
+                        "E-SUP-001: reserved supersedes record {:x} lacks a valid '{key}'",
+                        rec.id
+                    )
+                })
+        };
+        let aid_new = read_aid(SUPERSEDES_META_NEW);
+        let aid_old = read_aid(SUPERSEDES_META_OLD);
+        let row = self.synth_row_with(
+            "supersedes",
+            vec![Value::Id(aid_new), Value::Id(aid_old)],
+            &rec.metadata,
+            fields,
+        );
+        // Record identity ≡ fact identity (D1): a mismatch is corruption.
+        assert_eq!(
+            row.fid, rec.id,
+            "E-SUP-001: reserved supersedes record id does not match its tuple fid"
+        );
+        row
     }
 
     /// C22's edge sibling (ledger round-008 R1): the keyed edge scans
@@ -429,9 +567,17 @@ impl LsmFactStore {
     /// path does). `_source`/`_generation` are NEVER attrs (§6.2); blob copies
     /// of the column-authoritative keys are skipped ([`COLUMN_META_KEYS`]).
     fn attr_rows_for(&self, rec: &NodeRecordV2) -> Vec<FactRow> {
+        self.attr_rows_for_with(rec, None)
+    }
+
+    fn attr_rows_for_with(
+        &self,
+        rec: &NodeRecordV2,
+        fields: Option<&DerivedFields>,
+    ) -> Vec<FactRow> {
         let mut rows = Vec::new();
         let mut push = |key: &str, value: String| {
-            rows.push(self.synth_row(
+            rows.push(self.synth_row_with(
                 "attr",
                 vec![
                     Value::Id(rec.id),
@@ -439,6 +585,7 @@ impl LsmFactStore {
                     Value::Str(value),
                 ],
                 &rec.metadata,
+                fields,
             ));
         };
         if !rec.name.is_empty() {
@@ -471,58 +618,317 @@ impl LsmFactStore {
         store
             .find_nodes_at(snap, None, None)
             .iter()
+            .filter(|rec| rec.node_type != SUPERSEDES_NODE_TYPE)
             .flat_map(|rec| self.attr_rows_for(rec))
             .collect()
     }
 
-    /// All main-perspective rows of `decl` in this snapshot — the base-five
-    /// projection; any OTHER (declared) predicate has zero facts in P2, which is
-    /// an honest empty relation, not an error.
+    /// Does any segment of `snap` carry derived (v3) columns? Dispatches the
+    /// projection between the P2 winner-collapse paths (pure v2 — the measured
+    /// real base is 359/359 v2) and the version-granular grouped paths (D8).
+    fn derived_in(&self, store: &MultiShardStore, snap: &ReadSnapshot) -> bool {
+        store.any_derived_segments_at(snap)
+    }
+
+    fn derived_present(&self, payload: &LsmSnapshotPayload) -> bool {
+        *payload.derived_present.get_or_init(|| {
+            let store = self.store.read().unwrap();
+            self.derived_in(&store, &payload.snap)
+        })
+    }
+
+    /// One live node-record candidate per assertion (D8): every record version
+    /// of an id, newest-first, deduped to
+    /// - at most ONE v2 candidate per id (the winner — the record model), and
+    /// - one v3 candidate per distinct (author, tick).
+    fn node_candidates(
+        &self,
+        store: &MultiShardStore,
+        snap: &ReadSnapshot,
+    ) -> Vec<(NodeRecordV2, Option<DerivedFields>)> {
+        let versions = store
+            .iter_node_versions_at(snap)
+            .expect("readable node segments");
+        let mut seen: HashMap<u128, (bool, HashSet<(Option<String>, u64)>)> = HashMap::new();
+        let mut out = Vec::new();
+        for (rec, fields) in versions {
+            let entry = seen.entry(rec.id).or_default();
+            let (source, generation) = provenance(&rec.metadata);
+            let key = (source, generation.unwrap_or(0));
+            match &fields {
+                None => {
+                    // v2 record: winner-collapse — only the NEWEST v2 version
+                    // of an id is a candidate (C22/R1 stays for the record
+                    // model; sha-invariance across the base newest-wins merge).
+                    if entry.0 {
+                        continue;
+                    }
+                    entry.0 = true;
+                    if !entry.1.insert(key) {
+                        continue; // same aid already served by a newer v3 record
+                    }
+                    out.push((rec, None));
+                }
+                Some(_) => {
+                    if !entry.1.insert(key) {
+                        continue; // same-(author, tick) re-assert: newest wins (M1 is P7)
+                    }
+                    out.push((rec, fields));
+                }
+            }
+        }
+        out
+    }
+
+    /// Edge companion of [`Self::node_candidates`], keyed `(src, dst, type)`.
+    fn edge_candidates(
+        &self,
+        store: &MultiShardStore,
+        snap: &ReadSnapshot,
+    ) -> Vec<(EdgeRecordV2, Option<DerivedFields>)> {
+        let versions = store
+            .iter_edge_versions_at(snap)
+            .expect("readable edge segments");
+        let mut seen: HashMap<(u128, u128, String), (bool, HashSet<(Option<String>, u64)>)> =
+            HashMap::new();
+        let mut out = Vec::new();
+        for (rec, fields) in versions {
+            let entry = seen
+                .entry((rec.src, rec.dst, rec.edge_type.clone()))
+                .or_default();
+            let (source, generation) = provenance(&rec.metadata);
+            let key = (source, generation.unwrap_or(0));
+            match &fields {
+                None => {
+                    if entry.0 {
+                        continue;
+                    }
+                    entry.0 = true;
+                    if !entry.1.insert(key) {
+                        continue;
+                    }
+                    out.push((rec, None));
+                }
+                Some(_) => {
+                    if !entry.1.insert(key) {
+                        continue;
+                    }
+                    out.push((rec, fields));
+                }
+            }
+        }
+        out
+    }
+
+    /// Merge candidate-major rows into fid-major [`FactRow`]s: one row per fid
+    /// carrying ALL its assertions (§2.2 — the multi-assertion read shape),
+    /// assertions sorted by (author name, tick) for deterministic reads.
+    fn group_rows(&self, rows: Vec<FactRow>) -> Vec<FactRow> {
+        let mut index: HashMap<u128, usize> = HashMap::new();
+        let mut out: Vec<FactRow> = Vec::new();
+        for row in rows {
+            match index.get(&row.fid) {
+                Some(&i) => out[i].assertions.extend(row.assertions),
+                None => {
+                    index.insert(row.fid, out.len());
+                    out.push(row);
+                }
+            }
+        }
+        let authors = self.authors.read().unwrap();
+        for row in &mut out {
+            row.assertions.sort_by(|a, b| {
+                let na = authors.name(a.author).expect("interned during projection");
+                let nb = authors.name(b.author).expect("interned during projection");
+                na.cmp(nb).then(a.tick.cmp(&b.tick))
+            });
+        }
+        out
+    }
+
+    /// All main-perspective rows of `decl` in this snapshot. `derived` selects
+    /// the projection regime (D8): the P2 winner paths on a pure-v2 snapshot
+    /// (byte-identical to P2 — the equivalence pairs pin it), the
+    /// version-granular grouped paths when any v3 segment is visible.
+    /// Any other DECLARED predicate is an honest empty relation, not an error.
     fn project_predicate(
         &self,
         store: &MultiShardStore,
         snap: &ReadSnapshot,
         decl: &PredicateDecl,
+        derived: bool,
     ) -> Vec<FactRow> {
         match decl.name.as_str() {
-            "node" | "type" => store
-                .find_nodes_at(snap, None, None)
-                .iter()
-                .map(|rec| self.node_row(&decl.name, rec))
-                .collect(),
-            "edge" | "incoming" => store
-                .iter_all_edges_at(snap)
-                .iter()
-                .map(|rec| self.edge_row(&decl.name, rec))
-                .collect(),
-            "attr" => self.project_attr(store, snap),
+            "node" | "type" => {
+                if derived {
+                    let rows: Vec<FactRow> = self
+                        .node_candidates(store, snap)
+                        .iter()
+                        .filter(|(rec, _)| rec.node_type != SUPERSEDES_NODE_TYPE)
+                        .map(|(rec, fields)| self.node_row_with(&decl.name, rec, fields.as_ref()))
+                        .collect();
+                    self.group_rows(rows)
+                } else {
+                    store
+                        .find_nodes_at(snap, None, None)
+                        .iter()
+                        .filter(|rec| rec.node_type != SUPERSEDES_NODE_TYPE)
+                        .map(|rec| self.node_row(&decl.name, rec))
+                        .collect()
+                }
+            }
+            "edge" | "incoming" => {
+                if derived {
+                    let rows: Vec<FactRow> = self
+                        .edge_candidates(store, snap)
+                        .iter()
+                        .map(|(rec, fields)| self.edge_row_with(&decl.name, rec, fields.as_ref()))
+                        .collect();
+                    self.group_rows(rows)
+                } else {
+                    store
+                        .iter_all_edges_at(snap)
+                        .iter()
+                        .map(|rec| self.edge_row(&decl.name, rec))
+                        .collect()
+                }
+            }
+            "attr" => {
+                if derived {
+                    let rows: Vec<FactRow> = self
+                        .node_candidates(store, snap)
+                        .iter()
+                        .filter(|(rec, _)| rec.node_type != SUPERSEDES_NODE_TYPE)
+                        .flat_map(|(rec, fields)| self.attr_rows_for_with(rec, fields.as_ref()))
+                        .collect();
+                    self.group_rows(rows)
+                } else {
+                    self.project_attr(store, snap)
+                }
+            }
+            "supersedes" => {
+                if derived {
+                    let rows: Vec<FactRow> = self
+                        .node_candidates(store, snap)
+                        .iter()
+                        .filter(|(rec, _)| rec.node_type == SUPERSEDES_NODE_TYPE)
+                        .map(|(rec, fields)| self.supersedes_row(rec, fields.as_ref()))
+                        .collect();
+                    self.group_rows(rows)
+                } else {
+                    // Reserved records are only ever written through the v3
+                    // path; a pure-v2 snapshot still runs the REAL scan (type
+                    // zone-maps prune it to ~0 on the measured base — §2.4's
+                    // "cold cost is zero").
+                    store
+                        .find_nodes_at(snap, Some(SUPERSEDES_NODE_TYPE), None)
+                        .iter()
+                        .map(|rec| self.supersedes_row(rec, None))
+                        .collect()
+                }
+            }
             _ => Vec::new(),
         }
     }
 
-    /// Live aids superseded in `snap` — the anti-join build side of §2.4. The
-    /// projection speaks only the base five, so `supersedes` is PROVABLY empty
-    /// over P2 data; P4 populates it. This is the real algorithm run on real
-    /// (degenerate) data, not a stub.
-    fn superseded_aids(&self, store: &MultiShardStore, snap: &ReadSnapshot) -> HashSet<u128> {
-        let mut set = HashSet::new();
-        if let Some(decl) = self.catalog.get("supersedes") {
-            for row in self.project_predicate(store, snap, decl) {
-                if let Some(Value::Id(dead_aid)) = row.key.tuple.get(1) {
-                    set.insert(*dead_aid);
-                }
+    /// A read-lock-free snapshot of the author interner (index = AuthorId.0).
+    fn author_names_snapshot(&self) -> Vec<String> {
+        let authors = self.authors.read().unwrap();
+        (0..u32::MAX)
+            .map_while(|i| authors.name(AuthorId(i)).map(str::to_string))
+            .collect()
+    }
+
+    /// The §2.4 killed-aid set of `snap` (D14): victims of LIVE supersedes
+    /// assertions. Liveness of the supersedes assertions themselves is the
+    /// SAME definitional rule, resolved by one pass in decreasing (tick, aid)
+    /// order — well-founded because a superseder's tick strictly exceeds its
+    /// victim's (E-SUP-001). The D3 divergence arm fires here for supersedes
+    /// assertions; base-relation assertions are checked at their own read
+    /// sites (live_filter / canonical_state_sha / stats).
+    fn compute_superseded(&self, store: &MultiShardStore, snap: &ReadSnapshot) -> HashSet<u128> {
+        let decl = self
+            .catalog
+            .get_by_id(self.base.supersedes)
+            .expect("supersedes declared at construction");
+        let derived = self.derived_in(store, snap);
+        let rows = self.project_predicate(store, snap, decl, derived);
+        if rows.is_empty() {
+            return HashSet::new();
+        }
+        let names = self.author_names_snapshot();
+        // (tick, own aid, victim aid, tx_invalidated) per supersedes assertion.
+        let mut sups: Vec<(u64, u128, u128, u64)> = Vec::new();
+        for row in &rows {
+            let Some(Value::Id(victim)) = row.key.tuple.get(1) else {
+                panic!("E-SUP-001: supersedes tuple without an Id victim");
+            };
+            for a in &row.assertions {
+                let name = names
+                    .get(a.author.0 as usize)
+                    .expect("interned during projection");
+                sups.push((a.tick, aid(row.fid, name, a.tick), *victim, a.tx_invalidated));
             }
         }
-        set
+        // Decreasing tick; ties broken by aid for determinism (a tie can never
+        // be a mutual kill — the boundary enforces strict tick monotonicity).
+        sups.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        let mut killed: HashSet<u128> = HashSet::new();
+        for (_, own, victim, tx_invalidated) in sups {
+            let alive = !killed.contains(&own);
+            if tx_invalidated != TX_OPEN && alive {
+                panic!(
+                    "E-SUP-001: divergence — supersedes assertion {own:x} is cache-marked dead \
+                     with no live supersedes(_, aid) fact in this snapshot"
+                );
+            }
+            if alive {
+                killed.insert(victim);
+            }
+        }
+        killed
+    }
+
+    /// Memoized killed-aid set of a snapshot payload.
+    fn superseded_set<'a>(&self, payload: &'a LsmSnapshotPayload) -> &'a HashSet<u128> {
+        payload.superseded.get_or_init(|| {
+            let store = self.store.read().unwrap();
+            self.compute_superseded(&store, &payload.snap)
+        })
+    }
+
+    /// The §2.4 per-assertion liveness rule shared by every liveness authority
+    /// (live_filter / canonical_state_sha / stats): dead ⟺ aid ∈ killed;
+    /// rule 1 + the D3 divergence arm: a cache-dead assertion NOT in the
+    /// killed set is corruption and aborts. Locks the author interner itself —
+    /// projection may intern new authors at read time, so a caller-captured
+    /// name snapshot could be stale.
+    fn retain_live(&self, assertions: &mut smallvec::SmallVec<[Assertion; 2]>, killed: &HashSet<u128>) {
+        let authors = self.authors.read().unwrap();
+        assertions.retain(|a| {
+            let name = authors
+                .name(a.author)
+                .expect("interned during projection");
+            let dead = killed.contains(&aid(a.fid, name, a.tick));
+            if a.tx_invalidated != TX_OPEN && !dead {
+                panic!(
+                    "E-SUP-001: divergence — assertion of fid {:x} (author '{name}', tick {}) is \
+                     cache-marked dead with no live supersedes(_, aid) fact in this snapshot",
+                    a.fid, a.tick
+                );
+            }
+            !dead
+        });
     }
 
     fn fid_index<'a>(&self, payload: &'a LsmSnapshotPayload) -> &'a HashMap<u128, FactRow> {
         payload.fid_index.get_or_init(|| {
             payload.index_builds.fetch_add(1, Ordering::SeqCst);
+            let derived = self.derived_present(payload);
             let store = self.store.read().unwrap();
             let mut index = HashMap::new();
             for decl in self.catalog.iter() {
-                for row in self.project_predicate(&store, &payload.snap, decl) {
+                for row in self.project_predicate(&store, &payload.snap, decl, derived) {
                     index.insert(row.fid, row);
                 }
             }
@@ -635,6 +1041,8 @@ impl FactStore for LsmFactStore {
             snap: store.snapshot(&manifest),
             fid_index: OnceLock::new(),
             index_builds: AtomicU32::new(0),
+            derived_present: OnceLock::new(),
+            superseded: OnceLock::new(),
         }))
     }
 
@@ -668,15 +1076,30 @@ impl FactStore for LsmFactStore {
         if prefix.len() > cols.len() {
             return Ok(Box::new(std::iter::empty()));
         }
+        // P4 dispatch (D8): once ANY v3 segment is visible, keyed reads must
+        // surface every coexisting assertion — the winner-collapsing targeted
+        // delegations below are only correct for a pure-v2 snapshot (they stay
+        // byte-identical to P2 there, which is what the equivalence pairs and
+        // the real-base differential pin). Computed before taking the store
+        // lock (it briefly takes its own read lock).
+        let derived = self.derived_present(payload);
         let store = self.store.read().unwrap();
         let snap = &payload.snap;
         // Targeted delegations for bound leading keys (same *_at surface the
         // executor's view uses); everything else materializes the projection.
-        let mut rows: Vec<FactRow> = match (decl.name.as_str(), o, prefix.first()) {
+        let mut rows: Vec<FactRow> = if derived {
+            self.project_predicate(&store, snap, decl, true)
+        } else {
+            match (decl.name.as_str(), o, prefix.first()) {
             ("node" | "type", SortOrder::Forward, Some(Value::Id(id))) => store
                 .get_node_at(snap, *id)
+                .filter(|rec| rec.node_type != SUPERSEDES_NODE_TYPE)
                 .map(|rec| vec![self.node_row(&decl.name, &rec)])
                 .unwrap_or_default(),
+            ("type", SortOrder::Reverse, Some(Value::Str(ty))) if ty == SUPERSEDES_NODE_TYPE => {
+                // Reserved records never project as type facts (D1).
+                Vec::new()
+            }
             ("type", SortOrder::Reverse, Some(Value::Str(ty))) => {
                 // §2.3 conflict class: the store's type-filtered scan filters
                 // BEFORE newest-wins dedup, so a duplicate-id record whose
@@ -702,6 +1125,7 @@ impl FactStore for LsmFactStore {
             }
             ("attr", SortOrder::Forward, Some(Value::Id(id))) => store
                 .get_node_at(snap, *id)
+                .filter(|rec| rec.node_type != SUPERSEDES_NODE_TYPE)
                 .map(|rec| self.attr_rows_for(&rec))
                 .unwrap_or_default(),
             // The four keyed edge paths re-resolve every candidate through the
@@ -727,7 +1151,8 @@ impl FactStore for LsmFactStore {
                 .into_iter()
                 .map(|rec| self.edge_row("incoming", &self.edge_winner(&store, snap, rec)))
                 .collect(),
-            _ => self.project_predicate(&store, snap, decl),
+            _ => self.project_predicate(&store, snap, decl, false),
+            }
         };
         drop(store);
         // The general prefix window (also re-verifies the fast paths' key).
@@ -755,21 +1180,24 @@ impl FactStore for LsmFactStore {
         s: &'a Snapshot,
         rows: Box<dyn Iterator<Item = FactRow> + 'a>,
     ) -> Box<dyn Iterator<Item = FactRow> + 'a> {
-        // The REAL §2.4 anti-join, degenerate-but-exact over P2 data: the
-        // supersedes relation is provably empty (base-five projection), so every
-        // TX_OPEN assertion survives — but rule 1 (tx_invalidated cache never
-        // lies dead-wards) and the aid anti-join both run for real.
-        let superseded = match self.payload(s) {
-            Ok(payload) => {
-                let store = self.store.read().unwrap();
-                self.superseded_aids(&store, &payload.snap)
+        // The REAL §2.4 anti-join (D14): assertion live ⟺ its aid is not a
+        // victim of a LIVE supersedes assertion (recursive rule, well-founded
+        // by tick); fact live ⟺ ≥1 live assertion. Rule 1: the tx_invalidated
+        // cache may only CONFIRM death — a cache-dead assertion NOT in the
+        // killed set is corruption and aborts E-SUP-001 (D3, contractual
+        // panic; a typed error cannot surface mid-iterator without a
+        // signature change the doc does not ask for).
+        let killed: &HashSet<u128> = match self.payload(s) {
+            Ok(payload) => self.superseded_set(payload),
+            Err(_) => {
+                // Foreign snapshot: no killed set exists; an EMPTY set keeps
+                // the P2 behavior for hand-built rows (all-open pass through).
+                static EMPTY: OnceLock<HashSet<u128>> = OnceLock::new();
+                EMPTY.get_or_init(HashSet::new)
             }
-            Err(_) => HashSet::new(),
         };
         Box::new(rows.filter_map(move |mut row| {
-            row.assertions.retain(|a| {
-                a.tx_invalidated == TX_OPEN && !superseded.contains(&aid(a.fid, a.author, a.tick))
-            });
+            self.retain_live(&mut row.assertions, killed);
             if row.assertions.is_empty() {
                 None
             } else {
@@ -811,9 +1239,13 @@ impl FactStore for LsmFactStore {
         // Gate 1 (round-005-pre H4): the inherited E-VAL boundary — validate every
         // tuple value canonically (recursively through Term) and assemble ALL
         // records BEFORE any store mutation, so a violation aborts the whole
-        // batch pre-commit with the store unchanged.
+        // batch pre-commit with the store unchanged. E-SUP-001 (D11/D12) is
+        // part of the same pre-commit boundary for Supersedes groups.
         let mut nodes: Vec<NodeRecordV2> = Vec::new();
         let mut edges: Vec<EdgeRecordV2> = Vec::new();
+        // Lazily-built aid → tick map of the pre-commit snapshot (only when a
+        // Supersedes group is present — the boundary must resolve victims).
+        let mut ticks: Option<HashMap<u128, (u64, AuthorId)>> = None;
         for group in &b.groups {
             match group {
                 FactGroup::Node { facts } => {
@@ -822,6 +1254,17 @@ impl FactStore for LsmFactStore {
                 FactGroup::Edge { fact } => {
                     edges.push(self.build_edge_record(fact, &author_name, b.tick)?)
                 }
+                FactGroup::Supersedes { fact } => {
+                    let ticks =
+                        ticks.get_or_insert_with(|| self.assertion_ticks_snapshot());
+                    nodes.push(self.build_supersedes_record(
+                        fact,
+                        b.author,
+                        &author_name,
+                        b.tick,
+                        ticks,
+                    )?)
+                }
             }
         }
         if nodes.is_empty() && edges.is_empty() {
@@ -829,26 +1272,163 @@ impl FactStore for LsmFactStore {
             let version = self.manifest.lock().unwrap().current().version;
             return Ok(CommitToken { version });
         }
-        // Delegate to the existing serial commit path, ADDITIVE (empty
-        // changed_files: no tombstoning) — no new on-disk bytes anywhere.
-        let mut store = self.store.write().unwrap();
-        let mut manifest = self.manifest.lock().unwrap();
-        let delta = store
-            .commit_batch(nodes, edges, &[], HashMap::new(), &mut manifest)
-            .map_err(store_err)?;
-        Ok(CommitToken {
-            version: delta.manifest_version,
-        })
+        self.commit_derived(nodes, edges, b.tick)
     }
 
-    fn supersede(&self, _scope: SupersedeScope, _at_tick: u64) -> FactResult<CommitToken> {
-        // §10.4 assigns supersedes + E-SUP-001 to P4. Delegating to tombstones
-        // would SILENTLY change semantics when P4 lands (audit-trail loss) — loud
-        // rejection instead.
-        Err(FactStoreError::cap(
-            "supersession",
-            "supersedes/E-SUP-001 are phase P4 (§10.4); tombstone emulation is forbidden",
-        ))
+    /// §5.5, REAL since P4 (contract (1)): enumerate the LIVE assertions whose
+    /// author == scope.author within the scope, write one supersedes fact per
+    /// victim through the facts commit path. Author scoping is absolute
+    /// (§4.2/D2); E-SUP-001 tick monotonicity aborts the WHOLE operation
+    /// pre-commit (D11).
+    fn supersede(&self, scope: SupersedeScope, at_tick: u64) -> FactResult<CommitToken> {
+        if scope.perspective != PERSPECTIVE_MAIN {
+            return Err(FactStoreError::cap(
+                "perspectives",
+                "today's record format cannot represent a non-main perspective (§10.1)",
+            ));
+        }
+        let author_name = self.author_name(scope.author).ok_or(FactStoreError {
+            code: "E-CAT-001",
+            detail: format!(
+                "unknown author id {:?} (intern via intern_author first)",
+                scope.author
+            ),
+        })?;
+        if let Some(p) = scope.predicate {
+            // A scope over an undeclared predicate is the §3.4 unknown-id class.
+            self.read_decl(p)?;
+        }
+
+        // Snapshot-pinned enumeration of the author's LIVE assertions in scope.
+        let (store, snap) = {
+            let store = self.store.read().unwrap();
+            let snap = {
+                let manifest = self.manifest.lock().unwrap();
+                store.snapshot(&manifest)
+            };
+            (store, snap)
+        };
+        let derived = self.derived_in(&store, &snap);
+        let killed = self.compute_superseded(&store, &snap);
+
+        // D10: resolve the ByAttr subject set from the live attr relation.
+        let by_attr_subjects: Option<HashSet<u128>> = match &scope.subject_set {
+            SubjectSet::ByAttr { pred, values } => {
+                if *pred != self.base.attr {
+                    return Err(FactStoreError::cap(
+                        "per-attribute-predicates",
+                        "P4's base-five vocabulary has no per-attribute predicates (P6); \
+                         encode §5.5 ByAttr as {pred: attr, values: [Str(key), matched values…]}",
+                    ));
+                }
+                let Some(Value::Str(key)) = values.first() else {
+                    return Err(FactStoreError::cap(
+                        "per-attribute-predicates",
+                        "ByAttr values must start with Str(attribute key) (ledger D10)",
+                    ));
+                };
+                let matched: HashSet<&Value> = values.iter().skip(1).collect();
+                let attr_decl = self.catalog.get_by_id(self.base.attr).expect("base");
+                let mut subjects = HashSet::new();
+                for mut row in self.project_predicate(&store, &snap, attr_decl, derived) {
+                    self.retain_live(&mut row.assertions, &killed);
+                    if row.assertions.is_empty() {
+                        continue;
+                    }
+                    if let [Value::Id(s), Value::Str(k), v] = &row.key.tuple[..] {
+                        if k.as_str() == key.as_str() && matched.contains(v) {
+                            subjects.insert(*s);
+                        }
+                    }
+                }
+                Some(subjects)
+            }
+            _ => None,
+        };
+
+        // Victim enumeration over every declared predicate's LIVE rows.
+        let mut victims: Vec<u128> = Vec::new();
+        let mut max_victim_tick: Option<u64> = None;
+        for decl in self.catalog.iter() {
+            match scope.predicate {
+                Some(p) => {
+                    if decl.id != p {
+                        continue;
+                    }
+                }
+                // `None = все предикаты автора` (§5.5) reads over the author's
+                // DATA facts: the reserved supersedes ledger is NOT in a
+                // blanket scope — otherwise every repeated `All` supersede
+                // would kill the author's own prior supersessions and
+                // RESURRECT the very facts it retracted (oscillation, caught
+                // by the battery). Superseding a supersede-assertion (the
+                // §2.4 recursion) stays expressible by NAMING the predicate:
+                // `predicate: Some(supersedes)`. Ledger round-010 D10a.
+                None => {
+                    if decl.id == self.base.supersedes {
+                        continue;
+                    }
+                }
+            }
+            for mut row in self.project_predicate(&store, &snap, decl, derived) {
+                self.retain_live(&mut row.assertions, &killed);
+                if row.assertions.is_empty() {
+                    continue;
+                }
+                // Subject column: c0, except incoming (c1 = the edge source —
+                // the record owner; D10).
+                let subject_col = usize::from(decl.name == "incoming");
+                let subject = match row.key.tuple.get(subject_col) {
+                    Some(Value::Id(s)) => *s,
+                    _ => continue,
+                };
+                let in_scope = match &scope.subject_set {
+                    SubjectSet::All => true,
+                    SubjectSet::Explicit(ids) => ids.contains(&subject),
+                    SubjectSet::ByAttr { .. } => by_attr_subjects
+                        .as_ref()
+                        .expect("resolved above")
+                        .contains(&subject),
+                };
+                if !in_scope {
+                    continue;
+                }
+                for a in &row.assertions {
+                    if a.author != scope.author {
+                        continue; // §4.2: foreign assertions are NEVER touched
+                    }
+                    max_victim_tick = Some(max_victim_tick.unwrap_or(0).max(a.tick));
+                    victims.push(aid(row.fid, &author_name, a.tick));
+                }
+            }
+        }
+        drop(store);
+
+        // E-SUP-001 first arm (D11): strict tick monotonicity, whole-op abort.
+        if let Some(max_tick) = max_victim_tick {
+            if at_tick <= max_tick {
+                return Err(FactStoreError {
+                    code: "E-SUP-001",
+                    detail: format!(
+                        "supersede at_tick {at_tick} is not strictly greater than the newest \
+                         victim assertion tick {max_tick} (§2.4 — aid contains tick; this is \
+                         what makes supersedes cycles impossible)"
+                    ),
+                });
+            }
+        }
+        if victims.is_empty() {
+            let version = self.manifest.lock().unwrap().current().version;
+            return Ok(CommitToken { version });
+        }
+        victims.sort_unstable();
+        victims.dedup();
+
+        let records: Vec<NodeRecordV2> = victims
+            .iter()
+            .map(|&aid_old| self.supersedes_record(aid_old, &author_name, at_tick))
+            .collect::<FactResult<_>>()?;
+        self.commit_derived(records, Vec::new(), at_tick)
     }
 
     fn begin_bulk_load(&mut self) -> FactResult<()> {
@@ -922,20 +1502,23 @@ impl FactStore for LsmFactStore {
         let payload = self
             .payload(s)
             .expect("canonical_state_sha requires a snapshot of this store");
+        // Killed set + regime BEFORE taking the store lock (both take their own
+        // short read locks; std RwLock re-entrant reads can deadlock against a
+        // queued writer).
+        let killed = self.superseded_set(payload).clone();
+        let derived = self.derived_present(payload);
         let store = self.store.read().unwrap();
         let snap = &payload.snap;
 
-        // 1. Every live base-five fact (the projected logical state), through the
-        //    same §2.4 liveness rules live_filter applies.
-        let superseded = self.superseded_aids(&store, snap);
+        // 1. Every live fact (the projected logical state, supersedes facts
+        //    included — they are ordinary facts), through the SAME §2.4
+        //    liveness rule live_filter applies (D14; divergence aborts, D3).
         let mut rows: Vec<FactRow> = Vec::new();
         for decl in self.catalog.iter() {
-            rows.extend(self.project_predicate(&store, snap, decl));
+            rows.extend(self.project_predicate(&store, snap, decl, derived));
         }
         rows.retain_mut(|row| {
-            row.assertions.retain(|a| {
-                a.tx_invalidated == TX_OPEN && !superseded.contains(&aid(a.fid, a.author, a.tick))
-            });
+            self.retain_live(&mut row.assertions, &killed);
             !row.assertions.is_empty()
         });
         drop(store);
@@ -1080,6 +1663,18 @@ impl LsmFactStore {
                 ))
             }
         };
+        if node_type == SUPERSEDES_NODE_TYPE {
+            // D1 forgery guard: the reserved carrier of supersession truth can
+            // only be written through the E-SUP-001 boundary (supersede() /
+            // FactGroup::Supersedes), never smuggled in as an ordinary node.
+            return Err(FactStoreError {
+                code: "E-SUP-001",
+                detail: format!(
+                    "node_type '{SUPERSEDES_NODE_TYPE}' is the reserved supersession carrier; \
+                     write supersedes facts through supersede() or FactGroup::Supersedes"
+                ),
+            });
+        }
         let mut semantic_id = String::new();
         let mut name = String::new();
         let mut file = String::new();
@@ -1193,6 +1788,181 @@ impl LsmFactStore {
             edge_type,
             metadata: serde_json::Value::Object(meta).to_string(),
         })
+    }
+
+    /// The reserved supersedes record of `supersedes(aid(aid_old, author,
+    /// tick), aid_old)` (D1/D2): record id = fid of the tuple (record identity
+    /// ≡ fact identity), routed to the reserved virtual file.
+    fn supersedes_record(
+        &self,
+        aid_old: u128,
+        author_name: &str,
+        tick: u64,
+    ) -> FactResult<NodeRecordV2> {
+        let aid_new = aid(aid_old, author_name, tick);
+        self.supersedes_record_of(aid_new, aid_old, author_name, tick)
+    }
+
+    fn supersedes_record_of(
+        &self,
+        aid_new: u128,
+        aid_old: u128,
+        author_name: &str,
+        tick: u64,
+    ) -> FactResult<NodeRecordV2> {
+        let tuple = [Value::Id(aid_new), Value::Id(aid_old)];
+        let record_fid = fid(PERSPECTIVE_MAIN_NAME, "supersedes", &tuple)?;
+        let mut meta = serde_json::Map::new();
+        meta.insert(
+            SUPERSEDES_META_NEW.to_string(),
+            serde_json::Value::String(format!("{aid_new:032x}")),
+        );
+        meta.insert(
+            SUPERSEDES_META_OLD.to_string(),
+            serde_json::Value::String(format!("{aid_old:032x}")),
+        );
+        meta.insert(
+            "_source".to_string(),
+            serde_json::Value::String(author_name.to_string()),
+        );
+        meta.insert("_generation".to_string(), serde_json::Value::from(tick));
+        Ok(NodeRecordV2 {
+            semantic_id: String::new(),
+            id: record_fid,
+            node_type: SUPERSEDES_NODE_TYPE.to_string(),
+            name: String::new(),
+            file: SUPERSEDES_FILE.to_string(),
+            content_hash: 0,
+            metadata: serde_json::Value::Object(meta).to_string(),
+        })
+    }
+
+    /// The aid → (tick, author) map of a fresh snapshot's ENTIRE assertion set
+    /// (raw — dead assertions included: re-superseding a dead aid is legal,
+    /// D11's boundary only needs the victim's identity to exist and be
+    /// provable).
+    fn assertion_ticks_snapshot(&self) -> HashMap<u128, (u64, AuthorId)> {
+        let store = self.store.read().unwrap();
+        let snap = {
+            let manifest = self.manifest.lock().unwrap();
+            store.snapshot(&manifest)
+        };
+        let derived = self.derived_in(&store, &snap);
+        let mut rows: Vec<FactRow> = Vec::new();
+        for decl in self.catalog.iter() {
+            rows.extend(self.project_predicate(&store, &snap, decl, derived));
+        }
+        // Names AFTER projecting — projection interns first-seen authors.
+        let names = self.author_names_snapshot();
+        let mut ticks = HashMap::new();
+        for row in &rows {
+            for a in &row.assertions {
+                let name = names
+                    .get(a.author.0 as usize)
+                    .expect("interned during projection");
+                ticks.insert(aid(a.fid, name, a.tick), (a.tick, a.author));
+            }
+        }
+        ticks
+    }
+
+    /// D12: one direct `supersedes/2` assert, subject to the D11 boundary AND
+    /// the §4.2 author scope (a batch may supersede ONLY its own author's
+    /// assertions — «Чужие ассершны не трогаются никогда»).
+    fn build_supersedes_record(
+        &self,
+        fact: &super::GroupFact,
+        author: AuthorId,
+        author_name: &str,
+        tick: u64,
+        ticks: &HashMap<u128, (u64, AuthorId)>,
+    ) -> FactResult<NodeRecordV2> {
+        for v in fact.tuple.iter() {
+            crate::derive::canon::validate_canonical(v)?;
+        }
+        if fact.predicate != self.base.supersedes {
+            let name = self
+                .catalog
+                .get_by_id(fact.predicate)
+                .map(|d| d.name.clone())
+                .unwrap_or_else(|| format!("{:?}", fact.predicate));
+            return Err(FactStoreError::cap(
+                "record-vocabulary",
+                format!("Supersedes groups accept supersedes/2 only, got '{name}'"),
+            ));
+        }
+        let (aid_new, aid_old) = match &fact.tuple[..] {
+            [Value::Id(new), Value::Id(old)] => (*new, *old),
+            other => {
+                return Err(FactStoreError::cap(
+                    "record-vocabulary",
+                    format!("supersedes/2 tuple must be [Id, Id], got {other:?}"),
+                ))
+            }
+        };
+        // E-SUP-001 (D11): the victim must resolve in the pre-commit snapshot
+        // — an unresolvable aid makes tick monotonicity unprovable — and the
+        // batch tick must be STRICTLY greater than the victim's.
+        let Some(&(victim_tick, victim_author)) = ticks.get(&aid_old) else {
+            return Err(FactStoreError {
+                code: "E-SUP-001",
+                detail: format!(
+                    "supersedes victim aid {aid_old:x} does not resolve to any known assertion \
+                     in the pre-commit snapshot — tick monotonicity is unprovable"
+                ),
+            });
+        };
+        // §4.2 author scope is ABSOLUTE on every write path into the reserved
+        // predicate: only the asserting author's own assertions may be killed.
+        if victim_author != author {
+            return Err(FactStoreError {
+                code: "E-SUP-001",
+                detail: format!(
+                    "supersedes victim aid {aid_old:x} belongs to a FOREIGN author — a producer \
+                     supersedes only its OWN assertions (§4.2)"
+                ),
+            });
+        }
+        if tick <= victim_tick {
+            return Err(FactStoreError {
+                code: "E-SUP-001",
+                detail: format!(
+                    "supersedes tick {tick} is not strictly greater than the victim assertion's \
+                     tick {victim_tick} (§2.4 — this is what makes cycles impossible)"
+                ),
+            });
+        }
+        self.supersedes_record_of(aid_new, aid_old, author_name, tick)
+    }
+
+    /// The facts commit path (D4): additive derived commit, v3 segments,
+    /// provenance.generation = tick (D5), Bool tag, TX_OPEN (D6 — P4 writes no
+    /// cache).
+    fn commit_derived(
+        &self,
+        nodes: Vec<NodeRecordV2>,
+        edges: Vec<EdgeRecordV2>,
+        tick: u64,
+    ) -> FactResult<CommitToken> {
+        let fields = DerivedFields {
+            provenance: ProvenanceV2 {
+                rule_ast_hash: 0,
+                generation: tick,
+            },
+            tag: TagV2::bool_one(),
+            tx_created: 0,
+            tx_invalidated: TX_OPEN,
+        };
+        let nodes: Vec<(NodeRecordV2, DerivedFields)> =
+            nodes.into_iter().map(|n| (n, fields.clone())).collect();
+        let edges: Vec<(EdgeRecordV2, DerivedFields)> =
+            edges.into_iter().map(|e| (e, fields.clone())).collect();
+        let mut store = self.store.write().unwrap();
+        let mut manifest = self.manifest.lock().unwrap();
+        let version = store
+            .commit_batch_derived(nodes, edges, &mut manifest)
+            .map_err(store_err)?;
+        Ok(CommitToken { version })
     }
 }
 
@@ -1471,22 +2241,23 @@ mod tests {
 
     // ── E-CAP-001 typed rejections (none panic, none silently no-op) ──
 
+    /// P4 flip (spec contract (9), ledger round-010-pre H10): supersession is
+    /// REAL — the E-CAP-001("supersession") rejection ceases to exist. The
+    /// P2-shaped call (at_tick 1 ≤ the fixture's newest analyzer tick 3) now
+    /// hits the E-SUP-001 tick boundary instead; a properly-ticked call
+    /// commits (full behavior in the supersession battery below).
     #[test]
-    fn supersede_is_e_cap_001_supersession() {
+    fn supersede_flipped_from_e_cap_001_to_real() {
         let fs = fixture_store();
-        let err = fs
-            .supersede(
-                SupersedeScope {
-                    author: fs.intern_author("analyzer"),
-                    perspective: PERSPECTIVE_MAIN,
-                    predicate: None,
-                    subject_set: SubjectSet::All,
-                },
-                1,
-            )
-            .unwrap_err();
-        assert_eq!(err.code, "E-CAP-001");
-        assert!(err.detail.contains("supersession"), "{}", err.detail);
+        let scope = SupersedeScope {
+            author: fs.intern_author("analyzer"),
+            perspective: PERSPECTIVE_MAIN,
+            predicate: None,
+            subject_set: SubjectSet::All,
+        };
+        let err = fs.supersede(scope.clone(), 1).unwrap_err();
+        assert_eq!(err.code, "E-SUP-001", "{}", err.detail);
+        fs.supersede(scope, 100).expect("monotone tick supersedes");
     }
 
     #[test]
@@ -1786,11 +2557,12 @@ mod tests {
         .is_empty());
     }
 
-    /// Round-008 R1 (the review's reproduction, pinned): re-asserting the SAME
-    /// edge key with new provenance must yield ONE assertion per fid on EVERY
-    /// read path — the full run and all four keyed paths agree on the newest
-    /// record's author/tick (prefix_scan is a window of sorted_run at FactRow
-    /// level, provenance included).
+    /// Round-008 R1, REVERSED for coexisting authors by P4 (ledger D8): two
+    /// AUTHORS re-asserting the SAME edge key are now two coexisting
+    /// assertions of ONE fact — and every read path (full run + all four keyed
+    /// paths) serves the SAME two-assertion row (prefix_scan is a window of
+    /// sorted_run at FactRow level, provenance included). Same-(author, tick)
+    /// newest-wins stays (M1 is P7).
     #[test]
     fn edge_provenance_is_path_independent_after_reassert() {
         let fs = LsmFactStore::ephemeral(2);
@@ -1822,16 +2594,24 @@ mod tests {
             .expect("first assert");
         fs.assert_batch(edge_group("writer-v2", 9))
             .expect("re-assert");
+        // Same-(author, tick) re-assert stays newest-wins (M1 dedup is P7's
+        // refinement; the projection must not mint a duplicate aid).
+        fs.assert_batch(edge_group("writer-v2", 9))
+            .expect("same-aid re-assert");
         let s = fs.snapshot();
-        let prov = |rows: Vec<FactRow>, label: &str| -> (u128, String, u64) {
-            assert_eq!(rows.len(), 1, "{label}: exactly one deduped row");
-            let a = &rows[0].assertions[0];
-            (
-                rows[0].fid,
-                fs.author_name(a.author).expect("interned"),
-                a.tick,
-            )
+        let prov = |rows: Vec<FactRow>, label: &str| -> (u128, Vec<(String, u64)>) {
+            assert_eq!(rows.len(), 1, "{label}: exactly one row (one fid)");
+            let asserts: Vec<(String, u64)> = rows[0]
+                .assertions
+                .iter()
+                .map(|a| (fs.author_name(a.author).expect("interned"), a.tick))
+                .collect();
+            (rows[0].fid, asserts)
         };
+        let want = vec![
+            ("writer-v1".to_string(), 1u64),
+            ("writer-v2".to_string(), 9u64),
+        ];
         let full = prov(
             collect(fs.sorted_run(
                 &s,
@@ -1842,9 +2622,8 @@ mod tests {
             "sorted_run(edge)",
         );
         assert_eq!(
-            (full.1.as_str(), full.2),
-            ("writer-v2", 9),
-            "the full run projects the newest record"
+            full.1, want,
+            "the full run carries BOTH coexisting authors' assertions (D8)"
         );
         for (pred, order, key) in [
             ("edge", SortOrder::Forward, 1u128),
@@ -1863,13 +2642,12 @@ mod tests {
                 &format!("prefix_scan({pred}, {order:?})"),
             );
             assert_eq!(
-                (keyed.1.as_str(), keyed.2),
-                ("writer-v2", 9),
-                "prefix_scan({pred}, {order:?}) must project the SAME winner"
+                keyed.1, want,
+                "prefix_scan({pred}, {order:?}) must serve the SAME assertion set"
             );
         }
         // `incoming` shares the fid of its own tuple, `edge` its own — but each
-        // path of one predicate yields the SAME (fid, author, tick).
+        // path of one predicate yields the SAME (fid, assertions).
         let keyed_edge = prov(
             collect(fs.prefix_scan(
                 &s,
@@ -1880,7 +2658,7 @@ mod tests {
             )),
             "edge keyed",
         );
-        assert_eq!(keyed_edge, full, "one fid, one Assertion, path-independent");
+        assert_eq!(keyed_edge, full, "one fid, one assertion SET, path-independent");
     }
 
     /// Round-008 R2: a legacy metadata blob carrying a key that collides with a
@@ -1992,7 +2770,7 @@ mod tests {
     // ── live_filter (§2.4, degenerate-but-exact) ───────────────────
 
     #[test]
-    fn live_filter_passes_all_p2_rows_and_drops_tx_invalidated() {
+    fn live_filter_passes_all_p2_rows() {
         let fs = fixture_store();
         let s = fs.snapshot();
         let rows = collect(fs.sorted_run(
@@ -2007,14 +2785,29 @@ mod tests {
             .live_filter(&s, Box::new(rows.clone().into_iter()))
             .collect();
         assert_eq!(filtered, rows);
-        // Cache rule 1: a hand-built row with tx_invalidated != TX_OPEN is DEAD.
+    }
+
+    /// P4 semantics change vs P2 (pre-registered, ledger round-010-pre D3):
+    /// a cache-dead assertion (`tx_invalidated != TX_OPEN`) with NO live
+    /// `supersedes(_, aid)` fact in the snapshot is DIVERGENCE between the
+    /// physical cache and the logical truth — live_filter ABORTS E-SUP-001
+    /// (P2 silently dropped it), never silently picks one truth.
+    #[test]
+    #[should_panic(expected = "E-SUP-001")]
+    fn live_filter_divergent_cache_dead_aborts_e_sup_001() {
+        let fs = fixture_store();
+        let s = fs.snapshot();
+        let rows = collect(fs.sorted_run(
+            &s,
+            base_id(&fs, "edge"),
+            PERSPECTIVE_MAIN,
+            SortOrder::Forward,
+        ));
         let mut dead = rows[0].clone();
         dead.assertions[0].tx_invalidated = 5;
-        let survivors: Vec<FactRow> = fs
-            .live_filter(&s, Box::new(vec![dead, rows[1].clone()].into_iter()))
-            .collect();
-        assert_eq!(survivors.len(), 1);
-        assert_eq!(survivors[0], rows[1]);
+        let _ = fs
+            .live_filter(&s, Box::new(vec![dead].into_iter()))
+            .count();
     }
 
     // ── snapshot isolation ─────────────────────────────────────────
@@ -2196,4 +2989,452 @@ mod tests {
             stats: PredicateStats::default(),
         }
     }
+
+    // ── P4 supersession battery (ledger round-010-pre H2–H4, D1–D12) ──
+
+    /// Live rows of `name` through the ONLY legal liveness path (§2.4).
+    fn live_run(fs: &LsmFactStore, s: &Snapshot, name: &str) -> Vec<FactRow> {
+        let rows = collect(fs.sorted_run(&s2(s), base_id(fs, name), PERSPECTIVE_MAIN, SortOrder::Forward));
+        fs.live_filter(&s2(s), Box::new(rows.into_iter())).collect()
+    }
+
+    // (identity helper so live_run can reborrow the snapshot twice)
+    fn s2(s: &Snapshot) -> &Snapshot {
+        s
+    }
+
+    fn authors_of(fs: &LsmFactStore, row: &FactRow) -> Vec<(String, u64)> {
+        row.assertions
+            .iter()
+            .map(|a| (fs.author_name(a.author).expect("interned"), a.tick))
+            .collect()
+    }
+
+    fn assert_nodes(fs: &LsmFactStore, author: &str, tick: u64, groups: Vec<FactGroup>) {
+        fs.assert_batch(AssertBatch {
+            perspective: PERSPECTIVE_MAIN,
+            author: fs.intern_author(author),
+            tick,
+            groups,
+        })
+        .expect("facts write");
+    }
+
+    fn scope_all(fs: &LsmFactStore, author: &str) -> SupersedeScope {
+        SupersedeScope {
+            author: fs.intern_author(author),
+            perspective: PERSPECTIVE_MAIN,
+            predicate: None,
+            subject_set: SubjectSet::All,
+        }
+    }
+
+    /// H3 core (§4.2): two authors assert ONE fid; superseding All as one
+    /// author kills EXACTLY that author's assertions — the fact stays live
+    /// with the foreign assertion, everywhere (node/type/attr).
+    #[test]
+    fn supersede_all_kills_only_own_assertions() {
+        let fs = LsmFactStore::ephemeral(2);
+        let group = |fs: &LsmFactStore| {
+            node_group(fs, 1, "FUNCTION", &[("name", Value::Str("shared".into()))])
+        };
+        assert_nodes(&fs, "alice", 1, vec![group(&fs)]);
+        assert_nodes(&fs, "bob", 2, vec![group(&fs)]);
+        let s = fs.snapshot();
+        let rows = live_run(&fs, &s, "node");
+        assert_eq!(rows.len(), 1, "one fid");
+        assert_eq!(
+            authors_of(&fs, &rows[0]),
+            vec![("alice".to_string(), 1), ("bob".to_string(), 2)],
+            "coexisting-author assertions are REAL (D8)"
+        );
+        let sha_before = fs.canonical_state_sha(&s);
+
+        fs.supersede(scope_all(&fs, "alice"), 10).expect("supersede");
+        let s = fs.snapshot();
+        for name in ["node", "type", "attr"] {
+            let rows = live_run(&fs, &s, name);
+            assert_eq!(rows.len(), 1, "{name}: fact stays live");
+            assert_eq!(
+                authors_of(&fs, &rows[0]),
+                vec![("bob".to_string(), 2)],
+                "{name}: EXACTLY the foreign assertion survives (§4.2)"
+            );
+        }
+        // The logical state moved (unlike compaction physics).
+        assert_ne!(sha_before, fs.canonical_state_sha(&s));
+        // No scope naming alice can ever touch bob: alice's repeated supersede
+        // at a higher tick is a no-op now (her assertions are already dead).
+        fs.supersede(scope_all(&fs, "alice"), 20).expect("no-op");
+        let s = fs.snapshot();
+        let rows = live_run(&fs, &s, "node");
+        assert_eq!(authors_of(&fs, &rows[0]), vec![("bob".to_string(), 2)]);
+    }
+
+    /// H2a (D11): at_tick ≤ a victim's tick aborts the WHOLE operation
+    /// pre-commit — typed E-SUP-001, sha byte-identical.
+    #[test]
+    fn supersede_tick_boundary_aborts_whole_op() {
+        let fs = LsmFactStore::ephemeral(2);
+        assert_nodes(&fs, "alice", 7, vec![node_group(&fs, 1, "FUNCTION", &[])]);
+        let s = fs.snapshot();
+        let sha_before = fs.canonical_state_sha(&s);
+        for bad_tick in [0, 6, 7] {
+            let err = fs.supersede(scope_all(&fs, "alice"), bad_tick).unwrap_err();
+            assert_eq!(err.code, "E-SUP-001", "{}", err.detail);
+        }
+        let s = fs.snapshot();
+        assert_eq!(
+            sha_before,
+            fs.canonical_state_sha(&s),
+            "aborted supersede leaves the store byte-identical"
+        );
+        fs.supersede(scope_all(&fs, "alice"), 8).expect("strictly greater tick");
+    }
+
+    /// H2a, direct-assert arm (D12): the same E-SUP-001 boundary guards
+    /// `FactGroup::Supersedes` — tick monotonicity, victim resolvability, and
+    /// the §4.2 author scope; a cycle is unconstructible.
+    #[test]
+    fn direct_supersedes_asserts_guarded_by_e_sup_001() {
+        let fs = LsmFactStore::ephemeral(2);
+        assert_nodes(&fs, "alice", 1, vec![node_group(&fs, 1, "FUNCTION", &[])]);
+        let node_fid = super::super::fid(
+            "main",
+            "node",
+            &[Value::Id(1), Value::Str("FUNCTION".into())],
+        )
+        .unwrap();
+        let victim = super::super::aid(node_fid, "alice", 1);
+        let sup_group = |aid_new: u128, aid_old: u128| FactGroup::Supersedes {
+            fact: super::super::GroupFact {
+                predicate: base_id(&fs, "supersedes"),
+                tuple: vec![Value::Id(aid_new), Value::Id(aid_old)].into(),
+            },
+        };
+        let batch = |author: &str, tick: u64, groups: Vec<FactGroup>| AssertBatch {
+            perspective: PERSPECTIVE_MAIN,
+            author: fs.intern_author(author),
+            tick,
+            groups,
+        };
+        // Tick violation: batch tick == victim tick.
+        let err = fs
+            .assert_batch(batch("alice", 1, vec![sup_group(9, victim)]))
+            .unwrap_err();
+        assert_eq!(err.code, "E-SUP-001", "{}", err.detail);
+        // Unresolvable victim.
+        let err = fs
+            .assert_batch(batch("alice", 5, vec![sup_group(9, 0xdead_beef)]))
+            .unwrap_err();
+        assert_eq!(err.code, "E-SUP-001", "{}", err.detail);
+        assert!(err.detail.contains("does not resolve"), "{}", err.detail);
+        // Foreign victim (§4.2): bob cannot kill alice's assertion.
+        let err = fs
+            .assert_batch(batch("bob", 5, vec![sup_group(9, victim)]))
+            .unwrap_err();
+        assert_eq!(err.code, "E-SUP-001", "{}", err.detail);
+        assert!(err.detail.contains("FOREIGN"), "{}", err.detail);
+        // A valid direct supersede kills the assertion.
+        fs.assert_batch(batch("alice", 2, vec![sup_group(9, victim)]))
+            .expect("monotone direct supersede");
+        let s = fs.snapshot();
+        assert!(live_run(&fs, &s, "node").is_empty(), "victim dead");
+        // Cycle unconstructible: superseding the supersede-assertion needs a
+        // STRICTLY greater tick — the same tick is rejected, so
+        // supersedes(x,y) ∧ supersedes(y,x) can never close.
+        let sup_rows = live_run(&fs, &s, "supersedes");
+        assert_eq!(sup_rows.len(), 1);
+        let s1_aid = super::super::aid(sup_rows[0].fid, "alice", 2);
+        let err = fs
+            .assert_batch(batch("alice", 2, vec![sup_group(11, s1_aid)]))
+            .unwrap_err();
+        assert_eq!(err.code, "E-SUP-001", "{}", err.detail);
+    }
+
+    /// H4 (§2.4 definitional recursion): superseding the supersede-assertion
+    /// itself resurrects the originally-superseded assertion; a re-assert
+    /// after supersession is a NEW aid and lives.
+    #[test]
+    fn recursive_liveness_resurrects_and_reassert_lives() {
+        let fs = LsmFactStore::ephemeral(2);
+        assert_nodes(&fs, "alice", 1, vec![node_group(&fs, 7, "FUNCTION", &[])]);
+        fs.supersede(scope_all(&fs, "alice"), 2).expect("first supersede");
+        {
+            let s = fs.snapshot();
+            assert!(live_run(&fs, &s, "node").is_empty(), "fact dead after supersede");
+        }
+        // Supersede the supersede-assertions themselves (predicate-scoped).
+        let scope = SupersedeScope {
+            author: fs.intern_author("alice"),
+            perspective: PERSPECTIVE_MAIN,
+            predicate: Some(base_id(&fs, "supersedes")),
+            subject_set: SubjectSet::All,
+        };
+        fs.supersede(scope, 3).expect("supersede the supersedes");
+        {
+            let s = fs.snapshot();
+            let rows = live_run(&fs, &s, "node");
+            assert_eq!(rows.len(), 1, "original assertion is LIVE again (§2.4 recursion)");
+            assert_eq!(authors_of(&fs, &rows[0]), vec![("alice".to_string(), 1)]);
+        }
+        // Independent arm: re-assert AFTER a supersession = new aid, fact live.
+        let fs = LsmFactStore::ephemeral(2);
+        assert_nodes(&fs, "alice", 1, vec![node_group(&fs, 8, "FUNCTION", &[])]);
+        fs.supersede(scope_all(&fs, "alice"), 2).expect("supersede");
+        assert_nodes(&fs, "alice", 4, vec![node_group(&fs, 8, "FUNCTION", &[])]);
+        let s = fs.snapshot();
+        let rows = live_run(&fs, &s, "node");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            authors_of(&fs, &rows[0]),
+            vec![("alice".to_string(), 4)],
+            "the tick-4 re-assert lives; the tick-1 assertion stays dead"
+        );
+    }
+
+    /// H3 ByAttr arm (§5.5/D10): `ByAttr{attr, ["file", …changedFiles]}`
+    /// reproduces the reanalysis contract — kills exactly the author's
+    /// assertions on subjects in the changed files, edges (and their incoming
+    /// views) included; foreign authors and other files untouched.
+    #[test]
+    fn supersede_by_attr_reproduces_reanalysis_contract() {
+        let fs = LsmFactStore::ephemeral(2);
+        assert_nodes(
+            &fs,
+            "alice",
+            1,
+            vec![
+                node_group(&fs, 10, "FUNCTION", &[("file", Value::Str("a.js".into()))]),
+                node_group(&fs, 11, "FUNCTION", &[("file", Value::Str("b.js".into()))]),
+            ],
+        );
+        fs.assert_batch(AssertBatch {
+            perspective: PERSPECTIVE_MAIN,
+            author: fs.intern_author("alice"),
+            tick: 2,
+            groups: vec![FactGroup::Edge {
+                fact: super::super::GroupFact {
+                    predicate: base_id(&fs, "edge"),
+                    tuple: vec![Value::Id(10), Value::Id(11), Value::Str("CALLS".into())].into(),
+                },
+            }],
+        })
+        .expect("edge");
+        assert_nodes(
+            &fs,
+            "bob",
+            3,
+            vec![node_group(&fs, 20, "FUNCTION", &[("file", Value::Str("a.js".into()))])],
+        );
+
+        fs.supersede(
+            SupersedeScope {
+                author: fs.intern_author("alice"),
+                perspective: PERSPECTIVE_MAIN,
+                predicate: None,
+                subject_set: SubjectSet::ByAttr {
+                    pred: base_id(&fs, "attr"),
+                    values: vec![Value::Str("file".into()), Value::Str("a.js".into())],
+                },
+            },
+            10,
+        )
+        .expect("ByAttr supersede");
+
+        let s = fs.snapshot();
+        let nodes = live_run(&fs, &s, "node");
+        let ids: Vec<&Value> = nodes.iter().map(|r| &r.key.tuple[0]).collect();
+        assert!(!ids.contains(&&Value::Id(10)), "alice's a.js node dead");
+        assert!(ids.contains(&&Value::Id(11)), "alice's b.js node live");
+        assert!(ids.contains(&&Value::Id(20)), "bob's a.js node live (§4.2)");
+        // The edge FROM the superseded subject died, on both views.
+        assert!(live_run(&fs, &s, "edge").is_empty(), "edge 10→11 dead");
+        assert!(live_run(&fs, &s, "incoming").is_empty(), "incoming view dead too");
+        // ByAttr with a non-attr predicate is a typed P6 rejection.
+        let err = fs
+            .supersede(
+                SupersedeScope {
+                    author: fs.intern_author("alice"),
+                    perspective: PERSPECTIVE_MAIN,
+                    predicate: None,
+                    subject_set: SubjectSet::ByAttr {
+                        pred: base_id(&fs, "node"),
+                        values: vec![Value::Str("file".into())],
+                    },
+                },
+                20,
+            )
+            .unwrap_err();
+        assert_eq!(err.code, "E-CAP-001");
+        assert!(err.detail.contains("per-attribute-predicates"), "{}", err.detail);
+    }
+
+    /// Two live CONFLICTING Functional assertions are LEGAL in P4 (arbitration
+    /// is P5, §10.4); author-scoped supersession resolves only its own side.
+    #[test]
+    fn conflicting_functional_fids_coexist_and_scope_by_author() {
+        let fs = LsmFactStore::ephemeral(2);
+        assert_nodes(&fs, "alice", 1, vec![node_group(&fs, 30, "GLOBAL_DEFINITION", &[])]);
+        assert_nodes(&fs, "bob", 2, vec![node_group(&fs, 30, "EXTERNAL_FUNCTION", &[])]);
+        let s = fs.snapshot();
+        assert_eq!(
+            live_run(&fs, &s, "node").len(),
+            2,
+            "two conflicting Functional facts BOTH live (P4 — §2.3 arbitration is P5)"
+        );
+        fs.supersede(
+            SupersedeScope {
+                author: fs.intern_author("alice"),
+                perspective: PERSPECTIVE_MAIN,
+                predicate: None,
+                subject_set: SubjectSet::Explicit(vec![30]),
+            },
+            10,
+        )
+        .expect("supersede alice");
+        let s = fs.snapshot();
+        let rows = live_run(&fs, &s, "node");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].key.tuple[1], Value::Str("EXTERNAL_FUNCTION".into()));
+        assert_eq!(authors_of(&fs, &rows[0]), vec![("bob".to_string(), 2)]);
+    }
+
+    /// D1 forgery guard: the reserved carrier cannot be smuggled through a
+    /// node group — only the E-SUP-001 boundary writes it.
+    #[test]
+    fn reserved_supersedes_node_type_rejected_in_node_groups() {
+        let fs = fixture_store();
+        let err = fs
+            .assert_batch(batch(
+                &fs,
+                vec![node_group(&fs, 999, SUPERSEDES_NODE_TYPE, &[])],
+            ))
+            .unwrap_err();
+        assert_eq!(err.code, "E-SUP-001");
+        assert!(err.detail.contains("reserved"), "{}", err.detail);
+    }
+
+    /// D1 visibility rule: reserved records surface in the LEGACY node
+    /// aggregates as rows (§9.4) and NEVER leak into node/type/attr facts;
+    /// node-fact count == legacy node_count − reserved-record count.
+    #[test]
+    fn reserved_records_legacy_visible_but_never_fact_leak() {
+        let fs = LsmFactStore::ephemeral(2);
+        assert_nodes(
+            &fs,
+            "alice",
+            1,
+            vec![node_group(&fs, 40, "FUNCTION", &[("name", Value::Str("f".into()))])],
+        );
+        fs.supersede(scope_all(&fs, "alice"), 5).expect("supersede");
+        let s = fs.snapshot();
+        // Victims: node/2, type/2 and the name attr — three supersedes records.
+        let sup = live_run(&fs, &s, "supersedes");
+        assert_eq!(sup.len(), 3, "one supersedes fact per victim assertion");
+        // No reserved leakage into any base relation, raw OR live.
+        for name in ["node", "type", "attr"] {
+            for row in collect(fs.sorted_run(&s, base_id(&fs, name), PERSPECTIVE_MAIN, SortOrder::Forward)) {
+                for v in row.key.tuple.iter() {
+                    if let Value::Str(sv) = v {
+                        assert_ne!(sv, SUPERSEDES_NODE_TYPE, "{name}: reserved leak");
+                    }
+                }
+            }
+        }
+        // Legacy view: reserved records ARE rows.
+        let pinned = fs.read_snapshot_of(&s);
+        let store = fs.store_read();
+        let reserved = store
+            .find_nodes_at(&pinned, Some(SUPERSEDES_NODE_TYPE), None)
+            .len();
+        assert_eq!(reserved, 3, "reserved records visible to the legacy surface");
+        let node_facts = collect(fs.sorted_run(&s, base_id(&fs, "node"), PERSPECTIVE_MAIN, SortOrder::Forward)).len();
+        assert_eq!(
+            node_facts,
+            store.node_count_at(&pinned) - reserved,
+            "node facts == legacy node_count − reserved rows (D1)"
+        );
+    }
+
+    /// D16 + scope hygiene: non-main perspective and unknown-author scopes are
+    /// typed rejections, not partial writes.
+    #[test]
+    fn supersede_scope_gates_are_typed() {
+        let fs = fixture_store();
+        let other = fs.intern_perspective("other");
+        let err = fs
+            .supersede(
+                SupersedeScope {
+                    author: fs.intern_author("analyzer"),
+                    perspective: other,
+                    predicate: None,
+                    subject_set: SubjectSet::All,
+                },
+                100,
+            )
+            .unwrap_err();
+        assert_eq!(err.code, "E-CAP-001");
+        assert!(err.detail.contains("perspectives"), "{}", err.detail);
+        let err = fs
+            .supersede(
+                SupersedeScope {
+                    author: AuthorId(999),
+                    perspective: PERSPECTIVE_MAIN,
+                    predicate: None,
+                    subject_set: SubjectSet::All,
+                },
+                100,
+            )
+            .unwrap_err();
+        assert_eq!(err.code, "E-CAT-001");
+        // Unknown predicate in scope: the §3.4 unknown-id class.
+        let err = fs
+            .supersede(
+                SupersedeScope {
+                    author: fs.intern_author("analyzer"),
+                    perspective: PERSPECTIVE_MAIN,
+                    predicate: Some(CatalogPredicateId(999)),
+                    subject_set: SubjectSet::All,
+                },
+                100,
+            )
+            .unwrap_err();
+        assert_eq!(err.code, "E-CAT-002");
+    }
+
+    /// H6 stats arm: `stats(supersedes)` carries REAL live counts (the
+    /// anti-join build side the P3 estimator costs); base stats are LIVE
+    /// counts (post-supersession).
+    #[test]
+    fn stats_supersedes_and_base_are_live_counts() {
+        let fs = LsmFactStore::ephemeral(2);
+        assert_nodes(
+            &fs,
+            "alice",
+            1,
+            vec![
+                node_group(&fs, 50, "FUNCTION", &[]),
+                node_group(&fs, 51, "FUNCTION", &[]),
+            ],
+        );
+        fs.supersede(
+            SupersedeScope {
+                author: fs.intern_author("alice"),
+                perspective: PERSPECTIVE_MAIN,
+                predicate: None,
+                subject_set: SubjectSet::Explicit(vec![50]),
+            },
+            10,
+        )
+        .expect("supersede node 50");
+        // First stats observation AFTER the supersede (C20 once-semantics).
+        let sup = fs.stats(base_id(&fs, "supersedes"));
+        assert_eq!(sup.live_facts, 2, "node/2 + type/2 victims of subject 50");
+        assert_eq!(sup.live_asserts, 2);
+        let node = fs.stats(base_id(&fs, "node"));
+        assert_eq!(node.live_facts, 1, "only node 51 is live");
+        assert_eq!(node.live_asserts, 1);
+    }
+
 }

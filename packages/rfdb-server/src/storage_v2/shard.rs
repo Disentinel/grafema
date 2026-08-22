@@ -23,7 +23,7 @@ use crate::storage_v2::index::InvertedIndex;
 use crate::storage_v2::index::token::TokenIndex;
 use crate::storage_v2::manifest::SegmentDescriptor;
 use crate::storage_v2::segment::{EdgeSegmentV2, NodeSegmentV2};
-use crate::storage_v2::types::{EdgeRecordV2, NodeRecordV2, SegmentMeta, SegmentType};
+use crate::storage_v2::types::{DerivedFields, EdgeRecordV2, NodeRecordV2, SegmentMeta, SegmentType};
 use crate::storage_v2::write_buffer::WriteBuffer;
 use crate::storage_v2::writer::{EdgeSegmentWriter, NodeSegmentWriter};
 use serde::Serialize;
@@ -956,6 +956,94 @@ impl Shard {
                 let bytes = cursor.into_inner();
                 result.edge_meta = Some(meta.clone());
 
+                let seg = EdgeSegmentV2::from_bytes(&bytes)?;
+                let desc = build_descriptor(seg_id, SegmentType::Edges, self.shard_id, &meta);
+                self.edge_segments.push(seg);
+                self.edge_descriptors.push(desc);
+            }
+        }
+
+        Ok(Some(result))
+    }
+
+    /// Facts-path flush (rofl P4, ledger round-010-pre D4): write the given
+    /// records STRAIGHT into fresh v3 (derived-column) segments, bypassing the
+    /// WriteBuffer entirely. Mirrors [`Self::flush_with_ids`] except every
+    /// record goes through `add_derived`, so the segment carries the
+    /// per-assertion provenance/tag/tx columns (`FORMAT_VERSION_DERIVED`).
+    /// The legacy flush path is untouched — this is an ADDITIVE seam used only
+    /// by `MultiShardStore::commit_batch_derived`.
+    pub fn flush_derived_with_ids(
+        &mut self,
+        nodes: Vec<(NodeRecordV2, DerivedFields)>,
+        edges: Vec<(EdgeRecordV2, DerivedFields)>,
+        node_segment_id: Option<u64>,
+        edge_segment_id: Option<u64>,
+    ) -> Result<Option<FlushResult>> {
+        if nodes.is_empty() && edges.is_empty() {
+            return Ok(None);
+        }
+
+        let mut result = FlushResult {
+            node_meta: None,
+            edge_meta: None,
+            node_segment_path: None,
+            edge_segment_path: None,
+        };
+
+        if !nodes.is_empty() {
+            let seg_id = node_segment_id
+                .expect("node_segment_id required when the derived batch has nodes");
+            let mut writer = NodeSegmentWriter::new();
+            for (node, fields) in nodes {
+                writer.add_derived(node, fields);
+            }
+            if let Some(path) = &self.path {
+                let seg_path = segment_file_path(path, seg_id, "nodes");
+                let file = File::create(&seg_path)?;
+                let mut buf_writer = BufWriter::new(file);
+                let meta = writer.finish(&mut buf_writer)?;
+                result.node_meta = Some(meta.clone());
+                result.node_segment_path = Some(seg_path.clone());
+                let seg = NodeSegmentV2::open(&seg_path)?;
+                let desc = build_descriptor(seg_id, SegmentType::Nodes, self.shard_id, &meta);
+                self.node_segments.push(seg);
+                self.node_descriptors.push(desc);
+            } else {
+                let mut cursor = Cursor::new(Vec::new());
+                let meta = writer.finish(&mut cursor)?;
+                let bytes = cursor.into_inner();
+                result.node_meta = Some(meta.clone());
+                let seg = NodeSegmentV2::from_bytes(&bytes)?;
+                let desc = build_descriptor(seg_id, SegmentType::Nodes, self.shard_id, &meta);
+                self.node_segments.push(seg);
+                self.node_descriptors.push(desc);
+            }
+        }
+
+        if !edges.is_empty() {
+            let seg_id = edge_segment_id
+                .expect("edge_segment_id required when the derived batch has edges");
+            let mut writer = EdgeSegmentWriter::new();
+            for (edge, fields) in edges {
+                writer.add_derived(edge, fields);
+            }
+            if let Some(path) = &self.path {
+                let seg_path = segment_file_path(path, seg_id, "edges");
+                let file = File::create(&seg_path)?;
+                let mut buf_writer = BufWriter::new(file);
+                let meta = writer.finish(&mut buf_writer)?;
+                result.edge_meta = Some(meta.clone());
+                result.edge_segment_path = Some(seg_path.clone());
+                let seg = EdgeSegmentV2::open(&seg_path)?;
+                let desc = build_descriptor(seg_id, SegmentType::Edges, self.shard_id, &meta);
+                self.edge_segments.push(seg);
+                self.edge_descriptors.push(desc);
+            } else {
+                let mut cursor = Cursor::new(Vec::new());
+                let meta = writer.finish(&mut cursor)?;
+                let bytes = cursor.into_inner();
+                result.edge_meta = Some(meta.clone());
                 let seg = EdgeSegmentV2::from_bytes(&bytes)?;
                 let desc = build_descriptor(seg_id, SegmentType::Edges, self.shard_id, &meta);
                 self.edge_segments.push(seg);

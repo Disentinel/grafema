@@ -282,6 +282,32 @@ impl PredicateCatalog {
         self.base_names.get(name).copied()
     }
 
+    /// P4 (rofl-fact-model.md §2.4 / §3.1, ledger round-010-pre D13): the
+    /// canonical declaration of the reserved `supersedes/2` predicate —
+    /// `Adjacency` over `(aid_new, aid_old)` with the reverse run on `c1`, so
+    /// the §2.4 liveness anti-join is a prefix probe by the superseded aid, not
+    /// a scan. Declared by the FACTS backend at construction (the store that
+    /// owns supersedes facts) — deliberately NOT part of
+    /// [`Self::with_base_relations`]: the base id-space and `base_names`
+    /// dispatch are pinned by the P3 plan goldens, and the derive executor has
+    /// no supersedes storage service until the fixpoint engine moves onto the
+    /// FactStore seam (P6/P7).
+    pub fn supersedes_decl() -> PredicateDecl {
+        PredicateDecl {
+            id: CatalogPredicateId(0), // assigned by declare()
+            name: "supersedes".to_string(),
+            arity: 2,
+            strategy: PhysStrategy::Adjacency,
+            cardinality: Cardinality::MultiValued,
+            temporal: TemporalScope::Timeless,
+            semiring: crate::storage_v2::types::BOOLTAG_SEMIRING_ID,
+            key_cols: Box::new([0, 1]),
+            reverse: Some(Box::new([1, 0])),
+            author_priority: Box::new([]),
+            stats: PredicateStats::default(),
+        }
+    }
+
     /// P3: the plan-time [`PredicateStats`] population (round-009 H5 / open
     /// question Q1): map the run's live relation magnitudes into the base decls'
     /// `live_facts`/`live_asserts`. `node`/`type` and `attr` carry the live node
