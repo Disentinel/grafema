@@ -1,0 +1,258 @@
+-- Round 010 (2026-08-22) — P4 ACTUALS vs the pre-registered expectations of
+-- round-010-pre.rofl (commit d4695275, committed BEFORE any implementation —
+-- git-auditable ordering per the R6 two-commit precedent). Assert-only.
+--
+-- P4 = assertion physics on the FactStore seam (rofl-fact-model.md rev 2.0
+-- §10.4 row P4): real supersede(), E-SUP-001 both arms, definitional §2.4
+-- liveness in live_filter/sha/stats, FactRow multi-assertion, §3.2 aid-keyed
+-- compaction ⊕, supersedes PredicateDecl + real stats, C3 CLAIMED.
+-- NO manifest/checkpoint format change; the legacy write path, TombstoneSet,
+-- ManifestEdit shape, checkpoints and crash machinery are untouched (P7 owns
+-- supersede_delta + the crash-gate rewrite).
+
+-- ── Files changed (implementation, uncommitted at round-write; committed by
+--    the workflow finalize step, never pushed) ───────────────────────
+--   packages/rfdb-server/src/facts/lsm.rs            (+~1500/-~130)
+--   packages/rfdb-server/src/facts/mod.rs            (aid canonicalization D7,
+--     FactGroup::Supersedes D12, live_filter/supersede trait contracts,
+--     D15 mechanical guard, hygiene)
+--   packages/rfdb-server/src/facts/differential.rs   (C3 gate + post-
+--     supersession differential)
+--   packages/rfdb-server/src/storage_v2/compaction/merge.rs (D9 aid rekey)
+--   packages/rfdb-server/src/storage_v2/compaction/tag_fold.rs (module doc:
+--     record-key fold retired per §3.2)
+--   packages/rfdb-server/src/storage_v2/multi_shard.rs (commit_batch_derived,
+--     iter_{node,edge}_versions_at, any_derived_segments_at — additive)
+--   packages/rfdb-server/src/storage_v2/shard.rs     (flush_derived_with_ids —
+--     additive, WriteBuffer bypassed)
+--   packages/rfdb-server/src/derive/catalog.rs       (supersedes_decl(), D13)
+--   packages/rfdb-server/src/derive/plan.rs          (TEST ONLY: H6 probe;
+--     zero production-code change — plan_golden bit-identity is the proof)
+--   tests/crash_recovery.rs: ZERO diff hunks (git diff --stat over tests/ = 0
+--     lines) — the untouched-green gate assertion itself.
+
+-- ── Gate results (expected → FOUND) ────────────────────────────────
+
+-- G1 suite: expected baseline 1522/0/28 + new P4 tests, 0 failed.
+--   FOUND: cargo test --lib = 1539 passed / 0 failed / 28 ignored (26.4s).
+--   Mechanical diff counts: +17 `#[test]` lines, −0; +0 `#[ignore]`, −0.
+--   1522 + 17 = 1539 ✓. Known-flaky test passed in-suite (no isolation needed).
+
+-- G2 crash gate: expected 9/9 green AND file absent from the diff.
+--   FOUND: cargo test --test crash_recovery = 9 passed / 0 failed (0.04s);
+--   `git diff HEAD --stat -- packages/rfdb-server/tests/` = empty.
+
+-- G3 bench_c2_bulkload: expected 4/4. FOUND: 4 passed / 0 failed (22.2s).
+
+-- G4 plan_golden: expected 40,816 fingerprints bit-identical.
+--   FOUND: derive::plan_golden::p3_plan_fingerprints_match_pre_p3_golden ok
+--   (golden file = 40,816 lines, unchanged); with_base_relations untouched
+--   (supersedes is declared by LsmFactStore at construction — D13), so the
+--   base id-space cannot have moved. derive/plan.rs production code: 0 lines.
+
+-- G5 conformance harness: expected exit 0, tier-0 120/0, tier-1 5 GREEN/25 RED.
+--   FOUND: exit 0; tier-0 120 seeds / 0 divergences (why 325/325, whynot
+--   554/554 sound); tier-1 oracle self-check 30/30, verdicts GREEN 5 / RED 25
+--   / DIVERGENCE 0 / HARNESS_GAP 0 — verdict-identical to baseline. The 3
+--   generated report files (conformance-report.json, conformance-run-meta.json,
+--   _ai/research/rofl-conformance-report.md) restored via git checkout after
+--   the run (working tree shows only the 9 implementation files).
+
+-- G6 perf proxy (MANDATORY — live_filter enters the facts read path):
+--   environment check: /tmp/rofl-p2-real-base/graph.rfdb = 567,405,250 B
+--   (du -sb; byte-identical to the round-009-pre measurement) on the same VM →
+--   pinned medians reused (depends 4.88 / method_calls 8.73 / axum_routes
+--   5.38 s; 1.10× ceilings 5.368 / 9.603 / 5.918). Quiescence verified
+--   (pgrep -af 'cargo (test|build)|rustc' empty) before each timed run;
+--   release profile; .grafema/grafema.rfdb -> /tmp/rofl-p2-real-base/graph.rfdb.
+--   FOUND (3 runs, seconds):
+--     depends.dl      4.778 / 5.104 / 4.947  -> MEDIAN 4.947  (1.014×) PASS
+--     method_calls.dl 8.451 / 8.521 / 8.493  -> MEDIAN 8.493  (0.973×) PASS
+--     axum_routes.dl  5.560 / 5.369 / 5.352  -> MEDIAN 5.369  (0.998×) PASS
+--   All ≤ 1.10×. (Expected ~0 delta confirmed: the executor still reads
+--   StorageView; the derived-merge rekey is off the eval path; write-back
+--   (+0,−0) on all three, as at round-009.)
+
+-- G7 C3 — CLAIMED (doc §10.5 C3, tag_fold arm; P2's Q8 multi-assertion case).
+--   Test: facts::differential::c3_two_author_count_fact_survives_compaction_
+--   with_identical_sha. One fact (node tuple), Count semiring, asserted by
+--   alice (weight 3, tick 1) and bob (weight 5, tick 1) in separate derived
+--   commits → FullMerge compact() → |live assertions| == 2 with SEPARATE
+--   weights (3 and 5 — never folded across aids), canonical_state_sha
+--   byte-identical before/after compaction, and process-invariant (subprocess
+--   helper re-invocation on the durable dir, precedent
+--   state_sha_deterministic_across_two_processes). GREEN.
+--   C3's general physics-invariance arm additionally re-proven WITH live
+--   supersedes facts present (post_supersession_reads_and_legacy_visibility:
+--   sha identical across FullMerge after a real supersede()).
+
+-- G8 E-SUP-001 both arms + author scope — GREEN:
+--   * tick arm: supersede_tick_boundary_aborts_whole_op (typed E-SUP-001 at
+--     at_tick ∈ {0, 6, 7} vs victim tick 7; sha byte-identical after aborts;
+--     at_tick 8 commits). Direct-assert arm:
+--     direct_supersedes_asserts_guarded_by_e_sup_001 (same-tick rejection,
+--     unresolvable-victim rejection, FOREIGN-victim rejection, and the
+--     cycle-unconstructibility demonstration — a supersedes assertion can only
+--     be targeted at a STRICTLY greater tick, so ticks strictly decrease along
+--     chains and supersedes(x,y) ∧ supersedes(y,x) can never close).
+--   * divergence arm (D3): live_filter_divergent_cache_dead_aborts_e_sup_001
+--     (#[should_panic(expected = "E-SUP-001")]) — a cache-dead assertion with
+--     no live supersedes(_, aid) aborts, never a silent one-truth pick. The
+--     same retain path guards canonical_state_sha and stats.
+--   * author scope absolute (§4.2): supersede_all_kills_only_own_assertions
+--     (two authors, one fid → All-scope kill leaves EXACTLY the foreign
+--     assertion), conflicting_functional_fids_coexist_and_scope_by_author
+--     (two live conflicting Functional assertions LEGAL in P4; author-scoped
+--     resolution), ByAttr reanalysis contract
+--     (supersede_by_attr_reproduces_reanalysis_contract: only the author's
+--     facts on subjects in the changed file die — node/type/attr + the edge
+--     from the subject on BOTH views; foreign author and other files live).
+--   * recursion (H4): recursive_liveness_resurrects_and_reassert_lives —
+--     superseding the supersede-assertion (predicate: Some(supersedes), higher
+--     tick) resurrects the original; re-assert after supersession = new aid,
+--     live at its new tick while the old assertion stays dead.
+
+-- G9 live_filter sole-read-path guard — GREEN:
+--   facts::hygiene_tests::no_fact_store_consumer_outside_facts — walks src/,
+--   skips src/facts/, and fails listing offenders on any CODE reference to the
+--   FactStore surface outside the module (doc comments exempt; the only
+--   permitted foreign coupling is the SortOrder TYPE import in
+--   derive/{catalog,plan,exec}). Verified live: zero offenders at HEAD; the
+--   guard listed offenders correctly when doc-comment mentions were counted
+--   during development (then scoped to code lines).
+
+-- G10 ledger discipline: round-010-pre committed BEFORE implementation
+--   (d4695275, own commit); this file carries the actuals; #[ignore] delta
+--   counted mechanically from the round diff: 0 added, 0 removed.
+
+-- ── Equivalence (H5) ───────────────────────────────────────────────
+-- The 12 P2 differential pairs GREEN UNCHANGED — read_differential and every
+-- P2 pair test body untouched (handcrafted, generated 2000/5000, survive-
+-- compaction, edge-reassert, tombstone+readd, §2.3 conflict class,
+-- write-commutativity square, cross-process sha, perspective floor; the
+-- real-base ignored variant's code untouched). NEW pairs:
+--   * post_supersession_reads_and_legacy_visibility: live reads drop EXACTLY
+--     the victim assertions (expected multiset = pre-state minus the
+--     superseded author's rows; asserted per predicate); D1 legacy-view rule
+--     pinned (reserved records visible as legacy rows; node facts ==
+--     node_count_at − reserved count; zero node/type/attr leakage — also
+--     covered record-level by reserved_records_legacy_visible_but_never_fact_leak).
+--   * c3 gate (G7).
+
+-- ── Planner/stats (H6) ─────────────────────────────────────────────
+-- stats(supersedes) REAL: stats_supersedes_and_base_are_live_counts
+-- (supersedes live_facts/live_asserts = victim count; base stats are LIVE,
+-- post-supersession counts). Probe
+-- derive::plan::tests::p4_supersedes_costs_through_base_estimate_and_plans_
+-- without_e_cat_002: base_estimate costs the supersedes decl generically via
+-- the §3.1 open-space arm (free pattern = live_facts build side; keyed probe
+-- narrows below it), and a program with a negated supersedes leg plans with
+-- ZERO E-CAT-002 against a catalog carrying the P4 decl (E-CAT-002 scope per
+-- round-009-pre H3 unchanged — unknown ids still reject:
+-- supersede_scope_gates_are_typed pins E-CAT-002 on an unknown scope
+-- predicate).
+
+-- ── Compaction ⊕ rekey (H7) ────────────────────────────────────────
+-- merge.rs unit battery GREEN: derived_merge_keeps_distinct_aids_not_folds
+-- (generations 1/2 = two aids → BOTH records survive with separate Count
+-- weights), derived_merge_folds_within_one_aid (same identity → 3 ⊕ 5 = 8),
+-- derived_merge_round_trips_through_writer (both aids survive add_derived
+-- round-trip as v3), derived_edge_merge_keeps_distinct_authors (metadata
+-- _source identities), derived_merge_collapses_v2_records_newest_wins
+-- (v2-origin records keep the record model inside a MIXED derived merge —
+-- the D8/D9 consistency corner). fold_tags itself unchanged: mixed semiring
+-- still E-FMT-002, unknown E-FMT-001, malformed E-FMT-003 (tests green);
+-- CountTag checked arithmetic untouched. Base v2 merges: zero diff.
+
+-- ── Pre-registered expectation updates that LANDED (H10, the only ones) ──
+--   * live_filter_passes_all_p2_rows_and_drops_tx_invalidated → split into
+--     live_filter_passes_all_p2_rows + the D3 divergence should_panic test.
+--   * edge_provenance_is_path_independent_after_reassert → two-author
+--     coexistence per D8 (path-independent two-assertion row; same-aid
+--     re-assert newest-wins pinned in the same test).
+--   * aid_depends_on_all_three_components → name-keyed aid (D7) + length-
+--     prefix non-ambiguity check.
+--   * supersede_is_e_cap_001_supersession → supersede_flipped_from_e_cap_001_
+--     to_real (contract (9): ONLY "supersession" flips; functional-resolution,
+--     perspectives, per-predicate-compaction, assertion-granularity,
+--     reverse-run remain typed rejections — their tests unchanged and green).
+--   * the three D9a merge tests (listed above).
+-- No other P2 expectation changed.
+
+-- ── Decision refinements DISCOVERED during the round (recorded honestly;
+--    each is an interpretation the pre-registration did not fully pin) ──
+-- D10a (NEW): scope.predicate = None (§5.5 «все предикаты автора») enumerates
+--   the author's DATA facts and EXCLUDES the reserved supersedes ledger.
+--   Discovered by the battery: a repeated All-scope supersede would otherwise
+--   kill the author's own PRIOR supersessions and resurrect the very facts it
+--   retracted (oscillation — observed live as a red test before the fix).
+--   The §2.4 recursion stays fully expressible by NAMING the predicate
+--   (predicate: Some(supersedes)) — exactly what the resurrection test does.
+-- D12a (NEW, forced by contract (2)): the direct-assert boundary ALSO enforces
+--   §4.2 — a Supersedes group whose victim aid belongs to a FOREIGN author is
+--   E-SUP-001; without it, FactGroup::Supersedes would have been an author-
+--   scope bypass. assertion_ticks_snapshot resolves aid → (tick, author) over
+--   the raw (dead-inclusive) assertion set: re-superseding a dead own aid is
+--   legal; an unresolvable aid is E-SUP-001.
+-- D2-as-implemented: the c0 of a scope-kill supersedes fact is
+--   aid(aid_old, author, at_tick) — PER-VICTIM (not per-operation), reusing
+--   the aid combinator; pre-registered in D2, confirmed. Liveness only ever
+--   consults c1 (verified by the recursion test).
+-- Empty-victim supersede: a scope matching nothing commits nothing and
+--   returns the current version token (mirror of the empty assert_batch).
+-- Corrupt reserved records (unparseable aid_new/aid_old or record-id ≠ tuple
+--   fid): contractual panic carrying E-SUP-001 — corruption of the truth
+--   source, same channel class as D3.
+
+-- ── Base-commit note ───────────────────────────────────────────────
+-- The governance brief pinned HEAD 807824ec; the worktree carried one
+-- additional ledger-only commit (0de2f055, owner rulings R-1..R-7;
+-- git diff 807824ec..0de2f055 --stat touches run-migration/ only). P4 built
+-- on 0de2f055 + d4695275 (round-010-pre). No code drift.
+
+-- ── Inherited, unchanged (H11) ─────────────────────────────────────
+-- assert_batch edge groups still require the src node in node_to_shard
+-- (commit_batch_derived replicates upsert_edges' documented silent skip —
+-- the P2 wont_fix is kept, not silently changed); C4 dual orders (canon vs
+-- exec, multiset differentials); C6 arity-0 Term rendering; E-VAL-001/002 at
+-- the assert_batch boundary (abort-whole-batch test green, now over the
+-- derived commit path); E-CAT-001/E-CAT-002 boundaries as at P3.
+
+-- ── What P4 deliberately did NOT do (next-phase seams) ─────────────
+-- * No tx_invalidated cache writes (D6/§5.6 — checkpoint materialization is
+--   P7's supersede_delta mechanism). Every written assertion carries TX_OPEN;
+--   liveness is the honest anti-join, whose build side is now in stats.
+-- * No Functional arbitration / conflict/5 / E-FUNC-001 (P5) — coexisting
+--   conflicting Functional assertions are pinned LEGAL by test.
+-- * No subject routing, no 141-predicate vocabulary, no SegmentType change
+--   (P6). ByAttr's per-attribute predicates are typed E-CAP-001 until P6.
+-- * No M1 re-assert dedup (P7) — same-aid newest-wins pinned by test.
+-- * The derive executor still reads StorageView; wiring the fixpoint onto
+--   live_filter is the P6/P7 seam — the D15 guard test is the tripwire that
+--   forces that wiring through the legal path.
+
+-- ── Review-round resolutions (finalize, R6 repairs-as-repairs) ─────
+-- F1 (minor, FIXED): post_supersession_reads_and_legacy_visibility's final
+--   post-compaction check discarded live_multiset results while the comment
+--   claimed read stability. Repaired per the reviewer's suggested fix: the
+--   four per-predicate live multisets (node/edge/attr/supersedes) are now
+--   captured BEFORE FullMerge and assert_multiset_eq'd after — the claim is
+--   asserted, not implied via the sha equality alone.
+-- F2 (minor, RECORDED — no P4 change): FactStore::stats() is OnceLock-
+--   memoized per store instance (lsm.rs get_or_init, pre-existing P3
+--   behavior, identical at HEAD d4695275) with no invalidation on
+--   assert_batch/supersede; P4 makes the counts newly MUTABLE via
+--   supersession, so a long-lived store's planner stats can go stale.
+--   Pre-registered as C20 once-semantics; carried forward as a REQUIRED item
+--   for the P6/P7 wiring round: invalidate or version the stats cache on
+--   commit/supersede (e.g. key by manifest version) BEFORE the derive
+--   executor consumes stats(supersedes) from a long-lived store.
+-- F3 (minor, process note): a concurrent reviewer session ran cargo jobs on
+--   the shared worktree during the test window; timed perf runs were
+--   protected by explicit quiescence checks and all medians passed with >8%
+--   margin (no contamination). Process rule going forward: serialize
+--   reviewer cargo invocations against the test-runner's timed-perf window
+--   (extends the R6 no-stash rule to builds during timing), and use a
+--   self-excluding quiescence probe — pgrep -fa 'rustup.*(cargo|rustc)' —
+--   because pgrep -f 'cargo (test|build)|rustc' self-matches its own bash
+--   wrapper and naive loops spin forever.
