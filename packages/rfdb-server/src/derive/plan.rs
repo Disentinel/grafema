@@ -286,6 +286,34 @@ pub fn plan_program(
     strat: &Stratification,
     stats: &Stats,
 ) -> PlanResult<Vec<RulePlan>> {
+    // One catalog per evaluation context: callers that don't thread their own (the
+    // engine maintain paths, tests) get a fresh engine-resident catalog here — same
+    // registration, same (absence of) planning effect.
+    let mut catalog = crate::derive::catalog::PredicateCatalog::with_base_relations();
+    plan_program_with_catalog(rules, strat, stats, &mut catalog)
+}
+
+/// [`plan_program`] with the P1 catalog wiring (rofl-fact-model.md §3.1): every
+/// rule-head name is registered in `catalog` via `declare_default` at plan
+/// construction — the single, minimal "everything references the catalog" seam.
+/// Registration is OBSERVATIONAL in P1: no planning decision reads the catalog
+/// (locked by the `catalog_registration_changes_no_plan` differential test); the
+/// planner starts CONSUMING it with P3's `(PredicateId, SortOrder, bound_mask)`
+/// dispatch migration. `declare_default` is name-level get-or-declare, so a rule
+/// head shadowing a base-relation name (planner semantics: the stratum check in
+/// leg classification wins over [`BASE_RELATIONS`]) registers nothing new and
+/// never rejects — pre-P1 program acceptance is unchanged by construction.
+pub fn plan_program_with_catalog(
+    rules: &[&Rule],
+    strat: &Stratification,
+    stats: &Stats,
+    catalog: &mut crate::derive::catalog::PredicateCatalog,
+) -> PlanResult<Vec<RulePlan>> {
+    for rule in rules {
+        let head = rule.head();
+        let arity = u8::try_from(head.args().len()).unwrap_or(u8::MAX);
+        catalog.declare_default(head.predicate(), arity);
+    }
     // Per-predicate cardinality estimates, populated STRATUM-BOTTOM-UP: a predicate's
     // estimate is the (saturating) sum of its rules' output estimates, recorded before any
     // higher stratum that references it is planned. This is what lets `derived_estimate`
@@ -924,7 +952,9 @@ fn provided_vars(atom: &Atom, bound: &HashSet<String>) -> HashSet<String> {
 // ── Classification helpers ─────────────────────────────────────────
 
 /// Base relations served directly from storage (extensional). Mirrors the stratifier.
-const BASE_RELATIONS: &[&str] = &["node", "type", "edge", "incoming", "attr"];
+/// `pub(crate)` for the catalog drift guard (catalog.rs tests): the P1 base-relation
+/// registration must stay in lockstep with this list until P3 unifies them.
+pub(crate) const BASE_RELATIONS: &[&str] = &["node", "type", "edge", "incoming", "attr"];
 
 /// Builtin filters/functions shared with the query engine that consume the current row (never join legs,
 /// never introduce new tuples). `path`/`parent_function`/`resolved_import` bind from
@@ -1603,6 +1633,71 @@ mod tests {
                 .map(|(t, n)| (t.to_string(), *n))
                 .collect(),
         }
+    }
+
+    // ── P1 catalog wiring: zero planner behavior change ─────────────
+
+    /// The minimal-wiring differential (§3.1 P1): planning a fixture program (recursion,
+    /// negation, filters) (a) registers every rule-head name in the catalog and (b)
+    /// produces an IDENTICAL plan to the un-threaded entry — proving registration is
+    /// observational and changes NO planning decision. (The planning body itself is the
+    /// pre-P1 code, untouched; this pins that P3's consuming migration must flip this
+    /// test consciously.)
+    #[test]
+    fn catalog_registration_changes_no_plan() {
+        let src = r#"
+            same(X, Y) :- edge(X, Y, "ALIASES").
+            same(X, Y) :- edge(Y, X, "ALIASES").
+            same(X, Z) :- same(X, Y), same(Y, Z).
+            flagged(X) :- node(X, "FUNCTION"), \+ edge(_, X, "CONTAINS").
+            linked(F, B) :- node(F, "HTTP_REQUEST"), edge(F, E1, "REFERS"),
+                            node(B, "http:route"), edge(B, E2, "REFERS"),
+                            same(E1, E2), gt(F, 0).
+        "#;
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let baseline = plan_program(&rules, &strat, &stats(1000, 1000)).expect("plan");
+        let mut catalog = crate::derive::catalog::PredicateCatalog::with_base_relations();
+        let with_catalog =
+            plan_program_with_catalog(&rules, &strat, &stats(1000, 1000), &mut catalog)
+                .expect("plan");
+        assert_eq!(
+            baseline, with_catalog,
+            "catalog registration must not change any planning decision"
+        );
+        // Every rule-head name is registered with the §3.1 defaults and its head arity.
+        for (name, arity) in [("same", 2), ("flagged", 1), ("linked", 2)] {
+            let decl = catalog.get(name).unwrap_or_else(|| panic!("{name} registered"));
+            assert_eq!(decl.arity, arity);
+            assert_eq!(decl.strategy, crate::derive::catalog::PhysStrategy::Nary);
+        }
+        // Base five + the three heads; body-only names (gt is a builtin) register nothing.
+        assert_eq!(catalog.len(), 8);
+        assert!(catalog.get("gt").is_none(), "builtins are not predicates in the catalog");
+    }
+
+    /// A rule head that SHADOWS a base-relation name (planner semantics: the stratum
+    /// check wins over BASE_RELATIONS) keeps planning exactly as before P1 — the
+    /// name-level get-or-declare registers nothing new and never rejects.
+    #[test]
+    fn base_shadowing_head_still_plans_and_registers_nothing_new() {
+        let src = r#"edge(X) :- node(X, "FUNCTION")."#;
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let baseline = plan_program(&rules, &strat, &stats(10, 10)).expect("plan");
+        let mut catalog = crate::derive::catalog::PredicateCatalog::with_base_relations();
+        let with_catalog =
+            plan_program_with_catalog(&rules, &strat, &stats(10, 10), &mut catalog)
+                .expect("shadowing head must still plan");
+        assert_eq!(baseline, with_catalog);
+        assert_eq!(catalog.len(), 5, "no new decl for the shadowed base name");
+        assert_eq!(
+            catalog.get("edge").unwrap().arity,
+            3,
+            "the base declaration is not mutated by the shadowing head"
+        );
     }
 
     // ── bound-first reorder ─────────────────────────────────────────

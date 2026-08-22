@@ -201,13 +201,24 @@ impl<'a> Parser<'a> {
         }
         let text = &self.input[start..self.pos];
         if saw_dot {
+            // Routed through the canonicalizing constructor (invariant V3): `-0.0`
+            // normalizes to `+0.0`; NaN is unspellable as a literal.
             text.parse::<f64>()
-                .map(|f| Term::Lit(crate::datalog::eval::Value::Float(f)))
+                .map(|f| Term::Lit(crate::datalog::eval::Value::float(f)))
                 .map_err(|_| ParseError::new("invalid float literal", start))
         } else {
-            text.parse::<i64>()
-                .map(|i| Term::Lit(crate::datalog::eval::Value::Int(i)))
-                .map_err(|_| ParseError::new("invalid integer literal", start))
+            // i64 stays the fast path (bit-identical `Value::Int` for in-range
+            // literals). An i64-OVERFLOWING literal — a hard "invalid integer literal"
+            // ParseError before P1 — falls back to the arbitrary-precision constructor
+            // (strictly widening: error → value; makes 2^68 representable, ROFL 24h
+            // incident #3). `big_int_from_decimal` canonicalizes per V1/V2 and only
+            // rejects non-digit shapes, which this branch never produces.
+            match text.parse::<i64>() {
+                Ok(i) => Ok(Term::Lit(crate::datalog::eval::Value::Int(i))),
+                Err(_) => crate::datalog::eval::Value::big_int_from_decimal(text)
+                    .map(Term::Lit)
+                    .ok_or_else(|| ParseError::new("invalid integer literal", start)),
+            }
         }
     }
 

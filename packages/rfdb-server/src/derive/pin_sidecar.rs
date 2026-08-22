@@ -246,28 +246,84 @@ fn encode_evaluation(eval: &Evaluation, out: &mut Vec<u8>) {
         for row in rows {
             out.push(row.len() as u8);
             for v in row.iter() {
-                match v {
-                    Value::Id(id) => {
-                        out.push(0);
-                        out.extend_from_slice(&id.to_le_bytes());
-                    }
-                    Value::Str(s) => {
-                        out.push(1);
-                        out.extend_from_slice(&(s.len() as u32).to_le_bytes());
-                        out.extend_from_slice(s.as_bytes());
-                    }
-                    Value::Int(i) => {
-                        out.push(2);
-                        out.extend_from_slice(&i.to_le_bytes());
-                    }
-                    Value::Float(fl) => {
-                        out.push(3);
-                        out.extend_from_slice(&fl.to_bits().to_le_bytes());
-                    }
-                }
+                encode_pin_value(v, out);
             }
         }
     }
+}
+
+/// Encode one [`Value`] for the pin sidecar (LE, u32-length-prefixed; tags 0–3 are the
+/// pre-P1 layout unchanged; 4 = BigInt, 5 = Term with recursive args).
+fn encode_pin_value(v: &Value, out: &mut Vec<u8>) {
+    match v {
+        Value::Id(id) => {
+            out.push(0);
+            out.extend_from_slice(&id.to_le_bytes());
+        }
+        Value::Str(s) => {
+            out.push(1);
+            out.extend_from_slice(&(s.len() as u32).to_le_bytes());
+            out.extend_from_slice(s.as_bytes());
+        }
+        Value::Int(i) => {
+            out.push(2);
+            out.extend_from_slice(&i.to_le_bytes());
+        }
+        Value::Float(fl) => {
+            out.push(3);
+            out.extend_from_slice(&fl.to_bits().to_le_bytes());
+        }
+        Value::BigInt(b) => {
+            out.push(4);
+            out.extend_from_slice(&(b.len() as u32).to_le_bytes());
+            out.extend_from_slice(b);
+        }
+        Value::Term(t) => {
+            out.push(5);
+            out.extend_from_slice(&(t.functor.len() as u32).to_le_bytes());
+            out.extend_from_slice(t.functor.as_bytes());
+            out.extend_from_slice(&(t.args.len() as u32).to_le_bytes());
+            for arg in t.args.iter() {
+                encode_pin_value(arg, out);
+            }
+        }
+    }
+}
+
+/// Decode one [`Value`] from the pin sidecar (the exact inverse of
+/// [`encode_pin_value`]; an unknown tag poisons the sidecar → `None`, and the caller
+/// falls back to a scratch evaluation).
+fn decode_pin_value(cur: &mut &[u8]) -> Option<Value> {
+    let tag = read_u8(cur)?;
+    Some(match tag {
+        0 => Value::Id(u128::from_le_bytes(take(cur, 16)?.try_into().ok()?)),
+        1 => {
+            let len = read_u32(cur)? as usize;
+            Value::Str(String::from_utf8(take(cur, len)?.to_vec()).ok()?)
+        }
+        2 => Value::Int(i64::from_le_bytes(take(cur, 8)?.try_into().ok()?)),
+        3 => Value::Float(f64::from_bits(u64::from_le_bytes(
+            take(cur, 8)?.try_into().ok()?,
+        ))),
+        4 => {
+            let len = read_u32(cur)? as usize;
+            Value::BigInt(std::sync::Arc::from(take(cur, len)?))
+        }
+        5 => {
+            let flen = read_u32(cur)? as usize;
+            let functor = String::from_utf8(take(cur, flen)?.to_vec()).ok()?;
+            let arity = read_u32(cur)? as usize;
+            let mut args: Vec<Value> = Vec::with_capacity(arity.min(1 << 16));
+            for _ in 0..arity {
+                args.push(decode_pin_value(cur)?);
+            }
+            Value::Term(std::sync::Arc::new(crate::datalog::TermBlob {
+                functor,
+                args: args.into_boxed_slice(),
+            }))
+        }
+        _ => return None,
+    })
 }
 
 fn decode_evaluation(cur: &mut &[u8]) -> Option<Evaluation> {
@@ -282,19 +338,7 @@ fn decode_evaluation(cur: &mut &[u8]) -> Option<Evaluation> {
             let arity = read_u8(cur)? as usize;
             let mut row: Vec<Value> = Vec::with_capacity(arity);
             for _ in 0..arity {
-                let tag = read_u8(cur)?;
-                row.push(match tag {
-                    0 => Value::Id(u128::from_le_bytes(take(cur, 16)?.try_into().ok()?)),
-                    1 => {
-                        let len = read_u32(cur)? as usize;
-                        Value::Str(String::from_utf8(take(cur, len)?.to_vec()).ok()?)
-                    }
-                    2 => Value::Int(i64::from_le_bytes(take(cur, 8)?.try_into().ok()?)),
-                    3 => Value::Float(f64::from_bits(u64::from_le_bytes(
-                        take(cur, 8)?.try_into().ok()?,
-                    ))),
-                    _ => return None,
-                });
+                row.push(decode_pin_value(cur)?);
             }
             rows.push(row.into_boxed_slice());
         }
@@ -357,6 +401,33 @@ mod tests {
         assert_eq!(loaded.version, 99);
         assert_eq!(loaded.tombstone_hash, [7u8; 32]);
         assert_eq!(loaded.evaluation, sample_eval());
+    }
+
+    /// P1: the sidecar round-trips the new value variants — a canonical BigInt and a
+    /// nested Term survive save → load byte-exactly (tags 4/5, recursive args).
+    #[test]
+    fn sidecar_round_trips_bigint_and_term() {
+        let term = Value::Term(Arc::new(crate::datalog::TermBlob {
+            functor: "pair".to_string(),
+            args: vec![
+                Value::Str("a".into()),
+                Value::Term(Arc::new(crate::datalog::TermBlob {
+                    functor: "inner".to_string(),
+                    args: vec![Value::big_int(1_i128 << 68)].into_boxed_slice(),
+                })),
+            ]
+            .into_boxed_slice(),
+        }));
+        let mut relations: BTreeMap<String, Vec<Box<[Value]>>> = BTreeMap::new();
+        relations.insert(
+            "rofl".to_string(),
+            vec![vec![Value::big_int(-(1_i128 << 68)), term].into_boxed_slice()],
+        );
+        let eval = Evaluation { relations };
+        let dir = tempfile::tempdir().unwrap();
+        save(dir.path(), 0xB16, 1, &[0u8; 32], &eval).unwrap();
+        let loaded = load(dir.path(), 0xB16).expect("loads back");
+        assert_eq!(loaded.evaluation, eval);
     }
 
     /// A flipped payload byte fails the checksum ⇒ `None` (scratch), never a misparse.

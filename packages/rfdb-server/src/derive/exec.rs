@@ -3523,6 +3523,10 @@ fn value_surface(v: &Value) -> String {
         // Typed numeric literals surface as their decimal text.
         Value::Int(i) => i.to_string(),
         Value::Float(f) => f.to_string(),
+        // The attr-probe surface must stay byte-identical to the per-row path
+        // (`bound_value_surface` = `Value::as_str`): a BigInt probes by its exact
+        // decimal, a Term by its canonical text — same strings, same matches.
+        Value::BigInt(_) | Value::Term(_) => v.as_str(),
     }
 }
 
@@ -3681,18 +3685,34 @@ fn cmp_value(a: &Value, b: &Value) -> std::cmp::Ordering {
         // result stays a total order regardless of which numeric variants appear.
         (Value::Int(x), Value::Int(y)) => x.cmp(y),
         (Value::Float(x), Value::Float(y)) => x.to_bits().cmp(&y.to_bits()),
+        // P1 variants: deterministic same-variant orders (I1 needs determinism only —
+        // the NORMATIVE §9.2 canon-bytes order is `Value`'s own `Ord`; this local order
+        // predates it and stays untouched for the existing variants' committed-sort
+        // stability). BigInt: by byte length, then bytes. Term: functor, arity, then
+        // args recursively.
+        (Value::BigInt(x), Value::BigInt(y)) => {
+            x.len().cmp(&y.len()).then_with(|| x.cmp(y))
+        }
+        (Value::Term(x), Value::Term(y)) => x
+            .functor
+            .cmp(&y.functor)
+            .then_with(|| x.args.len().cmp(&y.args.len()))
+            .then_with(|| cmp_tuple(&x.args, &y.args)),
         _ => value_rank(a).cmp(&value_rank(b)),
     }
 }
 
 /// Fixed variant rank for [`cmp_value`]'s cross-variant fallback (keeps the existing
-/// Id < Str ordering, places numerics after them deterministically).
+/// Id < Str ordering, places numerics after them deterministically; the P1 variants
+/// extend the rank without moving any existing one).
 fn value_rank(v: &Value) -> u8 {
     match v {
         Value::Id(_) => 0,
         Value::Str(_) => 1,
         Value::Int(_) => 2,
         Value::Float(_) => 3,
+        Value::BigInt(_) => 4,
+        Value::Term(_) => 5,
     }
 }
 

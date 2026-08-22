@@ -391,7 +391,7 @@ pub fn plan_node_writeback(
             let metadata = if spec.meta.is_empty() {
                 provenance.clone()
             } else {
-                meta_metadata(&provenance, &spec.meta, &fact[3..])
+                meta_metadata(&provenance, &spec.predicate, &spec.meta, &fact[3..])?
             };
             nodes.push(NodeRecordV2 {
                 semantic_id,
@@ -486,7 +486,7 @@ pub fn plan_writeback(
             let metadata = if spec.meta.is_empty() {
                 provenance.clone()
             } else {
-                meta_metadata(&provenance, &spec.meta, &fact[2..])
+                meta_metadata(&provenance, &spec.predicate, &spec.meta, &fact[2..])?
             };
             edges.push(EdgeRecordV2 {
                 src,
@@ -514,18 +514,39 @@ fn provenance_metadata(rule_ast_hash: &str, generation: u64) -> String {
 /// `serde_json`-escaped, so any surface round-trips). `names` and `columns` are the same
 /// length by the caller's arity check; names are parse-validated plain identifiers
 /// (never `_`-prefixed, so they cannot collide with the provenance keys).
-fn meta_metadata(provenance: &str, names: &[String], columns: &[Value]) -> String {
+///
+/// A `BigInt` column renders as its exact decimal string (deliberate: JSON numbers above
+/// 2^53 are unsafe). A `Term` in a scalar meta column is REJECTED with the coded
+/// `E-MAT-014` — structure does not silently flatten into a scalar metadata field; the
+/// abort is raised before any commit (§2.3 abort class), like every `E-MAT-…`.
+fn meta_metadata(
+    provenance: &str,
+    predicate: &str,
+    names: &[String],
+    columns: &[Value],
+) -> Result<String, MaterializeError> {
     let mut out = String::with_capacity(provenance.len() + 32 * names.len());
     // Splice the meta fields before the provenance object's closing brace.
     out.push_str(&provenance[..provenance.len() - 1]);
     for (name, value) in names.iter().zip(columns) {
+        if let Value::Term(t) = value {
+            return Err(MaterializeError {
+                code: "E-MAT-014",
+                detail: format!(
+                    "@materialize predicate '{predicate}' meta column '{name}' received a \
+                     Term value '{}': structured terms cannot flatten into a scalar \
+                     metadata field",
+                    Value::term_text(t)
+                ),
+            });
+        }
         out.push(',');
         out.push_str(&serde_json::Value::String(name.clone()).to_string());
         out.push(':');
         out.push_str(&serde_json::Value::String(value.as_str()).to_string());
     }
     out.push('}');
-    out
+    Ok(out)
 }
 
 /// Resolve a head column to a node id: a [`Value::Id`] directly, or a [`Value::Str`] that
@@ -536,6 +557,10 @@ fn value_to_id(v: &Value) -> Option<u128> {
         Value::Str(s) => s.parse::<u128>().ok(),
         // Typed numeric literals are values, not node ids.
         Value::Int(_) | Value::Float(_) => None,
+        // A canonical BigInt exceeds i64 but node ids are u128-by-Id or decimal-Str —
+        // an endpoint column carrying a BigInt or a Term is not an id; the callers
+        // surface the coded E-MAT-003 abort (never silent, never a panic).
+        Value::BigInt(_) | Value::Term(_) => None,
     }
 }
 
@@ -722,6 +747,75 @@ mod tests {
             edges[0].metadata,
             r#"{"_source":"abc123","_generation":7}"#
         );
+    }
+
+    /// P1: an endpoint column carrying a BigInt (or a Term) is not a node id — the
+    /// coded E-MAT-003 abort fires pre-commit, never a silent skip or a panic.
+    #[test]
+    fn plan_writeback_rejects_bigint_and_term_endpoints_coded() {
+        let spec = |pred: &str| MaterializeSpec {
+            predicate: pred.to_string(),
+            edge_type: "T".to_string(),
+            rule_ast_hash: "h".to_string(),
+            additive: false,
+            meta: Vec::new(),
+            single_target: false,
+        };
+        let mut eval = Evaluation::default();
+        eval.relations.insert(
+            "bigsrc".to_string(),
+            vec![vec![Value::big_int(1_i128 << 68), Value::Id(2)].into_boxed_slice()],
+        );
+        let err = plan_writeback(&[spec("bigsrc")], &eval, 1).expect_err("BigInt src");
+        assert_eq!(err.code, "E-MAT-003");
+        let term = Value::Term(std::sync::Arc::new(
+            crate::datalog::TermBlob::new("f", vec![]).expect("canonical"),
+        ));
+        let mut eval = Evaluation::default();
+        eval.relations.insert(
+            "termdst".to_string(),
+            vec![vec![Value::Id(1), term].into_boxed_slice()],
+        );
+        let err = plan_writeback(&[spec("termdst")], &eval, 1).expect_err("Term dst");
+        assert_eq!(err.code, "E-MAT-003");
+    }
+
+    /// P1: a Term in a scalar `meta(...)` column is the coded E-MAT-014 abort
+    /// (structure never silently flattens into scalar metadata); a BigInt meta column
+    /// renders as its exact decimal string (deliberate: JSON numbers >2^53 are unsafe).
+    #[test]
+    fn meta_columns_bigint_decimal_term_coded_abort() {
+        let spec = MaterializeSpec {
+            predicate: "dep".to_string(),
+            edge_type: "T".to_string(),
+            rule_ast_hash: "h".to_string(),
+            additive: false,
+            meta: vec!["bound".to_string()],
+            single_target: false,
+        };
+        // BigInt meta column → exact decimal string in the metadata JSON.
+        let mut eval = Evaluation::default();
+        eval.relations.insert(
+            "dep".to_string(),
+            vec![vec![Value::Id(1), Value::Id(2), Value::big_int(1_i128 << 68)]
+                .into_boxed_slice()],
+        );
+        let edges = plan_writeback(&[spec.clone()], &eval, 3).expect("plan");
+        assert_eq!(
+            edges[0].metadata,
+            r#"{"_source":"h","_generation":3,"bound":"295147905179352825856"}"#
+        );
+        // Term meta column → coded abort pre-commit.
+        let term = Value::Term(std::sync::Arc::new(
+            crate::datalog::TermBlob::new("g", vec![Value::Int(1)]).expect("canonical"),
+        ));
+        let mut eval = Evaluation::default();
+        eval.relations.insert(
+            "dep".to_string(),
+            vec![vec![Value::Id(1), Value::Id(2), term].into_boxed_slice()],
+        );
+        let err = plan_writeback(&[spec], &eval, 3).expect_err("Term meta");
+        assert_eq!(err.code, "E-MAT-014");
     }
 
     #[test]

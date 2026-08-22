@@ -3210,13 +3210,17 @@ fn wire_string_to_value(s: &str) -> rfdb::datalog::Value {
 }
 
 /// Render a datalog [`rfdb::datalog::Value`] to its wire string (ids → decimal u128, strings
-/// verbatim).
+/// verbatim). P1 additions, both deliberate wire choices: a `BigInt` renders as its exact
+/// decimal STRING (JSON numbers above 2^53 are unsafe on the JS side); a `Term` as its
+/// canonical text `functor(a1,…,an)` — both exactly `Value::as_str`'s surface, which the
+/// four pre-P1 arms already mirrored.
 fn datalog_value_to_wire_string(v: &rfdb::datalog::Value) -> String {
     match v {
         rfdb::datalog::Value::Id(id) => id.to_string(),
         rfdb::datalog::Value::Str(s) => s.clone(),
         rfdb::datalog::Value::Int(i) => i.to_string(),
         rfdb::datalog::Value::Float(f) => f.to_string(),
+        rfdb::datalog::Value::BigInt(_) | rfdb::datalog::Value::Term(_) => v.as_str(),
     }
 }
 

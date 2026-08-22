@@ -1,0 +1,53 @@
+-- Round 006-pre (2026-08-22) — adversarial-review repair round for P1, written
+-- AFTER the review fixes were coded but BEFORE the full-suite + harness re-run
+-- (the pre-registration here covers the RE-RUN outcomes; the repairs themselves
+-- are recorded as repairs in round-006.rofl, not as pre-registered hypotheses —
+-- honesty over ceremony). Assert-only, never retract.
+--
+-- Review findings acted on (all six were severity: minor):
+--   F1 catalog arity lock was literal-vs-literal → made mechanical against
+--      builtin::registry() (catalog.rs test base_relations_registered_with_
+--      executor_arities now reads arities LIVE, names from plan::BASE_RELATIONS).
+--   F2 arity-0 Term renders as bare functor on the text surface — undisclosed
+--      deviation → registered as deliberate call C6 in round-006 (no code change;
+--      canonical BYTES encode arity explicitly, identity unaffected).
+--   F3 declare() conflict check covered 4 logical axes only → extended to ALL
+--      declared fields (semiring/key_cols/reverse/author_priority; id+stats
+--      excluded) + per-axis E-CAT-001 tests. No P1 caller can trip it
+--      (declare_default is name-level get-or-declare; with_base_relations
+--      declares fresh names).
+--   F4 flaky wall-clock perf test storage_v2::multi_shard::tests::
+--      test_commit_batch_performance_scaling → WONT-FIX in this round:
+--      pre-existing, file untouched by P1, out of phase scope (governance
+--      forbids drive-by changes); flagged to the owner for a separate fix.
+--   F5 Ord≡canon-bytes battery never exercised multi-byte LEB128 prefixes →
+--      new targeted test (Str 300 vs 200, BigInt 300- vs 200-byte magnitudes,
+--      pins the varint(300)<varint(200) inversion on both length-prefixed
+--      variants).
+--   F6 pre-registration ordering not git-anchored → at commit time,
+--      round-005-pre.rofl goes in its OWN commit ahead of the implementation
+--      commit, making the ordering git-auditable.
+
+-- R1: after the F1/F3/F5 code changes, the full lib suite stays green with the
+-- three-plus new/extended tests. Ground: F1 rewrites one test's expectation
+-- source (registry() arities == the literals it replaced); F3 tightens declare()
+-- on axes no P1 caller redeclares differently; F5 is a new test on an untouched
+-- comparator.
+claim_of[a](exp_p1r_suite_green_after_repairs).
+ground[a](exp_p1r_suite_green_after_repairs, repairs_touch_tests_plus_one_stricter_error_path_no_caller_trips).
+expected[m](exp_p1r_suite_green_after_repairs, zero_failures_pass_count_geq_1462_ignored_25_unchanged).
+
+-- R2: the conformance harness verdicts stay BYTE-UNCHANGED per test (tier-0
+-- 120/0, tier-1 5 GREEN / 25 RED, same members). Ground: none of F1/F3/F5
+-- touches any evaluation path the oracle can observe — F1/F5 are test-only,
+-- F3 changes an error path reachable only via the explicit declare() API,
+-- which no wire surface calls.
+claim_of[a](exp_p1r_harness_verdicts_unchanged).
+ground[a](exp_p1r_harness_verdicts_unchanged, repairs_are_test_only_plus_unreachable_error_path).
+expected[m](exp_p1r_harness_verdicts_unchanged, tier0_120_0_tier1_5green_25red_same_members).
+
+-- R3: grep gates stay clean (no `_ =>` over Value in touched files, no
+-- TODO/FIXME/HACK/mock/stub outside tests).
+claim_of[a](exp_p1r_grep_gates_clean).
+ground[a](exp_p1r_grep_gates_clean, repairs_add_no_matches_over_value_and_no_placeholder_text).
+expected[m](exp_p1r_grep_gates_clean, all_grep_gates_empty).

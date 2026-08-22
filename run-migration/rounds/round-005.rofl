@@ -1,0 +1,147 @@
+-- Round 005 (2026-08-22) — P1 actuals vs the pre-registered expectations in
+-- round-005-pre.rofl (predicate catalog + Value::{BigInt, Term} + canonization
+-- E-VAL-001/002). Assert-only, never retract. Evidence artifacts:
+--   run_id: rofl-conformance-1787359574618
+--   report sha256 prefix: 4c2701458e868fce over the ARCHIVED bytes
+--     rounds/round-005.report.json (the live conformance-report.json is
+--     regenerated per run and is NOT the evidence artifact)
+--   suite commands + outputs quoted per claim below (re-runnable).
+
+-- H1 suite green. Baseline measured on the UNMODIFIED tree before implementation:
+--   `cargo test --lib` (packages/rfdb-server) → "1428 passed; 0 failed; 25 ignored".
+-- After P1: "1462 passed; 0 failed; 25 ignored; finished in 26.44s"
+-- (+34 new tests: canon property battery, catalog, plan-equality, parser
+-- widening, builtin exact-compare, materialize aborts, pin-sidecar roundtrip,
+-- wire rendering, fact_id goldens, end-to-end bignum smoke). Focused subset:
+-- `cargo test --lib -- derive::` → "358 passed; 0 failed; 22 ignored".
+evidence[world](exp_p1_suite_green, cargo_test_lib_1462_passed_0_failed_25_ignored).
+found[m](exp_p1_suite_green, zero_failures_pass_count_geq_1428_ignored_25_unchanged).
+
+-- H2 harness verdicts byte-unchanged. Run rofl-conformance-1787359574618 on the
+-- rebuilt debug binary: exit 0; tier-0 120 seeds / 0 divergences, witness
+-- 325/325 sound, whynot 554/554 sound (identical to the round-004 baseline
+-- copy at /tmp/p1-baseline-conformance-report.json); tier-1 GREEN 5 / RED 25 /
+-- DIVERGENCE 0 / HARNESS_GAP 0 with ZERO per-test verdict diffs (scripted
+-- member-by-member comparison of tier1[] against the baseline: "tier1 members:
+-- 30 -> 30 | verdict diffs: 0"). P1 is observationally invisible to the oracle,
+-- exactly as pre-registered.
+evidence[world](exp_p1_harness_verdicts_unchanged, run_005_report_sha_4c2701458e868fce).
+evidence[world](exp_p1_harness_verdicts_unchanged, scripted_per_test_diff_zero_changes).
+found[m](exp_p1_harness_verdicts_unchanged, tier0_120_0_tier1_5green_25red_same_members).
+
+-- H3 canonical order + encoding laws. All green:
+--   derive::canon::tests::total_order_laws_hold_on_random_canonical_values
+--     (1200 PRNG canonical values incl. Terms nested ≤4; antisymmetry,
+--     Eq⟺Ordering::Equal, sort-transitivity)
+--   derive::canon::tests::ord_is_byte_consistent_with_canon_bytes_lex
+--     (1500 random pairs: structural Ord ≡ canon-v1 byte lex — Ord and §9.2
+--     are mechanically ONE order)
+--   derive::canon::tests::injectivity_no_boundary_or_cross_variant_collisions
+--   derive::canon::tests::golden_canonical_byte_vectors — byte-for-byte goldens
+--     per variant incl. the 2^68 BigInt (05 09 10 00×8) and a nested Term;
+--     blake3 over the goldens pinned
+--     (ed03c7cd4656f2424b5e61993607c69f5ebda5305e17153dbe9cd8f052431cb2);
+--     f64::NAN.to_bits() == 0x7ff8000000000000 asserted (platform pin)
+--   derive::canon::tests::term_roundtrip_encode_decode_reencode_is_idempotent
+--   constructor tests: big_int(i64::MAX/MIN)→Int, big_int(i64::MIN−1)→9-byte
+--     BigInt, big_int(2^68)→minimal 9 bytes, decimal roundtrip incl. 2^200,
+--     float(-0.0)→bits 0, float(payload NaN)→canonical quiet NaN.
+evidence[world](exp_p1_canon_order_laws_green, cargo_test_derive_canon_all_green).
+found[m](exp_p1_canon_order_laws_green, all_property_tests_and_golden_vectors_green).
+
+-- H4 E-VAL abort paths. All green, codes in stable string form:
+--   e_val_001_fires_on_noncanonical_big_int (fits-i64; redundant 0x00; redundant
+--     0xFF), e_val_002_fires_on_noncanonical_float (-0.0; signaling NaN;
+--     payload-carrying quiet NaN), e_val_errors_propagate_recursively_from_terms
+--     (TermBlob::new and canon_bytes both propagate the INNER code).
+-- Firing sites as pre-registered: canon_bytes()/validate_canonical()/TermBlob::new
+-- (no store exists in P1; P2's FactStore write boundary inherits validate_canonical).
+evidence[world](exp_p1_eval_abort_codes_green, cargo_test_e_val_abort_paths_green).
+found[m](exp_p1_eval_abort_codes_green, e_val_001_and_e_val_002_rendered_in_stable_string_form).
+
+-- H5 catalog consistent, zero planner change. All green:
+--   derive::catalog::tests::base_relations_registered_with_executor_arities
+--     (node/2, type/2, edge/3, incoming/3, attr/3 — mirroring builtin.rs
+--     registrations; §6.3 reverse runs declared; edge keyed (0,1) rev (1,0),
+--     incoming keyed (1,0) as its own name, folded into edge in P3)
+--   derive::catalog::tests::base_names_match_plan_base_relations (drift guard
+--     against plan.rs BASE_RELATIONS)
+--   derive::plan::tests::catalog_registration_changes_no_plan (recursion +
+--     negation + filter fixture: identical RulePlan vec with and without the
+--     threaded catalog; all rule heads registered Nary/defaults; builtins not
+--     registered)
+--   derive::plan::tests::base_shadowing_head_still_plans_and_registers_nothing_new
+--   catalog unit tests: §3.1 default rule fields, E-CAT-001 on each conflicting
+--     axis (arity/strategy/cardinality/temporal), identical-redeclare idempotent,
+--     dense insertion-ordered ids, Functional declarable (behavior = P5).
+evidence[world](exp_p1_catalog_consistent_zero_plan_change, cargo_test_catalog_and_plan_equality_green).
+found[m](exp_p1_catalog_consistent_zero_plan_change, drift_guard_and_plan_equality_tests_green).
+-- HONESTY NOTE (repair-grade nuance, not a mismatch): the plan-equality test
+-- compares plan_program vs plan_program_with_catalog WITHIN the P1 tree (both
+-- register; registration is write-only). The cross-commit "pre-P1 vs P1" plan
+-- differential is carried by (a) git diff showing the planning body untouched
+-- (the wiring is a prepended declare_default loop + delegation), (b) the 1428
+-- pre-existing tests (many pin exact plans/estimates) all green, (c) the
+-- oracle harness with zero verdict diffs. Recorded so nobody reads the
+-- in-tree test as a cross-commit proof.
+repair[a](exp_p1_catalog_consistent_zero_plan_change, plan_equality_is_in_tree_cross_commit_carried_by_diff_suite_harness).
+
+-- H6 fact_id byte-stability. Goldens captured on the UNMODIFIED encoder at HEAD
+-- f08e5d53 BEFORE the new arms landed (temporary probe test, output quoted):
+--   fact_id(7, [Id(42), Str("queue:publish")]) = 0x9c661586b0dde512
+--   fact_id(1, [Int(-5), Float(3.14)])          = 0x1108b760e3fb3ffe
+--   fact_id(3, [Str(""), Id(u128::MAX)])        = 0xda96d8d7c72f6de7
+--   fact_id(9, [Float(-0.0), Int(i64::MIN)])    = 0xc3cd7a74d313028b
+-- Pinned as derive::value::tests::fact_id_pre_p1_goldens_are_byte_stable —
+-- green on the extended encoder: the four existing arms are BYTE-IDENTICAL
+-- (invariant I1). New arms additive (TAG 0x05/0x06, same LE discipline), dedup
+-- over new values well-defined (fact_id_new_variants_are_distinct_and_deterministic).
+evidence[world](exp_p1_fact_id_byte_stable, pre_change_golden_capture_reproduced_post_change).
+found[m](exp_p1_fact_id_byte_stable, pre_change_goldens_reproduce_exactly).
+
+-- H7 parser widening strictly widening. Green:
+--   parser_ext.rs pre-existing literal tests untouched (verified by diff) and
+--     green; new derive::parser_ext bignum test: 2^68 literal →
+--     Term::Lit(Value::BigInt minimal 9 bytes); -2^68; i64::MAX still Int
+--   datalog::tests::p1_value_domain_tests::query_parser_widens_overflow_literal_to_bigint
+--     (the shared parser serves the top-down engine identically; -0.0 float
+--     literal canonicalizes per V3)
+--   end-to-end: derive::smoke::bignum_literal_end_to_end_exact_comparison —
+--     gt(2^68+1, 2^68) passes and the reverse fails EXACTLY through the full
+--     parse → stratify → plan → exec pipeline (under f64 both answers collapse).
+evidence[world](exp_p1_parser_widening_strict, parser_and_end_to_end_bignum_tests_green).
+found[m](exp_p1_parser_widening_strict, existing_literal_tests_untouched_green_new_bignum_literal_test_green).
+
+-- ── Deliberate calls made during implementation (recorded, none groundless) ──
+-- C1: derive gt/lt/gte/lte (builtin.rs eval_numeric_cmp) switched from f64-only
+--     to the query engine's shared numeric_compare, which gained an exact
+--     arbitrary-width decimal-integer path (sign, magnitude length, digits)
+--     between the u128 branch and the f64 fallback. In-contract ("extend the
+--     existing exact-integer path"); derive now agrees with the query engine's
+--     documented exactness for >2^53 integers; harness verdicts unchanged.
+--     Side effect: a NaN-surface operand in derive now counts a coercion_miss
+--     (was a silent non-pass) — counter-only, no tuple change.
+-- C2: E-MAT-014 (new code): a Term in a scalar meta() column is a coded
+--     pre-commit abort (structure never silently flattens); BigInt meta columns
+--     render as exact decimal STRINGS (JSON >2^53 unsafe). Endpoint columns:
+--     BigInt/Term → existing E-MAT-003 (not an id).
+-- C3: declare_default is NAME-level get-or-declare (contract signature kept,
+--     no Result): the §3.1 default rule applies only to undeclared names; an
+--     existing decl is returned unmutated, so a base-shadowing rule head keeps
+--     pre-P1 planner acceptance (stratum check wins over BASE_RELATIONS —
+--     pinned by test). E-CAT-001 fires on the explicit declare() API; strict
+--     head validation is P3's E-CAT-002 by the phase table.
+-- C4: Value::Ord = canon-v1 byte-lex (structural, allocation-free), property-
+--     tied to canon_bytes; exec.rs cmp_value (the committed-sort order) kept
+--     its own pre-P1 order for existing variants and gained deterministic
+--     same-variant arms for the new ones — the two orders have two documented
+--     jobs (§9 determinism vs I1 committed-sort stability), unified only if a
+--     later phase chooses to.
+-- C5: pin sidecar gained tags 4 (BigInt) / 5 (Term, recursive); an unknown tag
+--     still poisons the sidecar → clean scratch fallback (pre-existing
+--     discipline, unchanged).
+claim_of[a](exp_p1_gate_complete).
+ground[a](exp_p1_gate_complete, all_seven_gate_items_verified_above_with_command_outputs).
+expected[m](exp_p1_gate_complete, p1_exit).
+evidence[world](exp_p1_gate_complete, suite_1462_0_25_harness_exit0_verdicts_unchanged_grep_gates_clean).
+found[m](exp_p1_gate_complete, p1_exit).

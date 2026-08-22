@@ -1444,12 +1444,16 @@ impl GraphEngineV2 {
 
 /// Stringify a derive-engine Datalog [`crate::datalog::Value`] for the wire (ids render as their
 /// decimal u128, mirroring how v1 surfaces `Value::Id`/`Value::Str` to `WireViolation`).
+/// P1 additions, both deliberate wire choices: a `BigInt` renders as its exact decimal
+/// STRING (JSON numbers above 2^53 are unsafe on the JS side); a `Term` as its canonical
+/// text `functor(a1,…,an)` — the same surface `Value::as_str` defines.
 fn value_to_wire_string(v: &crate::datalog::Value) -> String {
     match v {
         crate::datalog::Value::Id(id) => id.to_string(),
         crate::datalog::Value::Str(s) => s.clone(),
         crate::datalog::Value::Int(i) => i.to_string(),
         crate::datalog::Value::Float(f) => f.to_string(),
+        crate::datalog::Value::BigInt(_) | crate::datalog::Value::Term(_) => v.as_str(),
     }
 }
 
@@ -2555,6 +2559,33 @@ impl GraphEngineV2 {
 }
 
 // ── Tests ───────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod wire_value_tests {
+    use super::value_to_wire_string;
+    use crate::datalog::{TermBlob, Value};
+    use std::sync::Arc;
+
+    /// P1: the wire renders a BigInt as its exact decimal STRING and a Term as its
+    /// canonical text — explicit, deliberate arms (JSON numbers >2^53 are unsafe).
+    #[test]
+    fn wire_renders_bigint_decimal_and_term_text() {
+        assert_eq!(
+            value_to_wire_string(&Value::big_int(1_i128 << 68)),
+            "295147905179352825856"
+        );
+        let term = Value::Term(Arc::new(TermBlob {
+            functor: "pair".to_string(),
+            args: vec![Value::Str("a".into()), Value::Int(7)].into_boxed_slice(),
+        }));
+        assert_eq!(value_to_wire_string(&term), r#"pair("a",7)"#);
+        // The four pre-P1 surfaces are unchanged.
+        assert_eq!(value_to_wire_string(&Value::Id(42)), "42");
+        assert_eq!(value_to_wire_string(&Value::Str("s".into())), "s");
+        assert_eq!(value_to_wire_string(&Value::Int(-3)), "-3");
+        assert_eq!(value_to_wire_string(&Value::Float(1.5)), "1.5");
+    }
+}
 
 #[cfg(test)]
 mod tests {

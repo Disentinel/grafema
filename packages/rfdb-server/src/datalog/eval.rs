@@ -19,22 +19,67 @@ pub const HASH_JOIN_THRESHOLD: usize = 16;
 /// and processed through the remaining pipeline before fetching the next chunk.
 const PIPELINE_CHUNK_SIZE: usize = 4096;
 
-/// A value in Datalog bindings (spec §5).
+/// A value in Datalog bindings (spec §5; ROFL value domain §2.5/§2.7).
 ///
 /// `Int`/`Float` are typed numeric literals — a bare `0` / `3.14` in a rule parses to one of
 /// these (not a string round-trip, not a node id). Comparison builtins coerce at the literal
 /// level (`as_f64`); `Eq`/`Hash` are hand-written because `f64` is neither (`Float` compares and
 /// hashes by `to_bits`, so fact-set dedup over numeric tuples stays well-defined and consistent).
+///
+/// # Canonical-value invariants (rofl-fact-model.md §2.5, load-bearing for §9)
+///
+/// - **V1**: any integer in `[i64::MIN, i64::MAX]` MUST be `Int(i64)`, never `BigInt`. A
+///   canonical `BigInt` therefore always needs ≥ 9 bytes of minimal encoding.
+/// - **V2**: `BigInt` bytes MUST be minimal two's-complement big-endian (a leading `0x00`
+///   with next-byte top bit clear, or leading `0xFF` with next-byte top bit set, is
+///   non-canonical).
+/// - **V3**: `Float` — any NaN is the single quiet-NaN bit pattern
+///   [`CANONICAL_NAN_BITS`]; `-0.0` is `+0.0`. No other bit patterns are altered.
+/// - **V4**: every `Term` arg (recursively) satisfies V1–V4.
+///
+/// The sanctioned producers are the canonicalizing constructors [`Value::big_int`],
+/// [`Value::big_int_from_be_bytes`], [`Value::big_int_from_decimal`], [`Value::float`], and
+/// `TermBlob::new` (in `derive::canon`) — engine-internal values built through them can never
+/// trip the `E-VAL-001`/`E-VAL-002` canonicality gates (`derive::canon`).
 #[derive(Clone, Debug)]
 pub enum Value {
     /// Node ID (u128)
     Id(u128),
     /// String value
     Str(String),
-    /// Signed integer literal (`i64`)
+    /// Signed integer literal (`i64`) — the fast path (§2.5): every value fitting `i64`
+    /// lives here, never in `BigInt` (invariant V1).
     Int(i64),
-    /// Floating-point literal (`f64`)
+    /// Floating-point literal (`f64`); canonical form per invariant V3.
     Float(f64),
+    /// Arbitrary-precision integer (§2.5): minimal two's-complement BIG-endian bytes.
+    /// Canonical only when the value does NOT fit `i64` (V1) and the encoding is minimal
+    /// (V2). `Arc` because facts clone freely in the fixpoint; the payload is immutable.
+    BigInt(Arc<[u8]>),
+    /// ROFL term (§2.7): functor + args, recursive. Rules-as-data and reified structures
+    /// live here as values; canonical when every nested arg is canonical (V4).
+    Term(Arc<TermBlob>),
+}
+
+/// The single canonical quiet-NaN bit pattern (invariant V3): positive quiet NaN with a
+/// zero payload — `f64::NAN`'s bits on every supported target, asserted by a golden test
+/// so a platform surprise fails loudly instead of silently splitting fact identity.
+pub const CANONICAL_NAN_BITS: u64 = 0x7ff8_0000_0000_0000;
+
+/// A ROFL term: functor + ordered args, recursive (rofl-fact-model.md §2.7 p.1 — functor +
+/// arity + args; the arity is `args.len()`). Rules and reified structures are values of
+/// this shape. Structural `Eq`/`Hash` (derived) agree with canon-bytes equality because
+/// the canonical encoding (`derive::canon`) is injective.
+///
+/// Construct via `TermBlob::new` (in `derive::canon`), which validates invariants V1–V4
+/// recursively — a hand-assembled `TermBlob` may be non-canonical and will be rejected at
+/// the canonical boundaries with the inner `E-VAL-…` code.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct TermBlob {
+    /// The functor name (UTF-8; compared and encoded byte-wise).
+    pub functor: String,
+    /// The ordered argument values; `args.len()` is the term's arity.
+    pub args: Box<[Value]>,
 }
 
 impl PartialEq for Value {
@@ -46,6 +91,10 @@ impl PartialEq for Value {
             // Bit-equality so `Eq` agrees with `Hash` (NaN==NaN, -0.0≠0.0) — consistent fact
             // identity, not IEEE numeric equality (which `gt`/`lt` provide via coercion).
             (Value::Float(a), Value::Float(b)) => a.to_bits() == b.to_bits(),
+            // BigInt by byte slice; Term structurally (functor, then args) — both equivalent
+            // to canon-bytes equality because the canonical encoding is injective (§2.5/§2.7).
+            (Value::BigInt(a), Value::BigInt(b)) => a == b,
+            (Value::Term(a), Value::Term(b)) => a == b,
             _ => false,
         }
     }
@@ -61,6 +110,8 @@ impl std::hash::Hash for Value {
             Value::Str(s) => s.hash(state),
             Value::Int(i) => i.hash(state),
             Value::Float(f) => f.to_bits().hash(state),
+            Value::BigInt(b) => b.hash(state),
+            Value::Term(t) => t.hash(state),
         }
     }
 }
@@ -77,35 +128,244 @@ impl Value {
     }
 
     /// Get as u128 if possible (node-id interpretation). Numeric literals are values, not ids.
+    /// A `BigInt` is never a node id (a canonical one exceeds `i64` and node ids arrive as
+    /// `Id`/decimal `Str`); a `Term` is structure, not an id.
     pub fn as_id(&self) -> Option<u128> {
         match self {
             Value::Id(id) => Some(*id),
             Value::Str(s) => s.parse().ok(),
             Value::Int(_) | Value::Float(_) => None,
+            Value::BigInt(_) | Value::Term(_) => None,
         }
     }
 
-    /// Get as string (the wire/attr surface; ids and numbers render to their decimal text).
+    /// Get as string (the wire/attr surface; ids and numbers render to their decimal text;
+    /// a `BigInt` renders as its exact decimal, a `Term` as its canonical text
+    /// `functor(a1,…,an)` — see [`TermBlob`] rendering notes on [`Value::term_text`]).
     pub fn as_str(&self) -> String {
         match self {
             Value::Id(id) => id.to_string(),
             Value::Str(s) => s.clone(),
             Value::Int(i) => i.to_string(),
             Value::Float(f) => f.to_string(),
+            Value::BigInt(b) => big_int_to_decimal(b),
+            Value::Term(t) => term_to_text(t),
         }
     }
 
     /// Coerce to `f64` for numeric comparison (spec §5: coercion at the literal level). Typed
     /// numerics read directly; an `Id`/`Str` surface parses, returning `None` on a non-numeric
     /// surface (the caller treats that as a tuple non-match + `coercion_miss`, never a crash).
+    ///
+    /// `BigInt` → `None` deliberately: a canonical `BigInt` never fits `i64`, so an `f64`
+    /// approximation would collapse distinct values onto the same float — the same reasoning
+    /// as the exact-integer comparison path in [`numeric_compare`]. Exact `BigInt` ordering
+    /// lives in the comparison builtins, not in coercion. `Term` → `None` (structure has no
+    /// numeric coercion; callers count a `coercion_miss`, never crash).
     pub fn as_f64(&self) -> Option<f64> {
         match self {
             Value::Int(i) => Some(*i as f64),
             Value::Float(f) => Some(*f),
             Value::Id(id) => Some(*id as f64),
             Value::Str(s) => s.parse().ok(),
+            Value::BigInt(_) => None,
+            Value::Term(_) => None,
         }
     }
+
+    /// Canonicalizing `Float` constructor (invariant V3): any NaN → the single quiet-NaN
+    /// bit pattern [`CANONICAL_NAN_BITS`]; `-0.0` → `+0.0`; every other value unchanged.
+    /// The sanctioned producer of `Value::Float` on canonical paths — a float built here
+    /// can never trip `E-VAL-002`.
+    pub fn float(f: f64) -> Value {
+        if f.is_nan() {
+            Value::Float(f64::from_bits(CANONICAL_NAN_BITS))
+        } else if f == 0.0 {
+            // Catches -0.0 (== 0.0 numerically) and normalizes its sign bit away.
+            Value::Float(0.0)
+        } else {
+            Value::Float(f)
+        }
+    }
+
+    /// Canonicalizing integer constructor (invariant V1): `Int` when the value fits `i64`,
+    /// else the minimal two's-complement big-endian `BigInt`. The sanctioned producer for
+    /// integer values of known 128-bit width.
+    pub fn big_int(v: i128) -> Value {
+        if let Ok(i) = i64::try_from(v) {
+            return Value::Int(i);
+        }
+        Value::big_int_from_be_bytes(&v.to_be_bytes())
+    }
+
+    /// Canonicalizing integer constructor from arbitrary-width two's-complement big-endian
+    /// bytes (empty slice = 0): strips redundant sign bytes to the minimal encoding (V2),
+    /// then demotes to `Int` when the value fits `i64` (V1). The sanctioned producer for
+    /// integers wider than 128 bits.
+    pub fn big_int_from_be_bytes(bytes: &[u8]) -> Value {
+        let minimal = minimal_twos_complement(bytes);
+        if minimal.len() <= 8 {
+            // Any ≤8-byte two's-complement value is in i64 range: sign-extend and demote (V1).
+            let sign_fill = if minimal.first().is_some_and(|b| *b & 0x80 != 0) {
+                0xFF
+            } else {
+                0x00
+            };
+            let mut buf = [sign_fill; 8];
+            buf[8 - minimal.len()..].copy_from_slice(minimal);
+            return Value::Int(i64::from_be_bytes(buf));
+        }
+        Value::BigInt(Arc::from(minimal))
+    }
+
+    /// Canonicalizing integer constructor from a decimal string (optional leading `-`,
+    /// then ASCII digits; arbitrary precision). `None` on any other shape. Feeds the
+    /// parser's i64-overflow literal fallback (incident #3: `2^68` must be representable).
+    pub fn big_int_from_decimal(s: &str) -> Option<Value> {
+        let (negative, digits) = match s.strip_prefix('-') {
+            Some(rest) => (true, rest),
+            None => (false, s),
+        };
+        if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        // Magnitude in base 256, big-endian, via mul-10-add-digit.
+        let mut mag: Vec<u8> = Vec::new();
+        for d in digits.bytes() {
+            let mut carry = u16::from(d - b'0');
+            for byte in mag.iter_mut().rev() {
+                let v = u16::from(*byte) * 10 + carry;
+                *byte = (v & 0xFF) as u8;
+                carry = v >> 8;
+            }
+            while carry > 0 {
+                mag.insert(0, (carry & 0xFF) as u8);
+                carry >>= 8;
+            }
+        }
+        // To two's complement: ensure a sign bit slot, then negate if negative.
+        if mag.first().is_none_or(|b| *b & 0x80 != 0) {
+            mag.insert(0, 0x00);
+        }
+        if negative {
+            twos_complement_negate_in_place(&mut mag);
+        }
+        Some(Value::big_int_from_be_bytes(&mag))
+    }
+
+    /// The canonical text of a term value — `functor(a1,…,an)` (arity 0 renders as the bare
+    /// functor). See [`term_to_text`] for the per-variant arg rendering.
+    pub fn term_text(t: &TermBlob) -> String {
+        term_to_text(t)
+    }
+}
+
+// ── BigInt/Term surface helpers (decimal + text rendering, canonical byte forms) ──
+
+/// Strip redundant leading sign bytes from a two's-complement big-endian encoding, down to
+/// the minimal form (invariant V2). An empty slice (the integer 0) minimizes to `[0x00]`.
+pub(crate) fn minimal_twos_complement(bytes: &[u8]) -> &[u8] {
+    if bytes.is_empty() {
+        return &[0x00];
+    }
+    let mut start = 0;
+    while start + 1 < bytes.len() {
+        let lead = bytes[start];
+        let next_top = bytes[start + 1] & 0x80;
+        if (lead == 0x00 && next_top == 0) || (lead == 0xFF && next_top != 0) {
+            start += 1;
+        } else {
+            break;
+        }
+    }
+    &bytes[start..]
+}
+
+/// In-place two's-complement negation of a big-endian byte string (invert + add 1,
+/// carrying from the least-significant end).
+fn twos_complement_negate_in_place(bytes: &mut [u8]) {
+    for b in bytes.iter_mut() {
+        *b = !*b;
+    }
+    for b in bytes.iter_mut().rev() {
+        let (v, carry) = b.overflowing_add(1);
+        *b = v;
+        if !carry {
+            break;
+        }
+    }
+}
+
+/// Render a two's-complement big-endian integer as its exact decimal string (the wire/attr
+/// surface for `BigInt` — JSON numbers above 2^53 are unsafe, so the decimal STRING is the
+/// exact representation).
+pub(crate) fn big_int_to_decimal(bytes: &[u8]) -> String {
+    if bytes.iter().all(|b| *b == 0) {
+        return "0".to_string();
+    }
+    let negative = bytes[0] & 0x80 != 0;
+    let mut mag = bytes.to_vec();
+    if negative {
+        twos_complement_negate_in_place(&mut mag);
+    }
+    // Repeated divmod-10 over the big-endian magnitude.
+    let mut digits: Vec<u8> = Vec::new();
+    while mag.iter().any(|b| *b != 0) {
+        let mut rem: u16 = 0;
+        for byte in mag.iter_mut() {
+            let v = (rem << 8) | u16::from(*byte);
+            *byte = (v / 10) as u8;
+            rem = v % 10;
+        }
+        digits.push(b'0' + rem as u8);
+    }
+    let mut out = String::with_capacity(digits.len() + 1);
+    if negative {
+        out.push('-');
+    }
+    out.extend(digits.iter().rev().map(|d| *d as char));
+    out
+}
+
+/// Canonical text of a term: `functor(a1,…,an)`; arity 0 renders as the bare functor (an
+/// atom). Args render as: `Id`/`Int`/`BigInt` decimal, `Float` via `to_string`, `Str`
+/// double-quoted with `\` and `"` escaped, nested `Term` recursively. A display surface —
+/// canonical BYTES (the injective form) live in `derive::canon`.
+fn term_to_text(t: &TermBlob) -> String {
+    let mut out = String::new();
+    push_term_text(t, &mut out);
+    out
+}
+
+fn push_term_text(t: &TermBlob, out: &mut String) {
+    out.push_str(&t.functor);
+    if t.args.is_empty() {
+        return;
+    }
+    out.push('(');
+    for (i, arg) in t.args.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        match arg {
+            Value::Id(id) => out.push_str(&id.to_string()),
+            Value::Int(v) => out.push_str(&v.to_string()),
+            Value::Float(f) => out.push_str(&f.to_string()),
+            Value::BigInt(b) => out.push_str(&big_int_to_decimal(b)),
+            Value::Str(s) => {
+                out.push('"');
+                for c in s.chars() {
+                    if c == '"' || c == '\\' {
+                        out.push('\\');
+                    }
+                    out.push(c);
+                }
+                out.push('"');
+            }
+            Value::Term(inner) => push_term_text(inner, out),
+        }
+    }
+    out.push(')');
 }
 
 /// Compare two numeric operand strings for the gt/lt/gte/lte builtins.
@@ -122,6 +382,11 @@ impl Value {
 /// Returns `None` when either operand is non-numeric, when an `f64` comparison
 /// is undefined (NaN), or when `op` is not a recognised comparison — callers
 /// treat any `None`/`Some(false)` as a non-passing constraint (empty result).
+///
+/// Integer operands that overflow even `u128` (a `BigInt` surface, §2.5 — e.g. `2^68+1`
+/// vs `2^68` differ only below f64's mantissa) take the exact decimal-integer path
+/// ([`decimal_int_compare`]: sign, then magnitude length, then digits), never the lossy
+/// `f64` fallback — the same exactness rationale as the `i128`/`u128` branches.
 pub(crate) fn numeric_compare(left: &str, right: &str, op: &str) -> Option<bool> {
     use std::cmp::Ordering;
 
@@ -129,6 +394,8 @@ pub(crate) fn numeric_compare(left: &str, right: &str, op: &str) -> Option<bool>
         l.cmp(&r)
     } else if let (Ok(l), Ok(r)) = (left.parse::<u128>(), right.parse::<u128>()) {
         l.cmp(&r)
+    } else if let Some(ord) = decimal_int_compare(left, right) {
+        ord
     } else {
         let l: f64 = left.parse().ok()?;
         let r: f64 = right.parse().ok()?;
@@ -142,6 +409,34 @@ pub(crate) fn numeric_compare(left: &str, right: &str, op: &str) -> Option<bool>
         "lte" => ordering != Ordering::Greater,
         _ => return None,
     })
+}
+
+/// Exact numeric comparison of two decimal-integer strings of ARBITRARY width (optional
+/// leading `-`, then digits): by sign, then magnitude length (leading zeros stripped),
+/// then digit bytes. `None` when either operand is not integer-shaped — the caller falls
+/// back to `f64` for genuinely fractional surfaces.
+pub(crate) fn decimal_int_compare(left: &str, right: &str) -> Option<std::cmp::Ordering> {
+    fn split(s: &str) -> Option<(bool, &str)> {
+        let (neg, digits) = match s.strip_prefix('-') {
+            Some(rest) => (true, rest),
+            None => (false, s),
+        };
+        if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let mag = digits.trim_start_matches('0');
+        // All-zero magnitude: canonicalize to "" and drop the sign (-0 == 0).
+        Some(if mag.is_empty() { (false, "") } else { (neg, mag) })
+    }
+    let (lneg, lmag) = split(left)?;
+    let (rneg, rmag) = split(right)?;
+    let ord = match (lneg, rneg) {
+        (false, true) => std::cmp::Ordering::Greater,
+        (true, false) => std::cmp::Ordering::Less,
+        (false, false) => lmag.len().cmp(&rmag.len()).then_with(|| lmag.cmp(rmag)),
+        (true, true) => rmag.len().cmp(&lmag.len()).then_with(|| rmag.cmp(lmag)),
+    };
+    Some(ord)
 }
 
 /// Variable bindings

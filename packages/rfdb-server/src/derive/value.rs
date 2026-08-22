@@ -31,6 +31,8 @@ const TAG_ID: u8 = 0x01;
 const TAG_STR: u8 = 0x02;
 const TAG_INT: u8 = 0x03;
 const TAG_FLOAT: u8 = 0x04;
+const TAG_BIGINT: u8 = 0x05;
+const TAG_TERM: u8 = 0x06;
 
 /// Append the canonical, variant-tagged byte encoding of a single value to `out`.
 ///
@@ -59,6 +61,26 @@ fn encode_value(out: &mut Vec<u8>, value: &Value) {
         Value::Float(f) => {
             out.push(TAG_FLOAT);
             out.extend_from_slice(&f.to_bits().to_le_bytes());
+        }
+        // P1 additions: dedup over the new variants must be well-defined. Same LE,
+        // u64-length-prefixed discipline as the four arms above (which stay
+        // BYTE-IDENTICAL — invariant I1; the pre-P1 golden fact_id test locks them).
+        // This encoder is fact_id's own; the NORMATIVE cross-process canon-v1 encoding
+        // lives in `derive::canon` (two encoders, two documented jobs).
+        Value::BigInt(b) => {
+            out.push(TAG_BIGINT);
+            out.extend_from_slice(&(b.len() as u64).to_le_bytes());
+            out.extend_from_slice(b);
+        }
+        Value::Term(t) => {
+            out.push(TAG_TERM);
+            let functor = t.functor.as_bytes();
+            out.extend_from_slice(&(functor.len() as u64).to_le_bytes());
+            out.extend_from_slice(functor);
+            out.extend_from_slice(&(t.args.len() as u64).to_le_bytes());
+            for arg in t.args.iter() {
+                encode_value(out, arg);
+            }
         }
     }
 }
@@ -156,6 +178,48 @@ mod tests {
         assert_eq!(var_slot(&vars, "X"), Some(0));
         assert_eq!(var_slot(&vars, "Z"), Some(2));
         assert_eq!(var_slot(&vars, "Q"), None);
+    }
+
+    /// Byte-stability of the four PRE-P1 variant encodings (invariant I1): these golden
+    /// fact_id values were captured on the UNMODIFIED encoder at HEAD f08e5d53, BEFORE
+    /// the BigInt/Term arms landed. If any existing arm's bytes shift, these fail.
+    #[test]
+    fn fact_id_pre_p1_goldens_are_byte_stable() {
+        assert_eq!(
+            fact_id(7, &[Value::Id(42), s("queue:publish")]),
+            0x9c66_1586_b0dd_e512
+        );
+        assert_eq!(
+            fact_id(1, &[Value::Int(-5), Value::Float(3.14)]),
+            0x1108_b760_e3fb_3ffe
+        );
+        assert_eq!(
+            fact_id(3, &[s(""), Value::Id(u128::MAX)]),
+            0xda96_d8d7_c72f_6de7
+        );
+        assert_eq!(
+            fact_id(9, &[Value::Float(-0.0), Value::Int(i64::MIN)]),
+            0xc3cd_7a74_d313_028b
+        );
+    }
+
+    /// The new arms are additive and injective: BigInt/Term keys dedup distinctly from
+    /// every same-surface existing variant and from each other.
+    #[test]
+    fn fact_id_new_variants_are_distinct_and_deterministic() {
+        let big = Value::big_int(1_i128 << 68);
+        let term = Value::Term(std::sync::Arc::new(crate::datalog::TermBlob {
+            functor: "f".to_string(),
+            args: vec![Value::Int(1)].into_boxed_slice(),
+        }));
+        assert_eq!(fact_id(1, &[big.clone()]), fact_id(1, &[big.clone()]));
+        assert_eq!(fact_id(1, &[term.clone()]), fact_id(1, &[term.clone()]));
+        // 2^68's decimal string vs the BigInt itself vs a same-bytes Str: all distinct.
+        assert_ne!(fact_id(1, &[big.clone()]), fact_id(1, &[s("295147905179352825856")]));
+        assert_ne!(fact_id(1, &[big.clone()]), fact_id(1, &[term.clone()]));
+        // Term arg boundaries do not collide with flattened args.
+        let flat = [s("f"), Value::Int(1)];
+        assert_ne!(fact_id(1, &[term]), fact_id(1, &flat));
     }
 
     #[test]

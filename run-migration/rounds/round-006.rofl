@@ -1,0 +1,88 @@
+-- Round 006 (2026-08-22) — adversarial-review repair actuals vs the expectations
+-- pre-registered in round-006-pre.rofl. All six review findings were severity:
+-- minor; five acted on, one WONT-FIX with reason. Assert-only, never retract.
+-- Evidence artifacts:
+--   run_id: rofl-conformance-1787361952086 (post-repair harness run)
+--   post-repair conformance-report.json sha256 =
+--     4c2701458e868fce81a804f54ef4e8e58aeca7a43e83c6dec774452ee1b0d832 —
+--     BYTE-IDENTICAL to the archived round-005 report
+--     (rounds/round-005.report.json, same sha), so no separate archive is kept.
+
+-- ── Repairs (recorded as repairs, not re-litigated hypotheses) ──
+
+-- F1 REPAIRED: catalog.rs test base_relations_registered_with_executor_arities
+-- now reads each base relation's arity LIVE from builtin::registry() and the
+-- name set from plan::BASE_RELATIONS — the arity lock is mechanical like the
+-- name drift guard, no literal (name, arity) pair list remains.
+repair[a](exp_p1_catalog_consistent_zero_plan_change, arity_lock_now_mechanical_against_builtin_registry).
+
+-- F2 REGISTERED as deliberate call C6 (no code change; canonical BYTES encode
+-- arity explicitly, so identity is unaffected):
+-- C6: an arity-0 Term renders as the BARE functor (`quiescent`, no parens) on
+--     the as_str / wire text surface, deviating from the contract's uniform
+--     `functor(a1,…,an)` canonical-text shape. Deliberate (Prolog/atom
+--     convention; `f()` is noise for atoms), pinned by
+--     datalog::tests::term_accessors_are_deliberate. P2+'s fid/state-sha TEXT
+--     surfaces (if any are built on as_str rather than canon bytes) inherit
+--     this convention and must consult this registration first.
+repair[a](exp_p1_gate_complete, arity0_term_bare_functor_rendering_registered_as_c6).
+
+-- F3 REPAIRED: declare() identity now spans EVERY declared field —
+-- arity/strategy/cardinality/temporal/semiring/key_cols/reverse/author_priority
+-- (excluded: assigned id, runtime-mutable stats). A same-logical-shape
+-- redeclare differing in a physical axis is E-CAT-001, never a silent drop
+-- (P3 dispatch and tag_fold key off semiring/key_cols). Per-axis tests added in
+-- conflicting_redeclaration_is_e_cat_001_identical_is_idempotent. No P1 caller
+-- can trip the tightened check: declare_default is name-level get-or-declare
+-- (early return), with_base_relations declares fresh names only.
+repair[a](exp_p1_catalog_consistent_zero_plan_change, e_cat_001_extended_to_all_declared_fields).
+
+-- F4 WONT-FIX (registered, out of scope): storage_v2::multi_shard::tests::
+-- test_commit_batch_performance_scaling is a pre-existing flaky wall-clock
+-- assertion (failed once under parallel load in the review's first run, green
+-- in isolation and in every full run since). The file is untouched by P1
+-- (`git diff --name-only | grep multi_shard` empty); a robustness fix
+-- (medians / wider bound / serialization) is a separate task for the owner —
+-- governance forbids drive-by changes outside phase scope.
+repair[a](exp_p1_gate_complete, flaky_perf_test_wontfix_preexisting_out_of_scope_flagged_to_owner).
+
+-- F5 REPAIRED: new test derive::canon::tests::
+-- multi_byte_varint_lengths_order_by_encoding_bytes_not_numeric_length pins the
+-- multi-byte LEB128 branch of the §9.2 order on BOTH length-prefixed variants:
+-- Str lengths 300 vs 200 and BigInt 300- vs 200-byte minimal magnitudes each
+-- assert Ord ≡ canon-bytes lex AND the documented inversion
+-- (varint(300)=[AC 02] < varint(200)=[C8 01] byte-lex → longer payload sorts
+-- FIRST); equal-length case falls through to content bytes.
+repair[a](exp_p1_canon_order_laws_green, leb128_multibyte_branch_pinned_by_targeted_test).
+
+-- F6 REPAIRED at commit time: round-005-pre.rofl is committed in its OWN commit
+-- ahead of the implementation commit on rofl-v1, making the pre-registration
+-- ordering git-auditable (this file is written before those commits exist; the
+-- commit shas live in git, not here — the ledger never guesses).
+repair[a](exp_p1_gate_complete, round_005_pre_git_anchored_in_own_commit_before_implementation).
+
+-- ── Actuals vs round-006-pre expectations ──
+
+-- R1 suite: `cargo test --lib` (packages/rfdb-server) after the repairs →
+-- "1463 passed; 0 failed; 25 ignored; finished in 25.93s" (round-005 count 1462
+-- + 1 new canon test; the E-CAT axis cases extended an existing test). Focused:
+-- derive::catalog + derive::canon 18/0, the new varint test green in isolation.
+evidence[world](exp_p1r_suite_green_after_repairs, cargo_test_lib_1463_passed_0_failed_25_ignored).
+found[m](exp_p1r_suite_green_after_repairs, zero_failures_pass_count_geq_1462_ignored_25_unchanged).
+
+-- R2 harness: run rofl-conformance-1787361952086 on the rebuilt debug binary →
+-- exit 0, wallclock 16.9s; tier-0 120 seeds / 0 divergences, why 325/325 sound,
+-- whynot 554/554 sound; tier-1 GREEN 5 / RED 25 / DIVERGENCE 0 / HARNESS_GAP 0;
+-- scripted per-test comparison vs rounds/round-005.report.json: "tier1 members:
+-- 30 -> 30 | verdict diffs: 0". Stronger than pre-registered: the report is
+-- BYTE-IDENTICAL to the round-005 archive (sha256 4c2701458e868fce…).
+evidence[world](exp_p1r_harness_verdicts_unchanged, report_byte_identical_to_round_005_archive_sha_4c2701458e868fce).
+found[m](exp_p1r_harness_verdicts_unchanged, tier0_120_0_tier1_5green_25red_same_members).
+
+-- R3 grep gates: diff-scoped grep for TODO/FIXME/HACK/XXX and mock/stub/fake
+-- outside tests → empty; `_ =>` audit of the touched files → three arms, ALL
+-- matches over decoded TAG BYTES (pin-sidecar unknown-tag → None poison → clean
+-- scratch fallback; test decoder likewise) or a test-PRNG integer — none over
+-- `Value`. The Value fan-out remains fully explicit.
+evidence[world](exp_p1r_grep_gates_clean, diff_grep_empty_and_underscore_arms_are_tag_byte_matches_only).
+found[m](exp_p1r_grep_gates_clean, all_grep_gates_empty).

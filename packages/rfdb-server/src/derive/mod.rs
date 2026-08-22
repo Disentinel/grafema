@@ -21,9 +21,13 @@
 //!
 //! - [`tag`] (0) — `Sealed`/`Tag`/`InvertibleTag`/`IdempotentTag` traits; `BoolTag`.
 //! - [`value`] (1) — reuse the query engine's `Value`; `Fact`, `Row`, deterministic `fact_id`.
+//! - [`canon`] (1) — canon-v1 canonical value encoding + the §9.2 total order and the
+//!   `E-VAL-001`/`E-VAL-002` canonicality gates (beside [`value`]; no storage deps).
 //! - [`storage_glue`] (2) — `StorageView` trait + real-LSM impl over `ReadSnapshot`
 //!   plus an in-memory fixture impl.
 //! - [`parser_ext`] (3) — extend the query-engine parser for Appendix-A annotations and rules.
+//! - [`catalog`] (3) — the §3.1 predicate catalog (engine-resident in P1; populated with
+//!   the base relations at the eval entry and with rule heads at plan construction).
 //! - [`stratify`] (4) — predicate dependency graph, SCC condensation, negation gating.
 //! - [`builtin`] (5) — `BuiltinDef` registry; ported query-engine eval bodies with modes + cost.
 //! - [`plan`] (6) — literal reorder, greedy cost from stats, join-kind selection, guards.
@@ -35,6 +39,8 @@
 
 pub mod tag;
 pub mod value;
+pub mod canon;
+pub mod catalog;
 pub mod storage_glue;
 pub mod parser_ext;
 pub mod stratify;
@@ -62,7 +68,7 @@ use materialize::{
     MaterializeSpec, NodeMaterializeSpec,
 };
 use parser_ext::{parse_ext_program, ExtParseError};
-use plan::{plan_program, PlanError};
+use plan::PlanError;
 use storage_glue::StorageView;
 use stratify::{stratify, StratError};
 use tag::BoolTag;
@@ -161,7 +167,8 @@ impl From<BindingConflict> for EvalError {
 ///
 /// One linear pipeline, no fork for explain: parse the Appendix-A subset
 /// ([`parse_ext_program`]) → stratify ([`stratify`]) → plan every rule
-/// ([`plan_program`]) → run the semi-naive fixpoint ([`Executor::evaluate`]), emitting
+/// ([`plan::plan_program_with_catalog`], registering every rule head in the §3.1
+/// catalog) → run the semi-naive fixpoint ([`Executor::evaluate`]), emitting
 /// decisions and counters into `events` along the way. Explain is a *recording* of this
 /// same run (the caller installs an [`EventLog`] sink and reads the captured events);
 /// there is deliberately no separate explain path.
@@ -232,7 +239,13 @@ pub(crate) fn evaluate_with_materialize_shared(
         BindingTable::from_program(&program, crate::storage_v2::types::BOOLTAG_SEMIRING_ID)?;
     let strat = stratify(&program)?;
     let rules = program.rules();
-    let plans = plan_program(&rules, &strat, &stats)?;
+    // The engine-resident predicate catalog (§3.1, P1): one per evaluation context,
+    // constructed at THE derive entry with the five base relations and populated with
+    // every rule-head name at plan construction. Observational this phase — nothing
+    // reads it back yet (P3's dispatch migration does); dropping it here is the P1
+    // residency decision, not an omission.
+    let mut catalog = catalog::PredicateCatalog::with_base_relations();
+    let plans = plan::plan_program_with_catalog(&rules, &strat, &stats, &mut catalog)?;
     let mut executor = Executor::<BoolTag>::with_limits(view, limits, DEFAULT_ITERATION_CAP)
         .with_events(events);
     if let Some(shared) = shared {
@@ -556,6 +569,27 @@ mod smoke {
             "fe and be link via the derived alias equivalence class (ep_a ≡ ep_c); the unaliased \
              be2/ep_d does not — comparability computed by a recursive rule, not exact match"
         );
+    }
+
+    /// P1 end-to-end (ROFL incident #3): a `2^68`-scale integer literal — unrepresentable
+    /// before P1 (hard ParseError) — flows parser → plan → builtin and compares EXACTLY.
+    /// `gt(2^68+1, 2^68)` passes every row; the reversed comparison passes none (under
+    /// f64 the two literals collapse onto one float and BOTH answers would be wrong).
+    #[test]
+    fn bignum_literal_end_to_end_exact_comparison() {
+        let mut v = FixtureStorageView::new(1);
+        node(&mut v, "fnA", "FUNCTION");
+        let stats = Stats { total_nodes: 1, total_edges: 0, ..Default::default() };
+
+        let pass = r#"big(X) :- node(X, "FUNCTION"), gt(295147905179352825857, 295147905179352825856)."#;
+        let eval = evaluate(&v, pass, stats.clone(), EvalLimits::none(), EventLog::discard())
+            .expect("evaluate");
+        assert_eq!(eval.facts("big").len(), 1, "2^68+1 > 2^68 must hold EXACTLY");
+
+        let fail = r#"big(X) :- node(X, "FUNCTION"), gt(295147905179352825856, 295147905179352825857)."#;
+        let eval = evaluate(&v, fail, stats, EvalLimits::none(), EventLog::discard())
+            .expect("evaluate");
+        assert!(eval.facts("big").is_empty(), "the reversed comparison must fail EXACTLY");
     }
 
     /// Library-semantics as a Datalog rule (apparatus doc §3 — the plugin molecule / "rules instead

@@ -1054,6 +1054,45 @@ mod tests {
         assert_eq!(progf.items[0].rule.body()[1].atom().args()[1], Term::Lit(Value::Float(0.5)));
     }
 
+    /// P1: an integer literal overflowing i64 — a hard "invalid integer literal"
+    /// ParseError before P1 — now parses to a canonical `Value::BigInt` (strictly
+    /// widening: error → value; ROFL 24h incident #3, 2^68 representable). i64-range
+    /// literals stay bit-identical `Value::Int`.
+    #[test]
+    fn bignum_integer_literal_parses_to_canonical_bigint() {
+        use crate::datalog::{Term, Value};
+
+        // 2^68 = 295147905179352825856 — overflows i64, fits the BigInt fallback.
+        let prog = parse_ext_program(
+            r#"verified(X) :- attr(X, "bound", B), gt(B, 295147905179352825856)."#,
+        )
+        .expect("i64-overflowing literal parses via the BigInt fallback");
+        let gt = &prog.items[0].rule.body()[1];
+        assert_eq!(
+            gt.atom().args()[1],
+            Term::Lit(Value::big_int(1_i128 << 68)),
+            "the literal is the canonical BigInt (minimal 9-byte two's complement)"
+        );
+        // Negative overflow widens the same way.
+        let prog = parse_ext_program(
+            r#"verified(X) :- attr(X, "bound", B), lt(B, -295147905179352825856)."#,
+        )
+        .expect("negative overflow literal parses");
+        assert_eq!(
+            prog.items[0].rule.body()[1].atom().args()[1],
+            Term::Lit(Value::big_int(-(1_i128 << 68))),
+        );
+        // The i64 boundary itself still parses as the fast-path Int, bit-identical.
+        let prog = parse_ext_program(
+            r#"verified(X) :- attr(X, "bound", B), gt(B, 9223372036854775807)."#,
+        )
+        .expect("i64::MAX literal parses");
+        assert_eq!(
+            prog.items[0].rule.body()[1].atom().args()[1],
+            Term::Lit(Value::Int(i64::MAX)),
+        );
+    }
+
     #[test]
     fn requires_engine_satisfiable_is_accepted() {
         let src = r#"#requires(engine >= 2)

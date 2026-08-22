@@ -7014,3 +7014,93 @@ mod repeated_var_tests {
         );
     }
 }
+
+// ============================================================================
+// P1 (ROFL fact model §2.5/§2.7): BigInt/Term value-domain surfaces
+// ============================================================================
+
+mod p1_value_domain_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn bigint_accessors_are_deliberate() {
+        let big = Value::big_int(1_i128 << 68);
+        // as_f64 → None: a canonical BigInt never fits i64; an f64 approximation would
+        // collapse distinct values (the exact-comparison rationale).
+        assert_eq!(big.as_f64(), None);
+        // as_id → None: a BigInt is never a node id.
+        assert_eq!(big.as_id(), None);
+        // as_str → the exact decimal (the wire/attr surface).
+        assert_eq!(big.as_str(), "295147905179352825856");
+    }
+
+    #[test]
+    fn term_accessors_are_deliberate() {
+        let term = Value::Term(Arc::new(TermBlob {
+            functor: "route".to_string(),
+            args: vec![Value::Str("/users".into()), Value::Id(7)].into_boxed_slice(),
+        }));
+        assert_eq!(term.as_f64(), None, "structure has no numeric coercion");
+        assert_eq!(term.as_id(), None);
+        assert_eq!(term.as_str(), r#"route("/users",7)"#);
+        // Arity-0 term renders as the bare functor (an atom).
+        let atom = Value::Term(Arc::new(TermBlob {
+            functor: "quiescent".to_string(),
+            args: Box::new([]),
+        }));
+        assert_eq!(atom.as_str(), "quiescent");
+    }
+
+    #[test]
+    fn numeric_compare_is_exact_beyond_u128() {
+        use crate::datalog::eval::numeric_compare;
+        // 2^68+1 vs 2^68: identical under f64 (53-bit mantissa), distinct exactly.
+        assert_eq!(
+            numeric_compare("295147905179352825857", "295147905179352825856", "gt"),
+            Some(true)
+        );
+        assert_eq!(
+            numeric_compare("295147905179352825856", "295147905179352825857", "gte"),
+            Some(false)
+        );
+        // Beyond u128 (2^200 vs 2^200 - 1): the arbitrary-width decimal path.
+        assert_eq!(
+            numeric_compare(
+                "1606938044258990275541962092341162602522202993782792835301376",
+                "1606938044258990275541962092341162602522202993782792835301375",
+                "gt"
+            ),
+            Some(true)
+        );
+        // Signs order exactly at any width.
+        assert_eq!(
+            numeric_compare("-295147905179352825857", "-295147905179352825856", "lt"),
+            Some(true)
+        );
+        // A Term's canonical text is non-numeric → None (caller counts a miss).
+        assert_eq!(numeric_compare("f(1)", "3", "gt"), None);
+    }
+
+    #[test]
+    fn query_parser_widens_overflow_literal_to_bigint() {
+        // The shared parser serves the top-down engine too: the same strictly-widening
+        // fallback (pre-P1 this was ParseError "invalid integer literal").
+        let prog =
+            parse_program(r#"big(X) :- attr(X, "n", V), gt(V, 295147905179352825856)."#)
+                .expect("overflow literal parses");
+        let lit = &prog.rules()[0].body()[1];
+        assert_eq!(
+            lit.atom().args()[1],
+            Term::Lit(Value::big_int(1_i128 << 68))
+        );
+        // In-range literals are bit-identical Int; float literals canonicalize -0.0.
+        let prog = parse_program(r#"neg(X) :- attr(X, "n", V), lt(V, -0.0)."#).expect("parse");
+        match &prog.rules()[0].body()[1].atom().args()[1] {
+            Term::Lit(Value::Float(f)) => {
+                assert_eq!(f.to_bits(), 0, "-0.0 literal canonicalizes to +0.0 (V3)")
+            }
+            other => panic!("expected float literal, got {other:?}"),
+        }
+    }
+}

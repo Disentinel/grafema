@@ -643,6 +643,7 @@ fn eval_attr(view: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> Builtin
 
 /// Outcome of comparing a column's string surface against a literal value (spec §5).
 /// `pub(crate)`: shared with the executor's build-once `attr` fast path (same coercion).
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum CoerceEq {
     /// The literal coerced and equals the column.
     Match,
@@ -685,6 +686,18 @@ pub(crate) fn coerce_eq(column: &str, expected: &Value) -> CoerceEq {
                 Err(_) => CoerceEq::Miss,
             }
         }
+        // A BigInt literal compares by its exact decimal surface (same discipline as
+        // Int: the column carries strings; the decimal render is exact, never lossy).
+        Value::BigInt(_) => {
+            if column == expected.as_str() {
+                CoerceEq::Match
+            } else {
+                CoerceEq::NoMatch
+            }
+        }
+        // A Term has no column string surface to coerce against — a coercion miss
+        // (counted, never a silent non-match, never a crash).
+        Value::Term(_) => CoerceEq::Miss,
     }
 }
 
@@ -731,49 +744,37 @@ fn eval_method_suffix(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> 
     Ok(())
 }
 
-/// Numeric comparison filter shared by `gt`/`lt`/`gte`/`lte`. Both args parse as `f64`; a
-/// non-numeric surface is a coercion miss (tuple non-match, counted — §5), matching the query engine's
-/// graceful failure but surfacing it instead of swallowing it.
-fn eval_numeric_cmp(
-    out: &mut Batch,
-    spec: &ArgSpec,
-    pass: fn(f64, f64) -> bool,
-) -> BuiltinResult<()> {
+/// Numeric comparison filter shared by `gt`/`lt`/`gte`/`lte`, routed through the query
+/// engine's shared [`crate::datalog::numeric_compare`]: integer operands compare EXACTLY
+/// (`i128`/`u128` fast paths, then the arbitrary-width decimal path — so `BigInt`
+/// surfaces such as `2^68+1` vs `2^68`, which collapse under `f64`'s 53-bit mantissa,
+/// order correctly); only genuinely fractional surfaces use `f64`. A non-numeric surface
+/// — including a `Term`'s canonical text — is a coercion miss (tuple non-match, counted
+/// — §5, never a crash), matching the query engine's graceful failure but surfacing it.
+fn eval_numeric_cmp(out: &mut Batch, spec: &ArgSpec, op: &'static str) -> BuiltinResult<()> {
     let (ls, rs) = match (bound_str(&spec.args[0]), bound_str(&spec.args[1])) {
         (Some(l), Some(r)) => (l, r),
         _ => return Ok(()),
     };
-    let left: f64 = match ls.parse() {
-        Ok(v) => v,
-        Err(_) => {
-            out.coercion_miss();
-            return Ok(());
-        }
-    };
-    let right: f64 = match rs.parse() {
-        Ok(v) => v,
-        Err(_) => {
-            out.coercion_miss();
-            return Ok(());
-        }
-    };
-    if pass(left, right) {
-        out.push_pass();
+    match crate::datalog::numeric_compare(&ls, &rs, op) {
+        Some(true) => out.push_pass(),
+        Some(false) => {}
+        None => out.coercion_miss(),
     }
     Ok(())
 }
 
 fn eval_gt(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
-    eval_numeric_cmp(out, spec, |l, r| l > r)
+    eval_numeric_cmp(out, spec, "gt")
 }
 fn eval_lt(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
-    eval_numeric_cmp(out, spec, |l, r| l < r)
+    eval_numeric_cmp(out, spec, "lt")
 }
 fn eval_gte(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
-    eval_numeric_cmp(out, spec, |l, r| l >= r)
+    eval_numeric_cmp(out, spec, "gte")
 }
 fn eval_lte(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
-    eval_numeric_cmp(out, spec, |l, r| l <= r)
+    eval_numeric_cmp(out, spec, "lte")
 }
 
 /// `starts_with(Value, Prefix)` — both bound; pass iff `Value` begins with `Prefix`.
@@ -2302,6 +2303,59 @@ mod tests {
         assert_eq!(run("gte", mk("5", "5")).rows.len(), 1);
         assert_eq!(run("lte", mk("5", "5")).rows.len(), 1);
         assert_eq!(run("lte", mk("6", "5")).rows.len(), 0);
+    }
+
+    /// P1: BigInt operands compare EXACTLY through the shared arbitrary-width integer
+    /// path. `2^68+1` vs `2^68` differ only below f64's 53-bit mantissa — the pre-P1
+    /// f64 comparison collapsed them (gt = false); the exact path must order them.
+    #[test]
+    fn numeric_comparisons_bigint_exact() {
+        let big = |v: Value| ArgValue::Bound(v);
+        let two68 = Value::big_int(1_i128 << 68);
+        let two68p1 = Value::big_int((1_i128 << 68) + 1);
+        let mk = |a: &Value, b: &Value| ArgSpec::new(vec![big(a.clone()), big(b.clone())]);
+        assert_eq!(run("gt", mk(&two68p1, &two68)).rows.len(), 1, "2^68+1 > 2^68 EXACT");
+        assert_eq!(run("gt", mk(&two68, &two68p1)).rows.len(), 0);
+        assert_eq!(run("lt", mk(&two68, &two68p1)).rows.len(), 1);
+        assert_eq!(run("gte", mk(&two68, &two68)).rows.len(), 1);
+        assert_eq!(run("lte", mk(&two68p1, &two68)).rows.len(), 0);
+        // Mixed Int / BigInt surfaces order exactly too.
+        assert_eq!(
+            run("gt", ArgSpec::new(vec![big(two68.clone()), big(Value::Int(i64::MAX))]))
+                .rows
+                .len(),
+            1,
+            "2^68 > i64::MAX"
+        );
+        // Negative BigInt sorts below any positive.
+        let neg = Value::big_int(-(1_i128 << 68));
+        assert_eq!(run("lt", mk(&neg, &two68)).rows.len(), 1);
+    }
+
+    /// P1: a Term operand is a tuple non-match + coercion miss — never a panic, never a
+    /// silent pass.
+    #[test]
+    fn numeric_comparison_term_operand_is_coercion_miss() {
+        let term = Value::Term(std::sync::Arc::new(
+            crate::datalog::TermBlob::new("f", vec![Value::Int(1)]).expect("canonical"),
+        ));
+        let spec = ArgSpec::new(vec![ArgValue::Bound(term), ArgValue::Bound(s("3"))]);
+        let out = run("gt", spec);
+        assert_eq!(out.rows.len(), 0, "a Term never numerically passes");
+        assert_eq!(out.coercion_misses, 1, "the miss is counted, not swallowed");
+    }
+
+    /// P1: `coerce_eq` — a BigInt literal compares by its exact decimal surface; a Term
+    /// has no scalar surface → coercion miss.
+    #[test]
+    fn coerce_eq_bigint_decimal_term_miss() {
+        let big = Value::big_int(1_i128 << 68);
+        assert_eq!(coerce_eq("295147905179352825856", &big), CoerceEq::Match);
+        assert_eq!(coerce_eq("295147905179352825857", &big), CoerceEq::NoMatch);
+        let term = Value::Term(std::sync::Arc::new(
+            crate::datalog::TermBlob::new("f", vec![]).expect("canonical"),
+        ));
+        assert_eq!(coerce_eq("f", &term), CoerceEq::Miss);
     }
 
     #[test]
