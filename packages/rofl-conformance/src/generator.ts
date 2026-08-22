@@ -8,7 +8,9 @@
 //      demand mode; RFDB has none);
 //  (b) CONNECTED BODIES with ≥1 named variable per premise — premise j>0
 //      reuses ≥1 already-bound variable (RFDB E-PLAN-003 structural cross-join
-//      guard; ground body literals trip the planner's reorder, live-probed).
+//      guard; ≥1 named var per premise is kept for SEED STABILITY — the F3
+//      planner fix made variable-free filter legs legal, but changing the
+//      constraint would change every seed's byte-identical program text).
 //
 // Seeds 1..90: positive programs. Seeds 91..120: + a stratified-by-construction
 // negation layer q0-q2 negating only strictly-lower p-relations (port of

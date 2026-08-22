@@ -77,16 +77,37 @@ test('explainDatalogGap witness shape: flat satisfied-prefix + first failing pre
   assert.ok(Array.isArray(g!.satisfied));
 });
 
-test('PIN: negated wildcard is mis-evaluated raw, and the adapter projection fixes it', async () => {
-  // raw dialect: wrong answer (documented engine finding)
+test('PIN (F1 fixed): raw negated wildcard is existential — no adapter projection needed', async () => {
+  // the exact live probe that discovered F1: pre-fix the engine returned
+  // {c0, c1}; the fix makes \+ p2(X, _) an existential anti-join → {c0}
   const raw = 'q0(X) :- p0(X), \\+ p2(X, _).\np0("c0").\np0("c1").\np2("c1", "c9").\n';
   const rows = await client.executeDatalog(raw);
-  assert.deepEqual(rows.map((b) => b['X']).sort(), ['c0', 'c1'], 'engine finding: raw negated wildcard silently ignores the match');
-  // adapter path (projection through aux predicate): correct
+  assert.deepEqual(rows.map((b) => b['X']).sort(), ['c0'], 'F1 regression: raw negated wildcard must anti-join existentially');
+  // adapter path now sends the negated wildcard as-is and agrees
   const adapter = new RfdbRofl(client);
   adapter.load('p0(c0).\np0(c1).\np2(c1, c9).\nq0(X) :- p0(X), not p2(X, _).');
   const q = await adapter.query('q0(X)');
   assert.deepEqual(q.rows.map((r) => r.text), ['X = c0']);
+});
+
+test('PIN (F2 fixed): a body literal over an unknown predicate terminates with the correct empty result', async () => {
+  // the exact live probe that discovered F2: pre-fix no response in >45s
+  // (debug-build stratify panic killed the connection thread)
+  const pos = 'q0(X) :- p0(X), p9(X).\np0("c0").\n';
+  assert.deepEqual(await client.executeDatalog(pos), []);
+  // negated unknown predicate: vacuous pass
+  const neg = 'q0(X) :- p0(X), \\+ p9(X).\np0("c0").\n';
+  const rows = await client.executeDatalog(neg);
+  assert.deepEqual(rows.map((b) => b['X']), ['c0']);
+});
+
+test('PIN (F3 fixed): a fully-ground body literal is a filter, safe after planner reordering', async () => {
+  // the exact live probe that discovered F3: pre-fix E-PLAN-003 after the
+  // planner placed the ground probe first
+  const present = 'q0(X) :- p0(X), p1("c1", "c2").\np0("c0").\np1("c1", "c2").\n';
+  assert.deepEqual((await client.executeDatalog(present)).map((b) => b['X']), ['c0']);
+  const absent = 'q0(X) :- p0(X), p1("c1", "c9").\np0("c0").\np1("c1", "c2").\n';
+  assert.deepEqual(await client.executeDatalog(absent), []);
 });
 
 test('adapter end-to-end: TC rows in exact v0 rendering', async () => {

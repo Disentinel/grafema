@@ -1,0 +1,61 @@
+-- Round 004-pre (2026-08-22) — REPAIRS + a PRE-REGISTERED de-workaround claim,
+-- committed BEFORE the round-004 harness run (round-004.rofl carries the run
+-- evidence). Assert-only, never retract.
+--
+-- REPAIRS — the three engine defects the P0 harness discovered by live probe
+-- (round-003 report, discoveredEngineFindings) are FIXED in the engine, each
+-- guarded by a regression test that failed before the fix and passes after:
+--   F1 negated-wildcard soundness — exec.rs join_derived negated branch now
+--      anti-joins existentially over the non-wildcard columns; regression:
+--      derive::exec::tests::negated_derived_leg_with_wildcard_is_existential
+--      (+ negated_derived_leg_wildcard_arrangements).
+--   F2 empty-predicate availability — stratify.rs debug_assert removed
+--      (unknown predicate = legal empty relation; the panic killed the
+--      debug-build connection thread → >45s client hang); deadline abort
+--      pinned; regressions: derive::exec::tests::
+--      unknown_predicate_leg_terminates_with_empty_result and
+--      unknown_predicate_leg_expired_deadline_aborts_with_e_exec_001.
+--   F3 planner ground-filter false reject — plan.rs shares_no_binding:
+--      empty bound set = preceding legs were filters, not a cross-join;
+--      regressions: derive::plan::tests::ground_probe_leg_is_safe_in_any_position,
+--      negated_novar_leg_first_does_not_reject_generator, and end-to-end
+--      derive::exec::tests::ground_fact_probe_filters_in_any_position.
+-- The repairs attach to the tier-0 claims because those verdicts previously
+-- rested on translator workarounds (aux projection / empty-predicate
+-- elimination / ground-literal rejection) that are REMOVED in this round.
+repair[a](exp_tier0_differential_green, f1_negated_wildcard_fixed_existential_antijoin_exec_rs).
+repair[a](exp_tier0_differential_green, f2_unknown_predicate_legal_empty_relation_stratify_rs).
+repair[a](exp_tier0_differential_green, f3_ground_filter_leg_safe_any_position_plan_rs).
+repair[a](exp_tier0_witness_green, translator_workarounds_removed_engine_carries_semantics).
+
+-- BENCH-C2 CLASSIFICATION (triage question from _ai/gaps.md, resolved):
+-- bench_c2_bulkload's two Io(NotFound) panics were a REAL durable-data-loss
+-- bug, NOT environment-specific: ManifestStore::gc_manifests rebuilt
+-- referenced_segments from checkpoint snapshots only, dropping segments of
+-- post-checkpoint .edit.json commits that the CURRENT published version still
+-- references; gc then deleted live segment files. Fixed in
+-- storage_v2/manifest.rs (recalc unions self.current's segments + gc_collect
+-- current-version guard). Evidence: regression test
+-- storage_v2::manifest::tests::test_gc_manifests_recalc_keeps_current_edit_version_segments
+-- observed FAILING on pristine f469f785 production code and passing with the
+-- fix; bench_c2_bulkload 4/4 across 13 runs. Same flawed loop verified present
+-- on main (git show main:.../manifest.rs) — port recommended.
+claim_of[a](exp_bench_c2_real_bug_not_env).
+ground[a](exp_bench_c2_real_bug_not_env, instrumented_run_gc_manifests_snapshot_only_recalc_dropped_live_segments).
+expected[m](exp_bench_c2_real_bug_not_env, real_data_loss_bug_fixed).
+evidence[world](exp_bench_c2_real_bug_not_env, cargo_regression_test_gc_manifests_recalc_fail_before_pass_after).
+evidence[world](exp_bench_c2_real_bug_not_env, bench_c2_bulkload_4_of_4_across_13_runs).
+found[m](exp_bench_c2_real_bug_not_env, real_data_loss_bug_fixed).
+
+-- PRE-REGISTERED (before the round-004 run): with the F1/F2/F3 translator
+-- workarounds REMOVED from packages/rofl-conformance/src/translate.ts
+-- (negated wildcards, unknown predicates and ground body literals now go to
+-- the wire AS-IS; only the F4 first-rule-head hoist remains — a wire-protocol
+-- dialect rule, not a bug workaround), the tier-0 differential must stay at
+-- 120 seeds / 0 divergences with all witness spot-checks green. This is the
+-- end-to-end proof that the ENGINE FIXES, not the workarounds, carry the
+-- semantics. A divergence here means an engine fix is incomplete — fix the
+-- engine, never restore the workaround silently.
+claim_of[a](exp_deworkaround_tier0_green).
+ground[a](exp_deworkaround_tier0_green, engine_fixes_regression_pinned_and_wire_probes_green_on_fixed_binary).
+expected[m](exp_deworkaround_tier0_green, green).

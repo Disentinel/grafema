@@ -1692,31 +1692,11 @@ mod tests {
         }
     }
 
-    /// Every registered builtin must ALSO be known to the stratifier (the `BUILTINS` array
-    /// in stratify.rs) so it is never mistaken for a derived predicate — method_suffix was
-    /// once registered here but forgotten there (debug_assert panic). Pin the pairing for
-    /// the whole registry so a future builtin cannot repeat the miss.
-    #[test]
-    fn every_registered_builtin_is_extensional_for_the_stratifier() {
-        for def in registry() {
-            let args = (0..def.arity)
-                .map(|i| format!("V{i}"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let src = format!("p(V0) :- {}({args}).", def.name);
-            let prog =
-                crate::derive::parser_ext::parse_ext_program(&src).expect("probe rule parses");
-            let strat = crate::derive::stratify::stratify(&prog).expect("stratifies");
-            assert_eq!(
-                strat.strata.len(),
-                1,
-                "builtin `{}` must be extensional (one stratum, only `p` derived) — \
-                 is it missing from stratify.rs BUILTINS?",
-                def.name
-            );
-            assert_eq!(strat.strata[0].predicates, vec!["p".to_string()]);
-        }
-    }
+    // A registry↔stratifier builtin-vocabulary pinning test lived here until the
+    // stratifier's `BUILTINS` mirror was removed (ROFL F2): the stratifier now treats
+    // EVERY non-derived, non-materialize-linked body predicate as extensional, so the
+    // registry/stratifier drift the test pinned (the method_suffix miss) is impossible
+    // by construction and the assertion had become a tautology.
 
     #[test]
     fn arity_matches_mode_widths() {

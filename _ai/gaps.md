@@ -518,7 +518,62 @@ should link `axios.get` CALL → module=axios + method=get. Tracked: triage task
 failing tests come from pre-existing commit f96b2b00 ("perf(rfdb): MVCC C2 — bulk-load mode").
 Reproducible in isolation with no stray server. The 1420-test lib suite passes.
 
-**Likely locus (to triage):** the C2 durable-barrier path
-(`packages/rfdb-server/src/graph/engine_v2.rs` end_bulk_load fsync/rename sequence) or an
-environment-specific tmp-path assumption. Recorded here so a red run of the full rfdb-server test
-suite on branch rofl-v1 is not mis-attributed to the conformance harness. Owner decision pending.
+**RESOLVED 2026-08-21 — REAL data-loss bug, NOT environment-specific. FIXED on rofl-v1.**
+
+**Root cause (proven by instrumented run):** `ManifestStore::gc_manifests`
+(`packages/rfdb-server/src/storage_v2/manifest.rs`, "Recalculate referenced_segments from remaining
+manifests") rebuilt `index.referenced_segments` from `index.snapshots` ONLY. On the delta-manifest
+path `index.snapshots` holds checkpoint versions only (every 32nd version); segments added by
+`.edit.json` commits AFTER the newest kept checkpoint — including segments the CURRENT published
+version references — were dropped from the set (the incremental inserts done by `commit_edit`'s
+non-checkpoint branch were wiped). A later `gc_collect` + `gc_purge` (the
+`reclaim_superseded_segments` C3.c path inside `end_bulk_load`) then moved those live segment files
+to `gc/` and deleted them. `make_durable` then hit `Io(NotFound)` fsyncing them. Evidence from the
+instrumented failing run: last recalc at v580 with snapshots `[512, 544, 576]` dropped the segments
+of edit-commits v577–v580 (seg 1151–1158); reclaim at current=v601 moved exactly those 8 files;
+`make_durable` ENOENT'd on exactly those 8 paths. This is deterministic (needs >3 checkpoints ≈ >96
+delta commits + a `%10` GC at a non-checkpoint version + a subsequent `gc_collect`), which is why
+the 1420-test lib suite never triggered it. Beyond the bench failure this is real durable data loss:
+the deleted segments were referenced by the published version, so a reopen loses their records.
+
+**Fix (rofl-v1):** `gc_manifests`' recalculation now unions `self.current`'s segments (the in-memory
+authority for the published version), and `gc_collect` gained a defense-in-depth guard (mirrors the
+existing pin guard) that never reclaims a current-version segment even with a stale referenced set.
+Regression test (failed before, passes after):
+`src/storage_v2/manifest.rs::tests::test_gc_manifests_recalc_keeps_current_edit_version_segments`.
+`bench_c2_bulkload` now 4/4. NOTE: the same bug exists on `main` (verified: identical recalc loop in
+`main:packages/rfdb-server/src/storage_v2/manifest.rs`, the C2/C3 code predates rofl-v1) — the fix
+should be ported.
+
+**Related, separate, pre-existing (NOT a bug):** `bench_c3_bulkload::c3_flatness_bounded_segment_count`
+aborts via its own 560s in-process watchdog when run in the DEBUG profile on this VM (4000-commit
+bench; file header prescribes `cargo test --release`). Verified identical timeout with AND without
+the GC fix (2026-08-21); in `--release` the whole bench_c3 suite passes 3/3 in ~78s. Run C2/C3
+benches in release on this VM.
+
+## rfdb-server: EvalLimits deadline is CHECKPOINT-granular, not per-row (2026-08-22, adversarial review of the ROFL F2 fix)
+
+**What:** `check_deadline` (packages/rfdb-server/src/derive/exec.rs:3018 area) is called per fixpoint
+iteration / per stratum (call sites exec.rs:1056 and :1392), so the 30s `EvalLimits` deadline aborts
+with `E-EXEC-001` only at fixpoint checkpoints. Inside a single large join/scan iteration,
+`par_join_rows` checks only the cancellation flag per row — one sufficiently large single join can
+overrun the deadline unboundedly before the next checkpoint. Pre-existing design, NOT introduced by
+the F2 fix (whose probe shape now terminates in ~0s; the checkpoint-level abort is pinned by
+`derive::exec::tests::unknown_predicate_leg_expired_deadline_aborts_with_e_exec_001`).
+
+**If a true hard backstop is required:** thread a deadline check into `par_join_rows` alongside the
+existing cancellation check (bounded follow-up, own failing-test-first workflow).
+
+## rfdb-server: no per-request panic containment in the connection loop (2026-08-22, adversarial review of the ROFL F2 fix)
+
+**What:** a panic in an rfdb-server connection-handler thread produces NO wire response and does NOT
+close the socket — the client hangs until its own timeout. Observed on the unfixed F2 binary: after
+the stratify `debug_assert` panic, subsequent requests on the SAME connection also hit the client's
+40s timeout with no error frame and no socket-close event (the connection thread died silently while
+the socket stayed open). F2's specific panic is removed and the eval-level deadline abort is proven
+(`E-EXEC-001` regression test), but ANY future panic on the request path reproduces the hang symptom
+for clients without timeouts.
+
+**Bounded follow-up (own failing-test-first workflow):** `catch_unwind` around request handling in
+the connection loop → send a coded error frame; or at minimum a panic hook that closes the socket so
+clients get an immediate "socket closed" instead of an indefinite hang.

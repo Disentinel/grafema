@@ -1504,6 +1504,16 @@ fn arg_pattern(atom: &Atom, bound: &HashSet<String>) -> Vec<ArgMode> {
 /// A ground atom (all constants) shares no *variable* but is not a cross-join — it is a
 /// constant probe — so it is exempt.
 fn shares_no_binding(atom: &Atom, bound: &HashSet<String>) -> bool {
+    if bound.is_empty() {
+        // NOTHING is bound yet: every preceding leg was a binding-free FILTER (a ground
+        // probe / a variable-free negated leg — each multiplies the output by at most 1),
+        // so this leg is the rule's FIRST generator, not a Cartesian product. Without this
+        // exemption a filter was only safe in the WRITTEN order: once the cost model
+        // reordered the cheap ground probe first, the generator that followed was falsely
+        // rejected with E-PLAN-003 (ROFL conformance F3, live-probed:
+        // `q0(X) :- p0(X), p1("c1","c2").`).
+        return false;
+    }
     let vars: Vec<&String> = atom
         .args()
         .iter()
@@ -1792,6 +1802,45 @@ mod tests {
             .find(|l| l.literal.atom().predicate() == "edge")
             .expect("edge leg present");
         assert_eq!(edge_leg.join, JoinKind::MergeOnTotal);
+    }
+
+    // ── ground probe is a FILTER, safe in any position (ROFL F3) ────
+
+    /// ROFL conformance F3 — a fully-ground body literal is a constant-probe FILTER
+    /// (it binds nothing and multiplies the output by at most 1), so it is safe in
+    /// ANY position. `shares_no_binding` exempted it only in the WRITTEN position:
+    /// once the cost model reorders the cheap ground probe FIRST, the following
+    /// generator saw an empty bound set and was falsely rejected as a cross-join
+    /// (live-probed: `q0(X) :- p0(X), p1("c1","c2").` → E-PLAN-003).
+    #[test]
+    fn ground_probe_leg_is_safe_in_any_position() {
+        let src = r#"
+            p0("c0"). p0("c1").
+            p1("c1", "c2").
+            q0(X) :- p0(X), p1("c1", "c2").
+        "#;
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        plan_program(&rules, &strat, &stats(100, 100))
+            .expect("a ground probe leg must never trip the E-PLAN-003 cross-join guard");
+    }
+
+    /// F3 companion — an all-bound NEGATED leg (`\+ p3(_)`: no variables at all) is
+    /// likewise a filter; when placed first it must not turn the following generator
+    /// into a "cross-join" (same falsely-empty bound set as the ground-probe case).
+    #[test]
+    fn negated_novar_leg_first_does_not_reject_generator() {
+        let src = r#"
+            p0("c0").
+            p3("z").
+            qe(X) :- p0(X), \+ p3(_).
+        "#;
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        plan_program(&rules, &strat, &stats(100, 100))
+            .expect("a variable-free negated leg must never trip the E-PLAN-003 cross-join guard");
     }
 
     // ── per-rule materialization guard ──────────────────────────────

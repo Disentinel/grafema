@@ -109,6 +109,20 @@ export function joinExpectations(tier1: ScenarioResult[], tier0: Tier0Summary): 
     match: tier0.witnessFailed === 0 && tier0.whynotFailed === 0,
     note: `${tier0.witnessChecked} why witnesses (existence + body ⊆ v0 facts) + ${tier0.whynotChecked} whynot gap witnesses (existence + satisfied ⊆ v0 facts) checked; NOT tree identity — v0 keeps first witness only, store.ts:127`,
   });
+  // Pre-registered in ledger round-004-pre BEFORE the de-workaround run: with
+  // the F1/F2/F3 translator workarounds REMOVED (negated wildcards, unknown
+  // predicates and ground body literals go to the wire as-is), the tier-0
+  // differential must stay at zero divergences — the end-to-end proof that the
+  // engine fixes, not the workarounds, carry the semantics.
+  out.push({
+    claim: 'exp_deworkaround_tier0_green',
+    expected: 'green',
+    found: tier0.divergences.length === 0 && tier0.witnessFailed === 0 && tier0.whynotFailed === 0
+      ? 'green'
+      : `divergences:${tier0.divergences.length},why=${tier0.witnessFailed},whynot=${tier0.whynotFailed}`,
+    match: tier0.divergences.length === 0 && tier0.witnessFailed === 0 && tier0.whynotFailed === 0,
+    note: `${tier0.seedsRun} seeds with no translator normalization for F1/F2/F3 (translate.ts workarounds removed; engine fixes regression-pinned in exec.rs/plan.rs/stratify.rs)`,
+  });
   return out;
 }
 
@@ -137,10 +151,10 @@ export function buildReport(
     tier1,
     expectedVsFound: joinExpectations(tier1, tier0),
     discoveredEngineFindings: [
-      'RFDB `\\+ p(X, _)` (wildcard inside a NEGATED literal) silently returns wrong answers: probe q0(X) :- p0(X), \\+ p2(X, _) with p0(c0). p0(c1). p2(c1,c9). returned {c0, c1}; correct is {c0}. Positive wildcards are correct. The harness translator works around it by projecting negated wildcards through an auxiliary predicate (documented, not masked).',
-      'A body literal over a predicate with NO facts and NO rules HANGS rfdb-server past the 30s EvalLimits deadline (probe: q0(X) :- p0(X), p9(X). — no response in >45s). The translator eliminates statically-empty predicates to fixpoint before hitting the wire.',
-      'A fully-ground body literal in a multi-literal rule trips E-PLAN-003 after planner reordering (the ground leg is placed first, the var leg then shares no binding): q0(X) :- p0(X), p1("c1","c2"). rejected. shares_no_binding treats ground probes as safe (plan.rs:1506-1520) but only in the written order.',
-      'executeDatalog "first rule head" includes ground FACTS (a fact is a bodyless rule): the target predicate\'s first RULE must be hoisted above all facts or the response is the first fact\'s relation with empty bindings.',
+      'F1 FIXED (was: RFDB `\\+ p(X, _)` — wildcard inside a NEGATED literal — silently returned wrong answers; probe q0(X) :- p0(X), \\+ p2(X, _) with p0(c0). p0(c1). p2(c1,c9). returned {c0, c1}, correct {c0}). Engine fix: exec.rs join_derived negated branch now anti-joins existentially over the non-wildcard columns (regression: exec.rs::negated_derived_leg_with_wildcard_is_existential). The translator\'s aux-predicate projection workaround is REMOVED — negated wildcards go to the wire as-is.',
+      'F2 FIXED (was: a body literal over a predicate with NO facts and NO rules gave no response past the 30s EvalLimits deadline — a stratify.rs debug_assert panic killed the DEBUG-build connection thread). Engine fix: the debug_assert removed, unknown predicate = legal empty relation; deadline abort pinned by exec.rs::unknown_predicate_leg_expired_deadline_aborts_with_e_exec_001. The translator\'s empty-predicate elimination workaround is REMOVED — unknown predicates go to the wire as-is.',
+      'F3 FIXED (was: a fully-ground body literal in a multi-literal rule tripped E-PLAN-003 after planner reordering; q0(X) :- p0(X), p1("c1","c2"). rejected). Engine fix: plan.rs shares_no_binding treats an empty bound set as "preceding legs were filters", so a ground probe is safe in any position (regression: plan.rs::ground_probe_leg_is_safe_in_any_position). The translator\'s ground-body-literal rejection is REMOVED; the structural cross-join guard for genuinely disconnected generators remains.',
+      'executeDatalog "first rule head" includes ground FACTS (a fact is a bodyless rule): the target predicate\'s first RULE must be hoisted above all facts or the response is the first fact\'s relation with empty bindings. (Wire-protocol dialect rule, NOT a bug — the translator keeps the hoist.)',
     ],
   };
 }
@@ -176,7 +190,7 @@ export function writeReports(report: Report): { jsonPath: string; mdPath: string
   lines.push(`- seeds run: **${report.tier0.seeds}** (75% positive, 25% stratified negation with boot preloaded on the v0 side)`);
   lines.push(`- fact-set divergences: **${report.tier0.divergences.length}**`);
   lines.push(`- why (positive) witness spot-checks: **${report.tier0.witnessChecks.passed} passed / ${report.tier0.witnessChecks.failed} failed** (existence + body ⊆ v0 fact set; deliberately NOT tree identity — v0 stores only the first witness per fact, store.ts:127, and witness choice is mode-dependent, LIMITS.md:48; tree-shape parity remains RED missing:whynot-shape)`);
-  lines.push(`- whynot (negative) gap spot-checks: **${report.tier0.whynotChecks.passed} passed / ${report.tier0.whynotChecks.failed} failed** (≤5 absent ground tuples per seed over rule-bearing rels: v0 whynot must NOT hold, RFDB explainDatalogGap witness must EXIST, satisfied premises ⊆ v0 fact set, failing predicate must be a program/aux predicate; demo-tree parity stays RED missing:whynot-shape)`);
+  lines.push(`- whynot (negative) gap spot-checks: **${report.tier0.whynotChecks.passed} passed / ${report.tier0.whynotChecks.failed} failed** (≤5 absent ground tuples per seed over rule-bearing rels: v0 whynot must NOT hold, RFDB explainDatalogGap witness must EXIST, satisfied premises ⊆ v0 fact set, failing predicate must be a program predicate; demo-tree parity stays RED missing:whynot-shape)`);
   lines.push('');
   if (report.tier0.divergences.length > 0) {
     lines.push('### DIVERGENCES (engine disagreement — investigate, never recode as RED)');

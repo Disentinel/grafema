@@ -12,14 +12,20 @@
 //   • user predicates are namespaced `u_<rel>`: v0 rel names may collide with
 //     RFDB base relations (node/type/edge/incoming/attr — phase1 TC uses
 //     `edge`!) and with derive builtins (`path` is a builtin filter name);
-//   • a negated literal may contain NO wildcard and NO free variable
-//     (wildcard: silently wrong answers, live-probed; free var: E-PLAN-002)
-//     → wildcard-carrying negated literals are PROJECTED through an auxiliary
-//     predicate `xp<i>(BoundVars) :- u_rel(...)`;
-//   • a body literal over a predicate with no facts and no rules HANGS the
-//     server (live-probed, >45s no abort) → empty-predicate elimination to
-//     fixpoint (drop rule on positive-empty, drop literal on negated-empty —
-//     a semantics-preserving datalog normalization);
+//   • a negated literal may contain NO free variable (E-PLAN-002); wildcards
+//     in negated literals evaluate existentially over the bound columns
+//     (engine fix for ROFL F1 — the former silent mis-evaluation is gone, so
+//     the aux-predicate projection workaround was removed);
+//   • a body literal over a predicate with no facts and no rules is a legal
+//     EMPTY relation: positive leg → no rows, negated leg → vacuous pass
+//     (engine fix for ROFL F2 — the former debug-build hang is gone, so the
+//     empty-predicate-elimination workaround was removed);
+//   • a variable-free body literal (ground probe / all-wildcard leg) is a
+//     FILTER, safe in any planner position (engine fix for ROFL F3 — the
+//     former post-reorder E-PLAN-003 false reject is gone, so the translator
+//     no longer rejects ground body literals); a rule body whose
+//     variable-carrying positive premises are DISCONNECTED is still rejected
+//     by the structural cross-join guard (E-PLAN-003, by design);
 //   • all-digit wire strings re-type to Value::Id (rfdb_server.rs:3205-3210)
 //     and v0 atom/int/string all collapse to wire strings → only ATOM
 //     constants translate; int/string constants are dialect:untranslatable
@@ -71,19 +77,14 @@ interface TransRule {
 
 export interface Translation {
   ok: true;
-  /** Translated rules (surviving empty-predicate elimination), original order,
-   *  followed by aux projection rules; use with facts via renderSource(). */
+  /** Translated rules, original order; use with facts via renderSource(). */
   rules: TransRule[];
-  auxRules: string[];
   /** original rel → deduped ground-fact tuples (atom names, positional). */
   groundFacts: Map<string, string[][]>;
   /** original rel → arity. */
   relArity: Map<string, number>;
   /** all original rels mentioned anywhere in the program. */
   programRels: string[];
-  /** rels whose entire extension is statically empty (unknown predicates). */
-  emptyRels: Set<string>;
-  droppedRules: number;
 }
 
 export interface TranslationFailure { ok: false; code: ReasonCode; detail: string; }
@@ -249,19 +250,15 @@ export function translate(clauses: Clause[]): TranslateResult {
     }
   }
   // ── Phase 10: body structure (planner traps) ───────────────────
+  // Variable-free positive/negated literals are FILTERS, safe in any planner
+  // position (ROFL F3 engine fix) — only the variable-CARRYING positive
+  // premises must be connected via shared named variables.
   for (const [ci, c] of clauses.entries()) {
     if (c.body.length < 2) continue;
     const posLits = c.body.filter((b): b is Extract<BodyElem, { t: 'pos' }> => b.t === 'pos');
-    const negLits = c.body.filter((b): b is Extract<BodyElem, { t: 'neg' }> => b.t === 'neg');
-    for (const b of [...posLits, ...negLits]) {
-      const hasVar = b.lit.args.some((a) => a.k === 'v' && !isWildcard(a));
-      if (!hasVar && c.body.length >= 2) {
-        return fail('dialect:untranslatable', `ground body literal '${b.lit.rel}(…)' in clause ${ci + 1}: the RFDB planner reorders it first and then rejects the rest as a cross-join (E-PLAN-003, live-probed)`);
-      }
-    }
-    // connectivity of positive literals via shared named variables
-    if (posLits.length >= 2) {
-      const varSets = posLits.map((b) => new Set(b.lit.args.filter((a) => a.k === 'v' && !isWildcard(a)).map((a) => (a as { name: string }).name)));
+    const varLits = posLits.filter((b) => b.lit.args.some((a) => a.k === 'v' && !isWildcard(a)));
+    if (varLits.length >= 2) {
+      const varSets = varLits.map((b) => new Set(b.lit.args.filter((a) => a.k === 'v' && !isWildcard(a)).map((a) => (a as { name: string }).name)));
       const reached = new Set<number>([0]);
       const boundVars = new Set<string>(varSets[0]);
       let grew = true;
@@ -276,7 +273,7 @@ export function translate(clauses: Clause[]): TranslateResult {
           }
         }
       }
-      if (reached.size !== posLits.length) {
+      if (reached.size !== varLits.length) {
         return fail('dialect:untranslatable', `disconnected rule body in clause ${ci + 1}: a positive premise shares no variable with the rest — RFDB's structural cross-join guard rejects it (E-PLAN-003, plan.rs:460-473)`);
       }
     }
@@ -286,8 +283,6 @@ export function translate(clauses: Clause[]): TranslateResult {
   const groundFacts = new Map<string, string[][]>();
   const factSeen = new Set<string>();
   const rules: TransRule[] = [];
-  const auxRules: string[] = [];
-  let auxCounter = 0;
 
   for (const c of clauses) {
     if (c.body.length === 0) {
@@ -318,20 +313,10 @@ export function translate(clauses: Clause[]): TranslateResult {
       if (b.t === 'pos') {
         bodyParts.push(`${PFX}${b.lit.rel}(${b.lit.args.map(rn).join(', ')})`);
       } else if (b.t === 'neg') {
-        const hasWildcard = b.lit.args.some(isWildcard);
-        if (hasWildcard) {
-          // PROJECT: `not rel(X, _)` → aux `xpN(X) :- u_rel(X, _).` + `\+ xpN(X)`
-          // (negated wildcards are silently mis-evaluated by RFDB — live-probed;
-          //  positive wildcards work, so the aux positive rule is sound)
-          const keptIdx = b.lit.args.map((a, i) => (isWildcard(a) ? -1 : i)).filter((i) => i >= 0);
-          const aux = `xp${auxCounter++}`;
-          const auxHead = keptIdx.map((i) => rn(b.lit.args[i]));
-          const auxBody = b.lit.args.map((a) => rn(a));
-          auxRules.push(`${aux}(${auxHead.join(', ')}) :- ${PFX}${b.lit.rel}(${auxBody.join(', ')}).`);
-          bodyParts.push(`\\+ ${aux}(${auxHead.join(', ')})`);
-        } else {
-          bodyParts.push(`\\+ ${PFX}${b.lit.rel}(${b.lit.args.map(rn).join(', ')})`);
-        }
+        // negated wildcards go to the wire as-is: the engine evaluates them
+        // existentially over the bound columns (ROFL F1 fix, regression-pinned
+        // by exec.rs::negated_derived_leg_with_wildcard_is_existential)
+        bodyParts.push(`\\+ ${PFX}${b.lit.rel}(${b.lit.args.map(rn).join(', ')})`);
       }
     }
     rules.push({
@@ -341,108 +326,23 @@ export function translate(clauses: Clause[]): TranslateResult {
     });
   }
 
-  // ── Empty-predicate elimination to fixpoint ────────────────────
-  // (a body literal over an unknown predicate hangs the server; dropping a
-  //  rule with a positive-empty premise / a negated-empty literal preserves
-  //  datalog semantics: the premise can never / can always be satisfied)
-  const parseAuxBodyPreds = (text: string): { neg: boolean; pred: string }[] => {
-    const body = text.split(':-')[1];
-    const out: { neg: boolean; pred: string }[] = [];
-    const re = /(\\\+\s*)?([a-z][A-Za-z0-9_]*)\s*\(/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(body)) !== null) out.push({ neg: !!m[1], pred: m[2] });
-    return out;
-  };
-  let droppedRules = 0;
-  let liveRules = rules.slice();
-  let liveAux = auxRules.slice();
-  for (;;) {
-    const known = new Set<string>();
-    for (const rel of groundFacts.keys()) known.add(PFX + rel);
-    for (const r of liveRules) known.add(PFX + r.rel);
-    for (const a of liveAux) known.add(a.split('(')[0]);
-    const surviveRule = (bodyPreds: { neg: boolean; pred: string }[]): { keep: boolean; body: { neg: boolean; pred: string }[] } => {
-      const kept = bodyPreds.filter((p) => !(p.neg && !known.has(p.pred)));
-      if (kept.some((p) => !p.neg && !known.has(p.pred))) return { keep: false, body: kept };
-      return { keep: true, body: kept };
-    };
-    let changed = false;
-    const nextRules: TransRule[] = [];
-    for (const r of liveRules) {
-      const preds = parseAuxBodyPreds(r.text);
-      const s = surviveRule(preds);
-      if (!s.keep) { droppedRules++; changed = true; continue; }
-      if (s.body.length !== preds.length) {
-        // negated-empty literal(s) removed: rebuild the rule text
-        const bodyText = rebuildBody(r.text, known);
-        if (bodyText === null) { droppedRules++; changed = true; continue; }
-        nextRules.push({ ...r, text: bodyText });
-        changed = true;
-      } else nextRules.push(r);
-    }
-    const nextAux: string[] = [];
-    for (const a of liveAux) {
-      const preds = parseAuxBodyPreds(a);
-      if (preds.some((p) => !p.neg && !known.has(p.pred))) { changed = true; continue; }
-      nextAux.push(a);
-    }
-    liveRules = nextRules;
-    liveAux = nextAux;
-    if (!changed) break;
-  }
-
+  // A body literal over a predicate with no facts and no rules goes to the
+  // wire as-is: the engine serves it as a legal EMPTY relation (ROFL F2 fix,
+  // regression-pinned by exec.rs::unknown_predicate_leg_terminates_with_empty_result).
   const programRels = [...new Set(clauses.flatMap((c) => litsOf(c).map((l) => l.rel)))];
-  const known = new Set<string>();
-  for (const rel of groundFacts.keys()) known.add(rel);
-  for (const r of liveRules) known.add(r.rel);
-  const emptyRels = new Set(programRels.filter((r) => !known.has(r)));
 
   return {
     ok: true,
-    rules: liveRules,
-    auxRules: liveAux,
+    rules,
     groundFacts,
     relArity,
     programRels,
-    emptyRels,
-    droppedRules,
   };
-}
-
-/** Rebuild a translated rule's body dropping negated literals over unknown
- *  predicates. Returns null if no body literal survives (defensive; a rule
- *  always keeps its positive legs here because surviveRule checked them). */
-function rebuildBody(text: string, known: Set<string>): string | null {
-  const [head, body] = text.split(' :- ');
-  const parts = splitBodyParts(body.replace(/\.\s*$/, ''));
-  const kept = parts.filter((p) => {
-    const m = /^(\\\+\s*)?([a-zA-Z0-9_]+)\(/.exec(p.trim());
-    if (!m) return true;
-    if (m[1] && !known.has(m[2])) return false;
-    return true;
-  });
-  if (kept.length === 0) return null;
-  return `${head} :- ${kept.join(', ')}.`;
-}
-
-/** Split a rule body on top-level commas (arguments contain commas inside parens). */
-function splitBodyParts(body: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let cur = '';
-  for (const ch of body) {
-    if (ch === '(') depth++;
-    if (ch === ')') depth--;
-    if (ch === ',' && depth === 0) { out.push(cur.trim()); cur = ''; continue; }
-    cur += ch;
-  }
-  if (cur.trim()) out.push(cur.trim());
-  return out;
 }
 
 /** Render the full RFDB program: rules (optionally hoisting one rel's first
  *  rule — executeDatalog answers for the FIRST rule head's predicate), then
- *  aux projection rules, then facts (sorted, deterministic). */
+ *  facts (sorted, deterministic). */
 export function renderSource(t: Translation, hoistRel?: string): string {
   let ordered = t.rules;
   if (hoistRel !== undefined) {
@@ -450,7 +350,6 @@ export function renderSource(t: Translation, hoistRel?: string): string {
     if (i > 0) ordered = [t.rules[i], ...t.rules.slice(0, i), ...t.rules.slice(i + 1)];
   }
   const lines: string[] = ordered.map((r) => r.text);
-  lines.push(...t.auxRules);
   const factLines: string[] = [];
   for (const [rel, tuples] of t.groundFacts) {
     for (const args of tuples) {
@@ -464,10 +363,11 @@ export function renderSource(t: Translation, hoistRel?: string): string {
 
 /** Render the dump program for one rel: a fresh dump predicate whose single
  *  rule projects the rel's FULL extension (EDB + IDB) through the engine.
- *  `xdump` leads, so executeDatalog answers for it. Returns null when the rel
- *  is statically empty (unknown predicate = server hang, live-probed). */
+ *  `xdump` leads, so executeDatalog answers for it. Returns null only for a
+ *  rel the program never mentions (no arity to project); a mentioned rel with
+ *  no facts and no rules is dumped through the engine and comes back empty
+ *  (legal empty relation, ROFL F2 fix). */
 export function renderDumpSource(t: Translation, rel: string): { source: string; headVars: string[] } | null {
-  if (t.emptyRels.has(rel)) return null;
   if (!t.relArity.has(rel)) return null;
   const arity = t.relArity.get(rel)!;
   const vars = Array.from({ length: arity }, (_, i) => `V${i}`);

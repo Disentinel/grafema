@@ -1,0 +1,29 @@
+-- Round 004 (2026-08-22) — evidence from the conformance harness run.
+-- run_id: rofl-conformance-1787357163386; report sha256 prefix: 0ac6e98f7e4d1d27 over the ARCHIVED bytes
+-- rounds/round-004.report.json (verify: sha256sum that file — the live
+-- conformance-report.json is regenerated per run and is NOT the evidence artifact).
+-- Assert-only: found[m] records the actual outcome per pre-registered claim;
+-- a mismatch gets a repair[a] with the reason (abandoned/adjusted), never a retract.
+
+evidence[world](exp_phase1_tc_parse_green, run_004_report_sha_0ac6e98f7e4d1d27).
+found[m](exp_phase1_tc_parse_green, green).
+evidence[world](exp_phase1_functor_red, run_004_report_sha_0ac6e98f7e4d1d27).
+found[m](exp_phase1_functor_red, red_missing_compound_terms).
+evidence[world](exp_phase1_arith_red, run_004_report_sha_0ac6e98f7e4d1d27).
+found[m](exp_phase1_arith_red, red_dialect_untranslatable).
+evidence[world](exp_phase2_differentials_green, run_004_report_sha_0ac6e98f7e4d1d27).
+found[m](exp_phase2_differentials_green, green).
+evidence[world](exp_phase2_whytree_persp_strata_red, run_004_report_sha_0ac6e98f7e4d1d27).
+found[m](exp_phase2_whytree_persp_strata_red, red).
+evidence[world](exp_phase3_reflection_snapshot_red, run_004_report_sha_0ac6e98f7e4d1d27).
+found[m](exp_phase3_reflection_snapshot_red, red).
+evidence[world](exp_phase4_time_budget_boot_red, run_004_report_sha_0ac6e98f7e4d1d27).
+found[m](exp_phase4_time_budget_boot_red, red).
+evidence[world](exp_boot_load_red, run_004_report_sha_0ac6e98f7e4d1d27).
+found[m](exp_boot_load_red, red_missing_rules_as_data).
+evidence[world](exp_tier0_differential_green, run_004_report_sha_0ac6e98f7e4d1d27).
+found[m](exp_tier0_differential_green, green).
+evidence[world](exp_tier0_witness_green, run_004_report_sha_0ac6e98f7e4d1d27).
+found[m](exp_tier0_witness_green, green).
+evidence[world](exp_deworkaround_tier0_green, run_004_report_sha_0ac6e98f7e4d1d27).
+found[m](exp_deworkaround_tier0_green, green).

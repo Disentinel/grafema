@@ -90,10 +90,10 @@ test('rejects disconnected bodies → dialect:untranslatable', () => {
   assert.equal((r as { code: string }).code, 'dialect:untranslatable');
 });
 
-test('rejects ground body literal in a multi-literal rule → dialect:untranslatable', () => {
-  const r = t('p0(c0).\np1(c1, c2).\nq0(X) :- p0(X), p1(c1, c2).');
-  assert.equal(r.ok, false);
-  assert.equal((r as { code: string }).code, 'dialect:untranslatable');
+test('ground body literal is a filter and translates in any position (F3 fixed)', () => {
+  const tr = okT('p0(c0).\np1(c1, c2).\nq0(X) :- p0(X), p1(c1, c2).');
+  const src = renderSource(tr);
+  assert.match(src, /u_q0\(V0\) :- u_p0\(V0\), u_p1\("c1", "c2"\)\./);
 });
 
 test('golden: atoms → quoted strings, user rels prefixed, not → \\+', () => {
@@ -105,34 +105,24 @@ test('golden: atoms → quoted strings, user rels prefixed, not → \\+', () => 
   assert.match(src, /u_blocked\(V0\) :- u_node2\(V0\), \\\+ u_path\(V0, V0\)\./);
 });
 
-test('golden: negated wildcard is projected through an aux predicate', () => {
+test('golden: negated wildcard goes to the wire as-is (F1 fixed, no aux projection)', () => {
   const tr = okT('p0(c0).\np2(c1, c9).\nq0(X) :- p0(X), not p2(X, _).');
   const src = renderSource(tr);
-  assert.match(src, /xp0\(V0\) :- u_p2\(V0, _\)\./);
-  assert.match(src, /u_q0\(V0\) :- u_p0\(V0\), \\\+ xp0\(V0\)/);
+  assert.match(src, /u_q0\(V0\) :- u_p0\(V0\), \\\+ u_p2\(V0, _\)\./);
+  assert.doesNotMatch(src, /xp\d/);
 });
 
-test('empty-predicate elimination: positive-empty drops the rule, negated-empty drops the literal', () => {
-  // p9 has no facts and no rules → rule with positive p9 dropped;
-  // not p9(X) removed from the other rule
+test('unknown predicates stay on the wire — no rule/literal elimination (F2 fixed)', () => {
+  // p9 has no facts and no rules → a legal EMPTY relation, served by the
+  // engine (positive leg → no rows, negated leg → vacuous pass)
   const tr = okT('p0(c0).\nq0(X) :- p0(X), p9(X).\nq1(X) :- p0(X), not p9(X).');
   const src = renderSource(tr);
-  assert.doesNotMatch(src, /u_p9/);
-  assert.doesNotMatch(src, /u_q0\(/);
-  assert.match(src, /u_q1\(V0\) :- u_p0\(V0\)\./);
-  assert.equal(tr.droppedRules, 1);
-  assert.ok(tr.emptyRels.has('p9'));
-  assert.ok(tr.emptyRels.has('q0'));
+  assert.match(src, /u_q0\(V0\) :- u_p0\(V0\), u_p9\(V0\)\./);
+  assert.match(src, /u_q1\(V0\) :- u_p0\(V0\), \\\+ u_p9\(V0\)\./);
+  assert.ok(tr.programRels.includes('p9'));
 });
 
-test('empty-predicate elimination runs to fixpoint (cascade)', () => {
-  // p9 empty → q0 rule dropped → q0 empty → q1 rule dropped
-  const tr = okT('p0(c0).\nq0(X) :- p0(X), p9(X).\nq1(X) :- q0(X).');
-  assert.ok(tr.emptyRels.has('q1'));
-  assert.equal(tr.droppedRules, 2);
-});
-
-test('renderDumpSource hoists a fresh xdump rule; null for empty rels', () => {
+test('renderDumpSource hoists a fresh xdump rule; empty rels dump through the engine', () => {
   const tr = okT('edge(a, b).\npath(X, Y) :- edge(X, Y).');
   const d = renderDumpSource(tr, 'path')!;
   assert.ok(d.source.startsWith('xdump(V0, V1) :- u_path(V0, V1).'));
@@ -140,8 +130,12 @@ test('renderDumpSource hoists a fresh xdump rule; null for empty rels', () => {
   const dEdge = renderDumpSource(tr, 'edge')!;
   assert.ok(dEdge.source.startsWith('xdump(V0, V1) :- u_edge(V0, V1).'));
   const tr2 = okT('p0(c0).\nq0(X) :- p0(X), p9(X).');
-  assert.equal(renderDumpSource(tr2, 'p9'), null);
-  assert.equal(renderDumpSource(tr2, 'q0'), null);
+  const dP9 = renderDumpSource(tr2, 'p9')!;
+  assert.ok(dP9.source.startsWith('xdump(V0) :- u_p9(V0).'));
+  const dQ0 = renderDumpSource(tr2, 'q0')!;
+  assert.ok(dQ0.source.startsWith('xdump(V0) :- u_q0(V0).'));
+  // only a rel the program never mentions has no arity to project
+  assert.equal(renderDumpSource(tr2, 'zzz'), null);
 });
 
 test('duplicate ground facts are deduped', () => {

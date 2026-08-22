@@ -128,13 +128,13 @@ export async function runSeedDifferential(prog: GeneratedProgram, ctx: SeedConte
   if (result.witnessFailed.length > 0) result.diverged = true;
 
   // Whynot spot-check — the NEGATIVE half of the ТЗ differential: ≤5 ground
-  // tuples ABSENT from the canonical fact set, over rels with ≥1 surviving
-  // translated rule (gap witnesses exist only through rules; EDB-only rels
-  // return null gaps — live-probed). Checks per tuple:
+  // tuples ABSENT from the canonical fact set, over rels with ≥1 translated
+  // rule (gap witnesses exist only through rules; EDB-only rels return null
+  // gaps — live-probed). Checks per tuple:
   //   • v0 whynot(...).holds === false (canonical-set/oracle consistency);
   //   • RFDB explainDatalogGap witness EXISTS (null = engine claims derivable);
   //   • gap soundness: satisfied premises ⊆ v0 fact set (positive-only in
-  //     satisfied[], live-probed) + failing predicate is a program/aux pred.
+  //     satisfied[], live-probed) + failing predicate is a program predicate.
   // Demo-TREE parity stays out of scope by design (missing:whynot-shape).
   // 'c9' first: the generator draws consts from c0-c5 only and every derived
   // constant originates in the EDB, so a c9-tuple is absent on both sides.
@@ -167,8 +167,8 @@ export async function runSeedDifferential(prog: GeneratedProgram, ctx: SeedConte
         continue;
       }
       const failing = unprefix(witness.failingPredicate);
-      if (!failing.startsWith('xp') && !prog.rels.includes(failing)) {
-        result.whynotFailed.push(`${line}: gap failing predicate '${witness.failingPredicate}' is neither a program rel nor an aux projection`);
+      if (!prog.rels.includes(failing)) {
+        result.whynotFailed.push(`${line}: gap failing predicate '${witness.failingPredicate}' is not a program rel`);
       }
     }
   }

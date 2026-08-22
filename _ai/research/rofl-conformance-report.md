@@ -1,7 +1,7 @@
 # ROFL v0 ↔ RFDB conformance report (P0 harness)
 
-- run: `rofl-conformance-1787352790006` (identity in `conformance-run-meta.json`; the machine report `conformance-report.json` is byte-reproducible and carries no run identity)
-- oracle: ROFL v0 vendored at `052a4c5` (main); subject: rfdb-server 0.4.1 (protocol v3, derive engine, repo `c64138cef6a2`)
+- run: `rofl-conformance-1787357163386` (identity in `conformance-run-meta.json`; the machine report `conformance-report.json` is byte-reproducible and carries no run identity)
+- oracle: ROFL v0 vendored at `052a4c5` (main); subject: rfdb-server 0.4.1 (protocol v3, derive engine, repo `f469f785ce7f`)
 - a RED verdict is a SUCCESS of the harness: it is a machine-readable migration-roadmap entry, not a failure. Harness failures are crashes, fake greens, silent skips — gated by the oracle self-check (30/30 must pass on vendored v0) and the scenario-count check.
 
 ## Tier-0 — 120-seed TS↔RFDB differential (common subset)
@@ -9,7 +9,7 @@
 - seeds run: **120** (75% positive, 25% stratified negation with boot preloaded on the v0 side)
 - fact-set divergences: **0**
 - why (positive) witness spot-checks: **325 passed / 0 failed** (existence + body ⊆ v0 fact set; deliberately NOT tree identity — v0 stores only the first witness per fact, store.ts:127, and witness choice is mode-dependent, LIMITS.md:48; tree-shape parity remains RED missing:whynot-shape)
-- whynot (negative) gap spot-checks: **544 passed / 0 failed** (≤5 absent ground tuples per seed over rule-bearing rels: v0 whynot must NOT hold, RFDB explainDatalogGap witness must EXIST, satisfied premises ⊆ v0 fact set, failing predicate must be a program/aux predicate; demo-tree parity stays RED missing:whynot-shape)
+- whynot (negative) gap spot-checks: **554 passed / 0 failed** (≤5 absent ground tuples per seed over rule-bearing rels: v0 whynot must NOT hold, RFDB explainDatalogGap witness must EXIST, satisfied premises ⊆ v0 fact set, failing predicate must be a program predicate; demo-tree parity stays RED missing:whynot-shape)
 
 ## Tier-1 — the 29 v0 tests + boot.rofl
 
@@ -24,8 +24,8 @@
 | p1-async-reject | test/phase1.test.ts:45 | GREEN | — | all ported assertions passed via the SHARED vendored v0 parser front-end (rejection at load(); no engine delegation involved — zero wire round-trips) |
 | p1-next-body-reject | test/phase1.test.ts:52 | GREEN | — | all ported assertions passed via the SHARED vendored v0 parser front-end (rejection at load(); no engine delegation involved — zero wire round-trips) |
 | p1-arith | test/phase1.test.ts:58 | RED | dialect:untranslatable | builtin 'is' in clause 3: the v0 arithmetic/comparison semantics (unify.ts:96-113, JS trunc) → RFDB builtin mapping is unverified in P0 (first P1 flip candidate) |
-| p2-diff-positive | test/phase2.test.ts:63 | GREEN | — | all ported assertions passed against the RfdbRofl adapter (answers delegated to rfdb-server over the wire; 943 wire round-trips) |
-| p2-diff-negation | test/phase2.test.ts:74 | GREEN | — | all ported assertions passed against the RfdbRofl adapter (answers delegated to rfdb-server over the wire; 481 wire round-trips) |
+| p2-diff-positive | test/phase2.test.ts:63 | GREEN | — | all ported assertions passed against the RfdbRofl adapter (answers delegated to rfdb-server over the wire; 962 wire round-trips) |
+| p2-diff-negation | test/phase2.test.ts:74 | GREEN | — | all ported assertions passed against the RfdbRofl adapter (answers delegated to rfdb-server over the wire; 487 wire round-trips) |
 | p2-why-tree | test/phase2.test.ts:102 | RED | missing:whynot-shape | v0 why() is a recursive tree '<key> <= r<fnv1a> @tick N' (api.ts:250-277); RFDB witness for path(a,c) is flat {ruleAstHash, body[]} (exec.rs:248) — witness EXISTS but the tree shape is unrepresentable |
 | p2-persp-isolation | test/phase2.test.ts:118 | RED | missing:perspectives | perspective [vault] in clause 1: RFDB has no perspective dimension |
 | p2-stratum-order | test/phase2.test.ts:129 | RED | missing:rules-as-data | reflection-vocabulary relation 'has_conclusion' in clause 1: RFDB has no rules-as-data / provenance relations |
@@ -62,14 +62,15 @@
 | exp_phase4_time_budget_boot_red | red | red | ✓ | p4-counter=RED(missing:rules-as-data), p4-replay=RED(missing:rules-as-data), p4-tm=RED(missing:rules-as-data), p4-tm-diverge=RED(missing:rules-as-data), p4-boot-audits=RED(missing:rules-as-data), p4-s |
 | exp_boot_load_red | red:missing:rules-as-data | red:missing:rules-as-data | ✓ | reflection-vocabulary relation 'has_conclusion' in clause 1: RFDB has no rules-as-data / provenance relations |
 | exp_tier0_differential_green | green | green | ✓ | 120 seeds run |
-| exp_tier0_witness_green | green | green | ✓ | 325 why witnesses (existence + body ⊆ v0 facts) + 544 whynot gap witnesses (existence + satisfied ⊆ v0 facts) checked; NOT tree identity — v0 keeps first witness only, store.ts:127 |
+| exp_tier0_witness_green | green | green | ✓ | 325 why witnesses (existence + body ⊆ v0 facts) + 554 whynot gap witnesses (existence + satisfied ⊆ v0 facts) checked; NOT tree identity — v0 keeps first witness only, store.ts:127 |
+| exp_deworkaround_tier0_green | green | green | ✓ | 120 seeds with no translator normalization for F1/F2/F3 (translate.ts workarounds removed; engine fixes regression-pinned in exec.rs/plan.rs/stratify.rs) |
 
 ## Engine findings discovered by the harness (probe evidence)
 
-- RFDB `\+ p(X, _)` (wildcard inside a NEGATED literal) silently returns wrong answers: probe q0(X) :- p0(X), \+ p2(X, _) with p0(c0). p0(c1). p2(c1,c9). returned {c0, c1}; correct is {c0}. Positive wildcards are correct. The harness translator works around it by projecting negated wildcards through an auxiliary predicate (documented, not masked).
-- A body literal over a predicate with NO facts and NO rules HANGS rfdb-server past the 30s EvalLimits deadline (probe: q0(X) :- p0(X), p9(X). — no response in >45s). The translator eliminates statically-empty predicates to fixpoint before hitting the wire.
-- A fully-ground body literal in a multi-literal rule trips E-PLAN-003 after planner reordering (the ground leg is placed first, the var leg then shares no binding): q0(X) :- p0(X), p1("c1","c2"). rejected. shares_no_binding treats ground probes as safe (plan.rs:1506-1520) but only in the written order.
-- executeDatalog "first rule head" includes ground FACTS (a fact is a bodyless rule): the target predicate's first RULE must be hoisted above all facts or the response is the first fact's relation with empty bindings.
+- F1 FIXED (was: RFDB `\+ p(X, _)` — wildcard inside a NEGATED literal — silently returned wrong answers; probe q0(X) :- p0(X), \+ p2(X, _) with p0(c0). p0(c1). p2(c1,c9). returned {c0, c1}, correct {c0}). Engine fix: exec.rs join_derived negated branch now anti-joins existentially over the non-wildcard columns (regression: exec.rs::negated_derived_leg_with_wildcard_is_existential). The translator's aux-predicate projection workaround is REMOVED — negated wildcards go to the wire as-is.
+- F2 FIXED (was: a body literal over a predicate with NO facts and NO rules gave no response past the 30s EvalLimits deadline — a stratify.rs debug_assert panic killed the DEBUG-build connection thread). Engine fix: the debug_assert removed, unknown predicate = legal empty relation; deadline abort pinned by exec.rs::unknown_predicate_leg_expired_deadline_aborts_with_e_exec_001. The translator's empty-predicate elimination workaround is REMOVED — unknown predicates go to the wire as-is.
+- F3 FIXED (was: a fully-ground body literal in a multi-literal rule tripped E-PLAN-003 after planner reordering; q0(X) :- p0(X), p1("c1","c2"). rejected). Engine fix: plan.rs shares_no_binding treats an empty bound set as "preceding legs were filters", so a ground probe is safe in any position (regression: plan.rs::ground_probe_leg_is_safe_in_any_position). The translator's ground-body-literal rejection is REMOVED; the structural cross-join guard for genuinely disconnected generators remains.
+- executeDatalog "first rule head" includes ground FACTS (a fact is a bodyless rule): the target predicate's first RULE must be hoisted above all facts or the response is the first fact's relation with empty bindings. (Wire-protocol dialect rule, NOT a bug — the translator keeps the hoist.)
 
 ## Comparison-mode statement
 
