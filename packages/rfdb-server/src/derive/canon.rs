@@ -115,7 +115,7 @@ fn check_float(f: f64) -> Result<(), CanonError> {
 }
 
 /// Append LEB128 (unsigned) of `x` to `out`.
-fn push_varint(out: &mut Vec<u8>, mut x: u64) {
+pub(crate) fn push_varint(out: &mut Vec<u8>, mut x: u64) {
     loop {
         let byte = (x & 0x7F) as u8;
         x >>= 7;

@@ -494,3 +494,11 @@ mod tests {
         );
     }
 }
+
+// ── §8 destination re-exports (rofl-fact-model.md §8, ledger round-007-pre C8) ──
+//
+// The crate-layering table assigns `TagV2` (and this tag module) to the future
+// `rfdb-facts` crate. Until that split, the backend-neutral `facts` module imports
+// the record-level tag through THIS module — its §8 destination — so the §8 rule-1
+// import-hygiene proxy (`facts/mod.rs` names no physical-store paths) stays honest.
+pub use crate::storage_v2::types::{TagV2, TX_OPEN};

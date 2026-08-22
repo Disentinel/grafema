@@ -1,0 +1,270 @@
+-- Round 007 (2026-08-22) — P2 actuals vs the expectations pre-registered in
+-- round-007-pre.rofl (own commit 31c74773, ahead of any implementation change).
+-- Assert-only, never retract. Every pre-registered hypothesis is confirmed or
+-- refined below with inlined evidence; refinements discovered DURING
+-- implementation are registered as deliberate calls C18-C21 (the round-006 F2
+-- precedent: registration in actuals with reason, no silent drift).
+--
+-- Evidence artifacts (commands run on the P2 worktree, branch rofl-v1):
+--   implementation (UNCOMMITTED at round-writing time, per the workflow order —
+--     commits follow review): packages/rfdb-server/src/facts/{mod.rs,lsm.rs,
+--     differential.rs} + registration/visibility touches only:
+--       $ git diff --stat   (excluding harness-report refresh)
+--         Cargo.lock +1, Cargo.toml +3 (smallvec), derive/canon.rs 1 line
+--         (push_varint fn → pub(crate) fn), derive/tag.rs +8 (§8-destination
+--         re-export, C8), lib.rs +1 (pub mod facts)
+--     ZERO storage_v2 files touched — H3's «no format-writer change» gate is
+--     satisfied by the strongest possible evidence: the diff contains no
+--     storage_v2 hunk at all.
+--   suite BEFORE (HEAD 6d87873b, then 31c74773 pre-reg commit):
+--     $ cargo test --lib   (package name is `rfdb`; the governance alias
+--       `-p rfdb-server` does not resolve — `error: package ID specification
+--       `rfdb-server` did not match any packages`; recorded verbatim)
+--     test result: ok. 1463 passed; 0 failed; 25 ignored; finished in 26.70s
+--   suite AFTER (implementation in tree, final state incl. the C22 repair):
+--     test result: ok. 1504 passed; 0 failed; 26 ignored; finished in 27.18s
+--     (+41 = the new facts tests; +1 ignored = the real-base differential;
+--     an intermediate state before the C22 conflict-class test was 1503/0/26)
+--   harness AFTER:
+--     $ node --experimental-strip-types packages/rofl-conformance/src/run.ts --seeds 120
+--     exit 0; tier-0: 120 seeds / 0 divergences, witness 325/325, whynot
+--     554/554; tier-1: GREEN 5 / RED 25 / DIVERGENCE 0 / HARNESS_GAP 0;
+--     run against the FINAL code state: run_id rofl-conformance-1787368155729,
+--     wallclock 17.0s (an identical earlier run mid-implementation:
+--     rofl-conformance-1787364797590; the machine report is byte-reproducible
+--     and both runs produced the SAME report sha)
+--     conformance-report.json sha256 =
+--       9e8cb9009844c44e17881e75276506e80a9fa547a96f524edd4ba21748dc682c
+--     tier-1 MEMBER×VERDICT set verified equal to rounds/round-005.report.json
+--     by json comparison (python, sorted (example, verdict) pairs → True);
+--     the only json diff vs the archived report is the subject gitSha field
+--     (f08e5d53 → 31c74773, the pre-registration commit itself).
+--   real base: fresh READ-ONLY copy of /home/dev/grafema/.grafema/graph.rfdb
+--     (543 MB, current.json mtime 2026-06-19) → /tmp/rofl-p2-real-base/
+--     graph.rfdb after lsof/pgrep showed no live server on the directory; the
+--     original was never opened by any P2 code (C15).
+
+-- ── H1 CONFIRMED: suite green, additive only ──
+found[m](exp_p2_suite_green, suite_1504_0_26_vs_baseline_1463_0_25_all_new_tests_in_facts_module).
+
+-- ── H2 CONFIRMED: harness verdicts byte-unchanged ──
+found[m](exp_p2_harness_verdicts_unchanged, tier0_120_0_tier1_5green_25red_members_equal_run_1787368155729).
+
+-- ── H3 CONFIRMED: zero on-disk byte changes ──
+-- git diff contains no storage_v2 hunk; the pre-P2 real base opens through P2
+-- code (LsmFactStore::open) and every legacy read result matches (H9 pairs);
+-- writes delegate to the EXISTING commit_batch (empty changed_files, additive).
+found[m](exp_p2_zero_format_change, no_storage_v2_hunk_pre_p2_base_reads_identically).
+
+-- ── H4 CONFIRMED: capability vector ──
+-- Eight per-flag tests, each named for its evidence anchor
+-- (facts::lsm::tests::sorted_runs_false_because_l0_unsorted_no_read_side_merge …
+-- reshard_false_because_no_code_and_shard_count_survives_clear) — all green;
+-- vector = {sorted_runs:F, prefix_scan:F, merge_operator:T, bulk_ingest:T,
+-- snapshot_isolation:T, as_of_tick:F, compression:F, reshard:F}.
+found[m](exp_p2_capability_vector_grounded, eight_flag_tests_green_vector_matches_7_4_own_lsm_column).
+
+-- ── H5 CONFIRMED: E-VAL boundary at assert_batch ──
+-- facts::lsm::tests::assert_batch_e_val_aborts_whole_batch_store_unchanged:
+-- i64-fitting BigInt (V1), non-minimal BigInt (V2) → E-VAL-001; -0.0, sNaN,
+-- payload-qNaN (V3) → E-VAL-002; each ALSO smuggled recursively inside a Term
+-- arg (inner code propagates); every abort leaves canonical_state_sha
+-- byte-identical (whole-batch abort pre-commit, good group + bad group).
+found[m](exp_p2_eval_boundary_at_assert_batch, five_violations_x_direct_and_term_nested_all_abort_sha_unchanged).
+
+-- ── H6 CONFIRMED: E-CAT-001 through declare ──
+found[m](exp_p2_ecat_via_declare, trait_declare_idempotent_and_conflicting_axes_rejected).
+
+-- ── H7 CONFIRMED: E-CAP-001 typed rejections ──
+-- supersede→"supersession", resolve_functional→"functional-resolution",
+-- compact(Some)→"per-predicate-compaction", assert_batch(persp≠main)→
+-- "perspectives", lone attr→"assertion-granularity", Reverse on reverse:None→
+-- "reverse-run"; all six tested, each detail names the capability, none
+-- panics, none silently no-ops (compact(None) delegates and succeeds in the
+-- same test, proving the rejection is targeted).
+found[m](exp_p2_ecap_typed_rejections, six_rejections_green_with_named_capabilities).
+
+-- ── H8 CONFIRMED: FactRow synthesis + fid golden ──
+-- synthesis test: one assertion/row; author←_source ("analyzer"/"enricher"),
+-- missing→$legacy; tick←_generation incl. string-typed "9"→9, missing→0; Bool
+-- tag; tx_created=0; tx_invalidated=TX_OPEN; _source/_generation absent as
+-- attrs; column:0 present as attr "0" (never !value-dropped); nested objects
+-- not attrs. fid GOLDEN VECTOR pinned twice: an independent byte assembly of
+-- the layout AND the literal hex — fid("main","node",[Id(1),Str("FUNCTION")])
+-- = LE bytes b0093490018cd3e0b28033a96109a92f
+-- (facts::tests::fid_golden_vector_pins_canon_input_layout).
+found[m](exp_p2_factrow_synthesis_lossless, synthesis_green_fid_golden_b0093490018cd3e0b28033a96109a92f).
+
+-- ── H9 CONFIRMED: the 12-pair differential ──
+-- Fixture variants (non-ignored, in cargo test --lib):
+--   facts::differential::differential_pairs_on_handcrafted_fixture (exhaustive
+--     probes; corpus: multi-type nodes incl. http:route, edge metadata,
+--     reserved-key metadata, column:0, $legacy records, empty names, nested
+--     objects),
+--   facts::differential::differential_pairs_on_generated_mixed_corpus
+--     (2000 nodes / 5000 edges, deterministic PRNG, 400+ sampled probe pairs),
+--   facts::differential::differential_pairs_survive_compaction (same answers
+--     and same sha across a FullMerge),
+--   facts::differential::write_commutativity_square (pair 11, both directions,
+--     closed by sha equality of the two stores),
+--   facts::differential::state_sha_deterministic_across_two_processes (pair 10
+--     cross-process: second OS process = the test binary re-invoked on the same
+--     durable dir; byte-equal hex),
+--   plus in-module: sha compact-invariance, sha write-variance, sha
+--     declaration-order-permutation invariance (names-not-ids §9.2).
+-- All green. Both sides run on the SAME pinned ReadSnapshot (adapter payload
+-- clone → BorrowedLsmStorageView); multiset comparison, orders never
+-- interleaved (C4 consulted).
+found[m](exp_p2_differential_12_pairs_green, fixture_differentials_green_in_ci).
+
+-- Real-base run (ignored test, executed once for this round):
+--   $ ROFL_P2_REAL_BASE=/tmp/rofl-p2-real-base/graph.rfdb \
+--     cargo test --release --lib facts::differential::differential_real_base -- --ignored --nocapture
+--   input: /tmp/rofl-p2-real-base/graph.rfdb, 567,405,250 bytes;
+--     current.json sha256 61393355df8b823c5418cbacf34cb586572f2a07e1a8e6fb10
+--     fbc9f5609d0446, db_config.json sha256 32cfc3442934ef8714e74e29b4806f36
+--     79116183830a114eb9ee4073d6d04bdc (copy of the 2026-06-19 base)
+--   FIRST run: FAILED at pair 9 with the REAL 92-vs-53 divergence → registered
+--     as finding + repair C22 below (the differential doing its job).
+--   FINAL run (winner-coherent projection + explained-exception accounting):
+--     test facts::differential::differential_real_base ... ok
+--     test result: ok. 1 passed; 0 failed; finished in 1400.40s (release)
+-- Digests (oracle facts for future rounds):
+--   pair1_nodes: 503404 rows, blake3
+--     8f4f2c1c7f8e9827fef4e4b3d5e2a2758fd40c91f6bf705cd0801683725f7d01
+--     (503,404 = the doc's MEASURED distinct node ids, §6.1 — exact match)
+--   pair2_by_type: 503404 rows, same blake3 as pair1 (winner-coherent)
+--   pair2_shadowed_duplicate_rows (§2.3 conflict class): 39
+--     (= EXACTLY the doc's MEASURED 39 duplicate-id conflicts, §2.3/§6.1)
+--   pair3_edges: 1107838 rows, blake3
+--     23cb10700ee902bade4b690251ab6704eee71a89e4f1e2717c66e1dece384825
+--     (1,107,838 = the doc's MEASURED edge records — exact match)
+--   pair45_probes: 1002 sampled (id, type) pairs, blake3
+--     c1b4c07c965b06065b07751ef5fe406b3f60a29f3b355332ace3ce6e75643477
+--   pair7_attrs (1000 sampled ids): 7850 rows, blake3
+--     3ae2142dd149fdb5a369b10450f5abe0aa138ad4dfb082a217a4dd84adb16c0f
+--   pair7_shadowed_duplicate_rows: 0 (no conflicted id in the sampled window)
+--   pair9_counts: nodes 503404 / edges 1107838 / 60 node types, blake3
+--     6d2fb3c8cd2894c8e66013efdaa40c77717ed3440e5704794c83b2e59bf57745
+--     (60 distinct node types = the doc's MEASURED count, §6.2)
+--   pair10_state_sha (the pre-P2 base through P2 code):
+--     ed520009c75683b4343fba3bac74f7e955ddb7e6c9984f89fd5ee14504f82bea
+found[m](exp_p2_differential_12_pairs_green, real_base_run_digests_recorded_above).
+
+-- ── H10 CONFIRMED: live_filter is the real anti-join ──
+-- Passes every projected row (count equality on the full 5-relation run, incl.
+-- the real base); DROPS a hand-constructed row with tx_invalidated != TX_OPEN
+-- through the same code path (cache rule 1); the supersedes build side is the
+-- actual projection call (provably empty in P2), not a hardcoded empty set.
+found[m](exp_p2_live_filter_real_antijoin, identity_on_p2_rows_drop_on_cached_dead_row).
+
+-- ── H11 CONFIRMED: hygiene gates ──
+-- facts::hygiene_tests::facts_mod_references_no_storage_layer (include_str!
+-- self-scan) and ::no_perspective_id_literal_outside_facts (walks src/
+-- excluding facts/) both green; PerspectiveId field is private (foreign
+-- construction is a compile error); the perspective parameter is on every
+-- trait read; Snapshot carries no perspective field.
+found[m](exp_p2_hygiene_gates_mechanical, both_grep_tests_green_plus_type_level_defense).
+
+-- ── Deliberate calls registered during implementation ──
+
+-- C18: `incoming` COLUMN-COORDINATE TRANSPOSITION. The P1 catalog keys
+-- incoming as [1,0]/[0,1] — written in EDGE column coordinates (src=0, dst=1;
+-- the with_base_relations comment says incoming IS edge's reverse-run view,
+-- folded into edge's reverse SortOrder at P3). The P2 projection serves
+-- incoming with the §6.2-normative tuple (dst, src, type); a literal reading
+-- of [1,0] against THAT tuple would make prefix_scan(incoming, Forward,
+-- [Id(dst)]) probe the src column — violating equivalence pair 5. CALL: the
+-- adapter transposes incoming's declared vectors into its own tuple
+-- coordinates (Forward = (dst,src)-major, Reverse = (src,dst)-major); catalog
+-- untouched; documented at the transposition site; disappears entirely at
+-- P3's fold. Evidence the call is right: pairs 3b/5/5b green on fixtures AND
+-- the real base.
+claim_of[a](c18_incoming_edge_coordinate_transposition).
+ground[a](c18_incoming_edge_coordinate_transposition, p1_decl_written_in_edge_coords_pair5_defines_the_truth).
+
+-- C19: E-STORE-001 FOR DELEGATED BACKEND FAILURES. §7.2 leaves the Result
+-- error type unspecified and the doc taxonomy has no code for an I/O/commit
+-- failure PROPAGATED from the store layer; mapping such failures onto
+-- E-CAP-001/E-CAT-001 would lie about their nature, and panicking would
+-- violate I5. CALL: FactStoreError{code:"E-STORE-001"} wraps GraphError from
+-- delegated operations ONLY (commit/compact/flush/durability/open); every
+-- FactStore-level REJECTION still uses exactly the four pre-registered codes.
+claim_of[a](c19_e_store_001_delegated_failures_only).
+ground[a](c19_e_store_001_delegated_failures_only, taxonomy_has_no_backend_failure_code_mislabeling_would_lie).
+
+-- C20: C13 REFINED — stats computed at FIRST OBSERVATION, not construction.
+-- Construction-time compute would observe the pre-commit empty state for any
+-- adapter that receives writes after opening (exactly the fixture pattern) and
+-- would charge every open() the full attr projection even if stats are never
+-- read. CALL: the base-five live_facts/live_asserts are computed ONCE, lazily,
+-- at the first stats() call (OnceLock), from a snapshot taken at that moment;
+-- same sentinel (distinct/max_fanout 0, updated_at_tx 0), same «refresh = new
+-- adapter» rule, still nothing consumes stats in P2. The pre-registered
+-- "construction-time" wording is superseded by this registration.
+claim_of[a](c20_stats_first_observation_refines_c13).
+ground[a](c20_stats_first_observation_refines_c13, construction_time_would_observe_pre_commit_empty_state).
+
+-- C21: P2 WRITE VOCABULARY IS Str-VALUED attrs. An attr asserted with an Int/
+-- Float/BigInt/Term VALUE cannot round-trip through today's metadata blob:
+-- the read projection stringifies scalars (matching today's attr dispatch), so
+-- a written Int(5) would read back Str("5") — a DIFFERENT fid. Silent lossy
+-- coercion is forbidden (I5), so non-Str attr values are rejected E-CAP-001
+-- ("record-vocabulary") together with non-base predicates and malformed
+-- record shapes. Numeric metadata written by the LEGACY path still projects
+-- (stringified) on read — the restriction is write-side only, exactly the
+-- asymmetry today's format imposes. P6's converter (typed columns) lifts it.
+claim_of[a](c21_write_attrs_str_only_no_lossy_coercion).
+ground[a](c21_write_attrs_str_only_no_lossy_coercion, int_would_read_back_as_str_different_fid_silent_loss_forbidden).
+
+-- C22: DIFFERENTIAL FINDING — the §2.3 conflict class SPLITS today's read
+-- paths, and the FactStore projection resolves it winner-coherently. First
+-- real-base run FAILED at pair 9 with a REAL divergence:
+--   assertion `left == right` failed: 9: count of type 'EXTERNAL_FUNCTION'
+--     left: 92  right: 53          (left = type probe, right = count_by_type_at)
+-- 92 − 53 = 39 = EXACTLY the §2.3-measured duplicate-id conflicts
+-- (GLOBAL_DEFINITION winner shadowing EXTERNAL_FUNCTION). Mechanism read from
+-- code: find_nodes_at(Some(ty)) / the executor's scan_nodes_by_type filter by
+-- type BEFORE newest-wins dedup (a non-matching newer record never enters
+-- `seen`, so the shadowed older record leaks); count_by_type_at dedups BEFORE
+-- counting (winner types only). Two production read paths disagree on the same
+-- snapshot — the doc's «сегодня выбор делает физика» made mechanically visible
+-- for the first time by this differential.
+-- CALL: the fact relation must be COHERENT — §7.2 defines prefix_scan as a
+-- WINDOW of sorted_run, and sorted_run projects newest-wins winners — so the
+-- adapter's type probe resolves candidates through the winner point path and
+-- drops shadowed records. The differential asserts fact ≡ oracle MINUS
+-- individually-verified shadowed rows (winner type ≠ probed type), records the
+-- shadowed total (0 on conflict-free fixtures), and pair 9 stays STRICT
+-- against count_by_type_at (winner counts on both sides). Pair 7c gets the
+-- same accounting against nodes_by_attr. The class is pinned ON A FIXTURE by
+-- facts::differential::duplicate_id_conflict_class_is_coherent_and_explained
+-- (two commits, one id, two types: window coherence + oracle leak + strict
+-- winner counts + explained differential). Real resolution POLICY (author
+-- priority / max tick / min fid + conflict/5 facts) remains §10.4 P5 — the P2
+-- winner rule is exactly today's storage physics (newest-wins), not a new
+-- policy, so equivalence with the engine's point reads is preserved.
+claim_of[a](c22_conflict_class_splits_read_paths_winner_coherent_projection).
+ground[a](c22_conflict_class_splits_read_paths_winner_coherent_projection, real_base_92_vs_53_equals_39_documented_conflicts_mechanism_read_from_code).
+
+-- ── P2 gate checklist (against the pre-registered gate) ──
+-- (1) trait+Capabilities §7.2/§7.3 shapes (persp on every read; FactRow the
+--     only read unit; C7 Result envelope registered pre-implementation);
+--     own-LSM adapter over today's format; zero on-disk changes — CONFIRMED.
+-- (2) E-VAL at assert_batch, E-CAT through declare, E-CAP typed everywhere,
+--     no silent failure, no fake path (live_filter is the real anti-join over
+--     provably-empty supersedes; supersede/functional loudly deferred) —
+--     CONFIRMED.
+-- (3) 12-pair differential green on fixtures in CI + real base with digests
+--     above; write square commutes both directions — CONFIRMED.
+-- (4) capability vector per §7.4 with per-flag evidence tests — CONFIRMED.
+-- (5) suite 1504/0/26 (≥1463/0/25), harness exit 0, tier-0 120/0, tier-1
+--     5 GREEN / 25 RED unchanged — CONFIRMED.
+-- (6) ledger discipline: round-007-pre in own commit 31c74773 BEFORE any
+--     implementation; this file records actuals + C18-C21 — CONFIRMED.
+-- Explicitly OUT (loudly deferred, not silently absent): planner consumption
+-- of capabilities/stats (P3), assertion physics/supersession/live data in
+-- live_filter (P4), Functional resolution (P5), per-predicate segments +
+-- subject routing (P6), rfdb-facts crate split + RocksDB (P8).
+claim_of[a](p2_gate_complete).
+ground[a](p2_gate_complete, all_six_gate_clauses_confirmed_with_evidence_above).

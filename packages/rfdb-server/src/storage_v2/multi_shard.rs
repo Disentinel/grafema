@@ -1301,6 +1301,73 @@ impl MultiShardStore {
         results
     }
 
+    /// Point lookup of one live edge key `(src, dst, edge_type)` resolved
+    /// through `snap`, NEWEST record first (L0 newest→oldest, then L1; bloom +
+    /// zone-map short-circuits; tombstone check) — the edge twin of
+    /// [`Self::get_node_at`], applying the same winner rule
+    /// [`Self::iter_all_edges_at`] uses when deduplicating a re-asserted key.
+    /// The keyed scans above (`get_outgoing_edges_at` / `get_incoming_edges_at`)
+    /// deliberately mirror the live shard's forward L0 order and therefore
+    /// surface the OLDEST record of a re-asserted key; callers that need the
+    /// winning record (the facts-layer projection) resolve candidates through
+    /// this point path.
+    pub fn get_edge_at(
+        &self,
+        snap: &ReadSnapshot,
+        src: u128,
+        dst: u128,
+        edge_type: &str,
+    ) -> Option<EdgeRecordV2> {
+        // Step 0: tombstone check (definitive).
+        if snap.tombstones.contains_edge(src, dst, edge_type) {
+            return None;
+        }
+
+        // Step 1: L0 segments newest→oldest (descriptors are oldest-first).
+        for desc in snap.edge_segments.iter().rev() {
+            let found = self.with_edge_segment(desc, |seg| {
+                if !seg.maybe_contains_src(src) || !seg.contains_edge_type(edge_type) {
+                    return None;
+                }
+                for j in 0..seg.record_count() {
+                    if seg.get_src(j) == src
+                        && seg.get_dst(j) == dst
+                        && seg.get_edge_type(j) == edge_type
+                    {
+                        return Some(seg.get_record(j));
+                    }
+                }
+                None
+            });
+            if let Some(Some(rec)) = found {
+                return Some(rec);
+            }
+        }
+
+        // Step 2: L1 segments (oldest, compacted).
+        for desc in snap.l1_edge_segments.iter() {
+            let found = self.with_edge_segment(desc, |seg| {
+                if !seg.maybe_contains_src(src) || !seg.contains_edge_type(edge_type) {
+                    return None;
+                }
+                for j in 0..seg.record_count() {
+                    if seg.get_src(j) == src
+                        && seg.get_dst(j) == dst
+                        && seg.get_edge_type(j) == edge_type
+                    {
+                        return Some(seg.get_record(j));
+                    }
+                }
+                None
+            });
+            if let Some(Some(rec)) = found {
+                return Some(rec);
+            }
+        }
+
+        None
+    }
+
     /// All live edges resolved through `snap`. Mirrors `Shard::iter_all_edges`
     /// (L0 newest→oldest, then L1; dedup by key; tombstone filter) across all
     /// shards, minus the write buffer.

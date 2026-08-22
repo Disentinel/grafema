@@ -1,0 +1,202 @@
+-- Round 008 (2026-08-22) — P2 post-review repairs. The adversarial review of
+-- the round-007 implementation returned 1 major + 7 minor findings; every one
+-- is either repaired here (R1-R6) or closed with an explicit reason. Repairs
+-- are registered AS repairs (assert-only, never retract): round-007's actuals
+-- stand as the record of the pre-review state; this round records what the
+-- review changed and the final re-verified numbers.
+--
+-- Review findings → dispositions:
+--   MAJOR  path-dependent edge Assertion provenance ..... REPAIRED (R1)
+--   minor  duplicate attr fid on privileged blob keys .... REPAIRED (R2)
+--   minor  no tombstone coverage in the differential ..... REPAIRED (R3)
+--   minor  stats trait-doc drift + sha panic contract .... REPAIRED (R4)
+--   minor  review-environment integrity .................. VERIFIED (R5)
+--   minor  round-007 gate clause stale suite count ....... REPAIRED (R6, 1503→1504
+--            in the then-uncommitted round-007.rofl — an edit before first commit,
+--            not a retraction of committed ledger)
+--   minor  review scratch file in the worktree ........... ALREADY GONE (the review
+--            agent deleted tests/rofl_p2_review_probe.rs; verified absent)
+--   minor  harness report files restored by reviewer ..... RE-RUN + restored (R5)
+
+-- ── R1 (MAJOR): edge fast paths made winner-coherent — C22's edge sibling ──
+-- The review empirically demonstrated (scratch integration probe): after two
+-- commits of the SAME edge key (1,2,CALLS) with authors writer-v1/tick 1 then
+-- writer-v2/tick 9, `sorted_run(edge)` projected writer-v2/9 while
+-- `prefix_scan(edge, [Id(1)])` projected writer-v1/1 — the SAME fid with two
+-- different Assertions depending on the read path. Mechanism (read from code):
+-- `get_outgoing_edges_at`/`get_incoming_edges_at` scan L0 in FORWARD descriptor
+-- order («matching the live shard») so the OLDEST record of a re-asserted key
+-- wins their dedup, while `iter_all_edges_at` scans L0 in REVERSE so the NEWEST
+-- wins. Exactly the §2.3-family read-path split C22 fixed for nodes, unapplied
+-- to edges because the differential compared only (src,dst,type) reprs and no
+-- fixture re-committed an edge key.
+-- REPAIR (mirrors the C22 treatment):
+--   * storage_v2/multi_shard.rs gains `get_edge_at(snap, src, dst, type)` — a
+--     newest-wins, tombstone-checked, bloom-gated POINT lookup, the edge twin
+--     of `get_node_at` (which the node repair already leaned on). READ-ONLY
+--     addition: no writer/format code touched. This refines round-007 H3's
+--     evidence wording («no storage_v2 hunk at all») — the GATE clause was and
+--     remains «no format-writer changes», which still holds: the hunk is
+--     +67 lines of read path, `git diff` shows no writer/segment/manifest hunk.
+--   * facts/lsm.rs `edge_winner`: all four keyed edge/incoming fast paths
+--     re-resolve every deduped candidate through the point path before
+--     synthesis, so one fid always yields one Assertion (prefix_scan is a
+--     WINDOW of sorted_run at FactRow level, provenance included).
+--   * differential upgraded: `read_differential` now builds a full-run
+--     fid → (author, tick) map over ALL FIVE relations and checks EVERY keyed
+--     probe (pairs 2/4/5/6/7) against it — cross-path provenance can never go
+--     structurally unobserved again.
+--   * fixtures: facts::lsm::tests::edge_provenance_is_path_independent_after_reassert
+--     (the review's exact reproduction, all four keyed paths) and
+--     facts::differential::differential_pairs_after_edge_reassert (full battery
+--     over a re-asserted key, plus sha-invariance across FullMerge compaction —
+--     compaction's own dedup keeps the newest record, verified by sha equality).
+--   * MUTATION-TESTED: with `edge_winner` removed from the forward fast path,
+--     both new tests FAIL (0 passed / 1 failed each); with it restored, green.
+-- Note inherited legacy-write behavior surfaced while building the repro: the
+-- delegated write path (`upsert_edges`) routes an edge to its SOURCE node's
+-- shard and SILENTLY SKIPS edges whose source node is unknown to the store
+-- (tracing::warn only). P2's assert_batch inherits this by delegation — a
+-- FactGroup::Edge for a never-committed src commits Ok but stores nothing.
+-- Both write paths (legacy and fact) share the behavior identically, so the
+-- commutativity square is unaffected; registered here so the P6 converter (and
+-- any pre-P6 consumer) knows the write precondition: edge groups require their
+-- src node to exist. Today's producers always satisfy it (nodes commit with
+-- their edges).
+claim_of[a](r1_edge_fast_paths_winner_coherent_c22_sibling).
+ground[a](r1_edge_fast_paths_winner_coherent_c22_sibling, review_repro_writer_v1_vs_v2_same_fid_mechanism_l0_scan_order_split).
+
+-- ── R2: privileged blob keys excluded from the attr projection ──
+-- attr_rows_for pushed attr(id,'name',X) from the record COLUMN and again from
+-- a metadata-blob 'name' key (RESERVED_META_KEYS covered only _source/
+-- _generation) — an equal-value collision minted the SAME fid twice in one run
+-- (violating §2.2 «no duplicates by construction», double-counting stats() and
+-- canonical_state_sha), and pair 7 was structurally blind because its expected
+-- set used the identical double-push rule. Legacy blobs DO carry these keys
+-- (the JS reader's _parseNode strips type/id/name/file/exported on read for
+-- exactly this reason).
+-- REPAIR: COLUMN_META_KEYS = {name, file, semantic_id} — blob copies are
+-- skipped; the record columns are authoritative, which is today's dispatch
+-- precedence in evidence: `attr_to_query`/`snapshot_nodes_by_attr` map
+-- name/file onto the record-column filter slots (storage_glue.rs), the
+-- executor's `attr` builtin serves them from `first_class_attr` COLUMNS
+-- (builtin.rs), and the JS surface strips the blob copies on parse. The
+-- differential's pair-7 expected set applies the same precedence (grounded in
+-- those dispatch sites, no longer a mirror of the implementation's own loop),
+-- and the handcrafted corpus gains node 66 whose blob carries an EQUAL 'file'
+-- copy and DIFFERING 'name'/'semantic_id' copies; the unit fixture
+-- facts::lsm::tests::attr_blob_collision_with_column_is_single_fact pins
+-- single-row-per-fid + column-wins for both variants and unique fids across
+-- the full attr run. Scope note: blob keys OUTSIDE the column set (e.g. a blob
+-- 'type'/'id'/'exported') still project as attr facts — they mint no duplicate
+-- fid (no column-side push exists for them) and match the pair-7 oracle
+-- definition; the deeper multi-surface disagreement (attr=columns vs
+-- node_attr=blob-verbatim vs nodes_by_attr=mixed) is today's storage reality,
+-- owned by the P6 converter's vocabulary, not projectable-away in P2.
+claim_of[a](r2_column_authoritative_attr_projection_no_duplicate_fids).
+ground[a](r2_column_authoritative_attr_projection_no_duplicate_fids, dispatch_precedence_read_from_attr_to_query_and_first_class_attr).
+
+-- ── R3: tombstone / delete-then-re-add differential coverage ──
+-- Every fixture commit was additive (changed_files = []); tombstoned records,
+-- delete-then-re-add of the same id, and tombstoned-edge interplay were only
+-- incidentally covered by the one-shot real-base run (weak by construction:
+-- both sides share the tombstone-checking code).
+-- REPAIR: facts::differential::differential_pairs_after_tombstone_and_readd —
+-- commit the corpus, reanalyze a/f.js (non-empty changed_files: nodes 11/22 +
+-- their outgoing edges tombstoned), re-add id 11 with a DIFFERENT type
+-- (FUNCTION→METHOD) and fresh provenance + a new edge, then: explicit probes
+-- (22 gone; 11 carries the re-added type AND the re-added record's
+-- author/tick; 11→22 dead; 11→44 live), the oracle-leak pin (the re-added
+-- id's OLD record leaks into scan_nodes_by_type — its id was UN-tombstoned by
+-- the re-add — while count_by_type_at and the fact side agree FUNCTION is
+-- extinct), the FULL 12-pair battery across the tombstone generation, sha
+-- moved by the tombstone commit (truth) and invariant across a subsequent
+-- FullMerge (physics). Runs non-ignored in cargo test --lib.
+claim_of[a](r3_tombstone_and_readd_pinned_at_fixture_level).
+ground[a](r3_tombstone_and_readd_pinned_at_fixture_level, non_empty_changed_files_battery_plus_untombstoned_old_record_leak_pin).
+
+-- ── R4: doc drift + panic contract made consistent ──
+-- (a) FactStore::stats trait doc said «construction-time snapshot counts»
+-- while the implementation (and C20, which refines C13) computes at FIRST
+-- stats() observation — the trait doc now states the first-observation
+-- semantics. (b) canonical_state_sha's expect() on a foreign snapshot is now
+-- CONTRACTUAL in the trait doc: a foreign backend's snapshot is a programming
+-- error, and unlike get_fact/tuple (whose None legitimately means «absent
+-- fact»), a state sha has no honest degraded answer — returning anything would
+-- be a wrong hash presented as right. The panic site carries the same note.
+claim_of[a](r4_stats_doc_and_sha_panic_contract_aligned).
+ground[a](r4_stats_doc_and_sha_panic_contract_aligned, trait_docs_state_first_observation_and_contractual_panic).
+
+-- ── R5: environment integrity + regression gates re-run on a held tree ──
+-- The review observed a transient foreign src/main.rs (0 bytes, untracked)
+-- during its window and a 1505-count first run. At repair time: the file is
+-- absent, `lsof +D` on the worktree shows ONLY this session's build processes
+-- (the other live claude session is attached to /home/dev/grafema, not this
+-- worktree), and the gates were re-run on the held tree:
+--   $ cargo test --lib            (in packages/rfdb-server; package name `rfdb`)
+--   test result: ok. 1508 passed; 0 failed; 26 ignored; finished in 26.66s
+--     (+4 over round-007's 1504: the two R1 fixtures, the R2 fixture, the R3
+--     battery; the known-flaky test_commit_batch_performance_scaling green in
+--     the full run)
+--   $ node --experimental-strip-types packages/rofl-conformance/src/run.ts --seeds 120
+--     (against a freshly rebuilt debug rfdb-server from the FINAL code state)
+--   exit 0; tier-0 120 seeds / 0 divergences (witness 325/325, whynot 554/554);
+--   tier-1 GREEN 5 / RED 25 / DIVERGENCE 0 / HARNESS_GAP 0; oracle 30/30;
+--   conformance-report.json sha256 =
+--     9e8cb9009844c44e17881e75276506e80a9fa547a96f524edd4ba21748dc682c
+--     (byte-identical to the round-007 record — verdicts unchanged), after
+--   which the three generated report files were restored to their committed
+--   content per the repo convention (the report is byte-reproducible).
+-- No new compiler warnings from src/facts or the multi_shard hunk (all lib
+-- warnings pre-existing, verified by --> path listing).
+claim_of[a](r5_exclusive_hold_and_gates_rerun).
+ground[a](r5_exclusive_hold_and_gates_rerun, lsof_only_own_processes_suite_1508_0_26_harness_sha_identical).
+
+-- ── Real-base differential RE-RUN with the repaired code ──
+-- The R1/R2 repairs change what the differential asserts (provenance
+-- coherence; column-authoritative attrs), so the one-shot real-base evidence
+-- was re-taken on the same READ-ONLY /tmp copy (567,405,250 bytes, current.json
+-- sha unchanged from round-007):
+--   $ ROFL_P2_REAL_BASE=/tmp/rofl-p2-real-base/graph.rfdb \
+--     cargo test --release --lib facts::differential::differential_real_base -- --ignored --nocapture
+--   test facts::differential::differential_real_base ... ok
+--   test result: ok. 1 passed; 0 failed; finished in 1362.71s (release)
+-- EVERY per-pair digest is byte-identical to the round-007 record — the
+-- repairs changed no real-base result multiset — while the run now ALSO
+-- passes the new cross-path provenance checks on all 1002 sampled keyed
+-- probes and the column-authoritative attr rule:
+--   pair1_nodes:  503404 rows, blake3 8f4f2c1c…5f7d01   (= round-007)
+--   pair2_by_type: 503404 rows, same blake3 (winner-coherent)
+--   pair2_shadowed_duplicate_rows (§2.3): 39            (= round-007)
+--   pair3_edges:  1107838 rows, blake3 23cb1070…384825  (= round-007)
+--   pair45_probes: 1002 pairs, blake3 c1b4c07c…643477   (= round-007)
+--   pair7_attrs (1000 sampled ids): 7850 rows, blake3 3ae2142d…adb16c0f
+--     (= round-007: no sampled blob carried a colliding privileged key)
+--   pair7_shadowed_duplicate_rows: 0                    (= round-007)
+--   pair9_counts: nodes 503404 / edges 1107838 / 60 types, blake3
+--     6d2fb3c8…bf57745                                  (= round-007)
+--   pair10_state_sha: ed520009c75683b4343fba3bac74f7e955ddb7e6c9984f89fd5ee14504f82bea
+--     (= round-007 — the pre-P2 base through the REPAIRED P2 code yields the
+--     byte-identical canonical state sha: zero-format-change re-verified)
+claim_of[a](r_realbase_rerun_with_repaired_differential).
+ground[a](r_realbase_rerun_with_repaired_differential, digests_recorded_above).
+
+-- ── P2 gate re-check after repairs ──
+-- (1) trait+Capabilities shapes unchanged by the repairs; zero on-disk byte
+--     changes still holds (the one storage_v2 hunk is a read-only point
+--     lookup; no format-writer hunk; the pre-P2 real base re-opened and
+--     re-verified through the repaired code) — CONFIRMED.
+-- (2) E-VAL/E-CAT/E-CAP boundaries untouched by the repairs; the repaired
+--     read paths remove the last incoherent (silently path-dependent) surface —
+--     CONFIRMED.
+-- (3) 12-pair differential green on fixtures in CI (now including re-assert,
+--     tombstone/re-add, and cross-path provenance) and on the re-run real
+--     base with digests above — CONFIRMED.
+-- (4) capability vector unchanged, per-flag tests green — CONFIRMED.
+-- (5) suite 1508/0/26 (≥1463/0/25), harness exit 0, tier-0 120/0, tier-1
+--     5 GREEN / 25 RED byte-identical report — CONFIRMED.
+-- (6) ledger: round-007-pre committed alone (31c74773) before implementation;
+--     round-007 actuals + this repair round committed with the implementation —
+--     CONFIRMED.
+claim_of[a](p2_gate_complete_after_review_repairs).
+ground[a](p2_gate_complete_after_review_repairs, all_six_clauses_reconfirmed_on_repaired_tree).
