@@ -242,11 +242,14 @@ pub(crate) fn evaluate_with_materialize_shared(
         BindingTable::from_program(&program, crate::storage_v2::types::BOOLTAG_SEMIRING_ID)?;
     let strat = stratify(&program)?;
     let rules = program.rules();
-    // The engine-resident predicate catalog (§3.1, P1): one per evaluation context,
-    // constructed at THE derive entry with the five base relations and populated with
-    // every rule-head name at plan construction. Observational this phase — nothing
-    // reads it back yet (P3's dispatch migration does); dropping it here is the P1
-    // residency decision, not an omission.
+    // The engine-resident predicate catalog (§3.1, P1 residency / P3 consumption):
+    // one per evaluation context, constructed at THE derive entry with the five base
+    // relations. Since P3 it is CONSUMED, not merely populated: registration is
+    // strict (`E-CAT-002` on an arity conflict — rule heads, §3.1 open-space body
+    // names, base-shadow heads), the base decls carry the run's live stats, and
+    // planning resolves base-leg dispatch and estimation through it
+    // (`plan_program_with_catalog`). Dropping it at end of evaluation is the P1
+    // per-evaluation-residency decision, not an omission.
     let mut catalog = catalog::PredicateCatalog::with_base_relations();
     let plans = plan::plan_program_with_catalog(&rules, &strat, &stats, &mut catalog)?;
     let mut executor = Executor::<BoolTag>::with_limits(view, limits, DEFAULT_ITERATION_CAP)

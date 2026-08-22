@@ -61,13 +61,44 @@ use rayon::prelude::*;
 use crate::datalog::{Atom, EvalLimits, Rule, Term, Value};
 
 use super::builtin::{self, ArgSpec, ArgValue, Batch};
+use super::catalog::BaseDispatch;
 use super::increment::{self, BaseDelta};
 use super::events::{EventLog, PredicateCount, PredicateDelta, StratumEntry};
 use super::plan::{LegSource, RulePlan};
 use super::stratify::Stratification;
-use super::storage_glue::StorageView;
+use super::storage_glue::{EdgeOrder, StorageView};
 use super::tag::{IdempotentTag, Tag};
 use super::value::fact_id;
+
+/// P3 (rofl-fact-model.md §3.4 normative 1): the executor-side resolution of a
+/// plan-time [`BaseDispatch`] key into serving physics — the registry EVAL entry
+/// (an IMPLEMENTATION key, not the program surface: `type` legs arrive already
+/// resolved to node's PredicateId, `incoming` to edge's id + `SortOrder::Reverse`)
+/// and the storage scan order. The ONE place the executor turns the
+/// `(PredicateId, SortOrder)` half of the generalized dispatch key into code;
+/// every join phase adds the leg's bound-column mask on top.
+fn base_dispatch_parts(dispatch: &BaseDispatch) -> (&'static str, EdgeOrder) {
+    use crate::derive::catalog::PhysStrategy;
+    use crate::facts::SortOrder;
+    let order = match dispatch.order {
+        SortOrder::Forward => EdgeOrder::Forward,
+        SortOrder::Reverse => EdgeOrder::Reverse,
+    };
+    let eval = match (dispatch.strategy, dispatch.arity, dispatch.order) {
+        (PhysStrategy::Adjacency, 3, SortOrder::Forward) => "edge",
+        (PhysStrategy::Adjacency, 3, SortOrder::Reverse) => "incoming",
+        (PhysStrategy::Attribute, 2, _) => "node",
+        (PhysStrategy::Attribute, 3, _) => "attr",
+        // Open-space physics never classify as `LegSource::Base` (P3
+        // plan.rs::classify resolves Base ONLY through the catalog's base
+        // dispatch map, which holds exactly the four physical shapes above).
+        _ => unreachable!(
+            "open-space physics ({:?}/{}) cannot be a plan-resolved base leg",
+            dispatch.strategy, dispatch.arity
+        ),
+    };
+    (eval, order)
+}
 
 /// The default semi-naive iteration cap (spec §7): a stratum that has not saturated after
 /// this many Δ rounds is rejected with [`ExecCode::IterationCap`] (`E-EXEC-002`). For an
@@ -1601,7 +1632,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         let lead_delta = self.delta_view.is_some() && match delta_leg {
             Some(d) if d < n => match &clause.plan.legs[d].source {
                 // Base-delta seed (incremental insertion/deletion): the delta view is ΔB, small.
-                LegSource::Base(_) => true,
+                LegSource::Base { .. } => true,
                 // Recursive semi-naive Δ leg: lead only when this round's Δ is small.
                 LegSource::Derived { name, .. } => relations
                     .get(name)
@@ -1677,7 +1708,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             // read ONLY the asserted base delta `ΔB` via the delta view, so this clause
             // variant derives exactly the facts that use a new base fact. Positive-only —
             // a negated leg is never a delta leg (negation is stratified strictly below).
-            LegSource::Base(_) if use_delta && !leg.literal.is_negative() => {
+            LegSource::Base { .. } if use_delta && !leg.literal.is_negative() => {
                 match self.delta_view {
                     Some(dv) => Ok(self.join_base_against(leg, rows, dv)),
                     // A delta-base leg with no delta view installed is a caller error; the
@@ -1689,7 +1720,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             // Base relations and builtins are served by the derive registry eval body, which
             // reads sorted runs / typed scans through the StorageView. Driving it per
             // partial row is the nested-loop join over the EDB/Total leg.
-            LegSource::Base(_) | LegSource::Builtin(_) => Ok(self.join_extensional(leg, rows)),
+            LegSource::Base { .. } | LegSource::Builtin(_) => Ok(self.join_extensional(leg, rows)),
         }
     }
 
@@ -1706,10 +1737,14 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         view: &dyn StorageView,
     ) -> Vec<BindRow> {
         let atom = leg.literal.atom();
-        let name = atom.predicate();
-        let lookup_name = if name == "type" { "node" } else { name };
-        let Some(def) = builtin::lookup(lookup_name) else {
-            // An unported predicate yields no rows for a positive leg (never a silent pass).
+        // P3: the eval resolves from the plan-time dispatch key — the `type`→node
+        // string alias and the `incoming` name-match died at plan time. Only Base
+        // legs reach here (`apply_leg` routes); a non-Base leg contributes no rows
+        // (never a silent pass).
+        let Some(def) = (match &leg.source {
+            LegSource::Base { dispatch, .. } => builtin::lookup(base_dispatch_parts(dispatch).0),
+            _ => None,
+        }) else {
             return Vec::new();
         };
         let mut out: Vec<BindRow> = Vec::new();
@@ -1953,16 +1988,39 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         rows: Vec<BindRow>,
     ) -> Vec<BindRow> {
         let atom = leg.literal.atom();
-        let name = atom.predicate();
-        // `type` is an alias of `node` in the registry; both resolve to the node builtin.
-        let lookup_name = if name == "type" { "node" } else { name };
         let negated = leg.literal.is_negative();
+        // P3 (§3.4 normative 1): a base leg's serving physics come from the
+        // plan-resolved `(PredicateId, SortOrder)` dispatch key — the `type`→node
+        // string alias and the `incoming` name-match died at plan time. Builtin
+        // legs keep their registry name key (functions are a name registry, not
+        // predicates in the catalog).
+        let dispatch: Option<BaseDispatch> = match &leg.source {
+            LegSource::Base { dispatch, .. } => Some(*dispatch),
+            _ => None,
+        };
+        let lookup_name: &str = match &dispatch {
+            Some(d) => base_dispatch_parts(d).0,
+            None => atom.predicate(),
+        };
         let Some(def) = builtin::lookup(lookup_name) else {
-            // Not a derive-registered builtin (e.g. a query-engine-shared function like `path`). Gate A
-            // ports the registry set; anything else yields no rows for a positive leg
-            // rather than a silent pass, so an unported predicate surfaces as an empty
-            // relation (never a crash). A NEGATED unported predicate is a vacuous anti-join
-            // (nothing exists to negate), so every row survives unchanged.
+            // Reachable ONLY for the closed query-engine-shared function set the
+            // planner accepts without a registry entry (`path` / `parent_function` /
+            // `resolved_import`): a positive leg is an empty relation, a negated one
+            // a vacuous anti-join. An UNREGISTERED predicate can no longer reach
+            // here: P3 plan-time classification is total over registered names and
+            // aborts with E-CAT-002 otherwise, and a §3.1 open-space (body-only)
+            // predicate is classified Derived and served by `join_derived`'s
+            // missing-relation arm — the pre-P3 silently-empty/vacuous-negation
+            // class for arbitrary unknown names is dead (round-009 H3).
+            debug_assert!(
+                matches!(
+                    atom.predicate(),
+                    "path" | "parent_function" | "resolved_import"
+                ),
+                "unregistered predicate '{}' reached join_extensional — the E-CAT-002 \
+                 plan gate must reject it",
+                atom.predicate()
+            );
             return if negated { rows } else { Vec::new() };
         };
 
@@ -1979,7 +2037,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         // contributes membership and binds nothing (BoolTag), so a surviving row is
         // returned unchanged.
         if negated {
-            if let Some(membership) = self.build_anti_join_set(name, atom) {
+            if let Some(membership) = self.build_anti_join_set(&leg.source, atom) {
                 let view = self.view;
                 let eval = def.eval;
                 return par_join_rows(&rows, self.cancel_ref(), |row, out| {
@@ -2017,7 +2075,9 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         // id) keeps the exact per-row fallback below — correctness over coverage. Semantics
         // match `eval_attr`'s generator branch exactly: each matching node's id is bound into
         // the free id position (`Value::Id`), nothing else is captured.
-        if !negated && name == "attr" {
+        if !negated
+            && matches!(&dispatch, Some(d) if d.strategy == crate::derive::catalog::PhysStrategy::Attribute && d.arity == 3)
+        {
             if let Some(joined) = self.join_attr_generator_built_once(leg, atom, &rows) {
                 return joined;
             }
@@ -2033,11 +2093,14 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         // eval's (same tuples, same scan order). `build_once_min_rows == usize::MAX` (the
         // documented force-per-row sentinel) disables these like every other fast path.
         if !negated {
-            let gen = match lookup_name {
-                "edge" | "incoming" => {
-                    self.join_edge_generator_cached(lookup_name, def.eval, atom, leg, &rows)
+            use crate::derive::catalog::PhysStrategy as PS;
+            let gen = match &dispatch {
+                Some(d) if d.strategy == PS::Adjacency && d.arity == 3 => {
+                    self.join_edge_generator_cached(base_dispatch_parts(d).1, def.eval, atom, leg, &rows)
                 }
-                "node" => self.join_node_generator_cached(def.eval, atom, leg, &rows),
+                Some(d) if d.strategy == PS::Attribute && d.arity == 2 => {
+                    self.join_node_generator_cached(def.eval, atom, leg, &rows)
+                }
                 _ => None,
             };
             if let Some(joined) = gen {
@@ -2057,13 +2120,32 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         // per-row path would resolve it, keeps the exact per-row eval (correctness floor;
         // negative legs are served by the set-at-once anti-join above or per row).
         if !negated && rows.len() >= self.build_once_min_rows {
-            let fast = match lookup_name {
-                "edge" | "incoming" => {
-                    self.join_edge_bound_built_once(lookup_name, def.eval, atom, leg, &rows)
+            use crate::derive::catalog::PhysStrategy as PS;
+            // P3 (§3.4 normative 1): ONE generalized build-once dispatch keyed
+            // (PredicateId, SortOrder, bound_column_mask) — the id+order half is the
+            // plan-resolved physics selected here, the bound mask is the leg's
+            // pattern each instance specializes on (probe endpoints / bound id /
+            // key columns). The former four string-name arms are the four
+            // instances of the one form "build the hash side from one scan, probe
+            // O(1) per row".
+            let fast = match &dispatch {
+                Some(d) if d.strategy == PS::Adjacency && d.arity == 3 => {
+                    self.join_edge_bound_built_once(base_dispatch_parts(d).1, def.eval, atom, leg, &rows)
                 }
-                "node" => self.join_node_membership_built_once(def.eval, atom, leg, &rows),
-                "attr" => self.join_attr_bound_id_built_once(def.eval, atom, leg, &rows),
-                "edge_attr" => self.join_edge_attr_built_once(def.eval, atom, leg, &rows),
+                Some(d) if d.strategy == PS::Attribute && d.arity == 2 => {
+                    self.join_node_membership_built_once(def.eval, atom, leg, &rows)
+                }
+                Some(d) if d.strategy == PS::Attribute && d.arity == 3 => {
+                    self.join_attr_bound_id_built_once(def.eval, atom, leg, &rows)
+                }
+                // `edge_attr` is a builtin FUNCTION (no runs, no catalog decl)
+                // that nonetheless carries a build-once instance: the explicitly
+                // documented builtin-side dispatch of round-009 H4 / spec Q2 — a
+                // registry-name key, deliberately NOT folded into the predicate
+                // key space.
+                None if lookup_name == "edge_attr" => {
+                    self.join_edge_attr_built_once(def.eval, atom, leg, &rows)
+                }
                 _ => None,
             };
             if let Some(joined) = fast {
@@ -2112,14 +2194,13 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
     /// eval in keyed-probe mode — exact per-row fallback for that row.
     fn join_edge_generator_cached(
         &self,
-        name: &str,
+        order: EdgeOrder,
         eval: BuiltinEval,
         atom: &Atom,
         leg: &crate::derive::plan::PlanLeg,
         rows: &[BindRow],
     ) -> Option<Vec<BindRow>> {
         use super::builtin::ArgMode;
-        use super::storage_glue::EdgeOrder;
 
         // The documented force-per-row sentinel disables every fast path.
         if self.build_once_min_rows == usize::MAX {
@@ -2146,11 +2227,6 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                 _ => return None,
             }
         }
-        let order = if name == "incoming" {
-            EdgeOrder::Reverse
-        } else {
-            EdgeOrder::Forward
-        };
         // Only build/fetch the index if some row actually needs the free enumeration: the
         // executor's Δ-lead reorder can run a plan-Free leg AFTER the Δ leg bound its
         // variables, putting every row on the keyed per-row path — building a full-scan
@@ -2326,14 +2402,13 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
     /// eval's access path/mode, so the only safe equivalence is to run it.
     fn join_edge_bound_built_once(
         &self,
-        name: &str,
+        order: EdgeOrder,
         eval: BuiltinEval,
         atom: &Atom,
         leg: &crate::derive::plan::PlanLeg,
         rows: &[BindRow],
     ) -> Option<Vec<BindRow>> {
         use super::builtin::ArgMode;
-        use super::storage_glue::EdgeOrder;
 
         let args = atom.args();
         if args.len() != 3 {
@@ -2362,11 +2437,6 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             }
         }
 
-        let order = if name == "incoming" {
-            EdgeOrder::Reverse
-        } else {
-            EdgeOrder::Forward
-        };
         // Map a storage EdgeRow's `(src, dst)` to this view's `(near, far)` per direction
         // — the same mapping `eval_edge_dir` and `build_anti_join_set` apply.
         let near_far = |src: u128, dst: u128| match order {
@@ -2793,11 +2863,22 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
     /// executor's lifetime — the set depends on the immutable view and the projection
     /// mask only (`type` is canonicalized to `node`; `edge` vs `incoming` stay distinct,
     /// their near/far projections differ).
-    fn build_anti_join_set(&self, name: &str, atom: &Atom) -> Option<Arc<HashSet<Vec<Value>>>> {
+    fn build_anti_join_set(
+        &self,
+        source: &LegSource,
+        atom: &Atom,
+    ) -> Option<Arc<HashSet<Vec<Value>>>> {
+        use crate::derive::catalog::PhysStrategy as PS;
+        // P3: instance selection off the plan-resolved dispatch physics (only Base
+        // legs have set-at-once anti-join shapes; builtins keep the per-row path).
+        let dispatch = match source {
+            LegSource::Base { dispatch, .. } => *dispatch,
+            _ => return None,
+        };
         let args = atom.args();
         let view = self.view;
-        match name {
-            "edge" | "incoming" => {
+        match (dispatch.strategy, dispatch.arity) {
+            (PS::Adjacency, 3) => {
                 if args.len() != 3 {
                     return None;
                 }
@@ -2812,12 +2893,14 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                         return None;
                     }
                 }
-                let order = if name == "incoming" {
-                    super::storage_glue::EdgeOrder::Reverse
+                let order = base_dispatch_parts(&dispatch).1;
+                // The cache-key kind label encodes (family, order): the two runs'
+                // near/far projections differ, so they must never share a set.
+                let kind: &'static str = if order == EdgeOrder::Reverse {
+                    "incoming"
                 } else {
-                    super::storage_glue::EdgeOrder::Forward
+                    "edge"
                 };
-                let kind: &'static str = if name == "incoming" { "incoming" } else { "edge" };
                 let mask = [
                     matches!(args[0], Term::Var(_)),
                     matches!(args[1], Term::Var(_)),
@@ -2830,8 +2913,8 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                         for e in view.scan_edges_by_type(&ty, order) {
                             // Map storage (src,dst) to this view's (near, far) per direction.
                             let (near, far) = match order {
-                                super::storage_glue::EdgeOrder::Forward => (e.src, e.dst),
-                                super::storage_glue::EdgeOrder::Reverse => (e.dst, e.src),
+                                EdgeOrder::Forward => (e.src, e.dst),
+                                EdgeOrder::Reverse => (e.dst, e.src),
                             };
                             let mut key: Vec<Value> = Vec::new();
                             if mask[0] {
@@ -2846,7 +2929,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                     },
                 ))
             }
-            "node" | "type" => {
+            (PS::Attribute, 2) => {
                 if args.len() != 2 {
                     return None;
                 }
@@ -3297,7 +3380,7 @@ impl<'r> Clause<'r> {
             .iter()
             .enumerate()
             .filter_map(|(i, leg)| match &leg.source {
-                LegSource::Base(_) if leg.literal.is_positive() => Some(i),
+                LegSource::Base { .. } if leg.literal.is_positive() => Some(i),
                 _ => None,
             })
             .collect()
@@ -5957,7 +6040,7 @@ mod tests {
             let mut rows: Vec<BindRow> = vec![BindRow::new()];
             for leg in &plan.legs {
                 match &leg.source {
-                    LegSource::Base(_) | LegSource::Builtin(_) => {}
+                    LegSource::Base { .. } | LegSource::Builtin(_) => {}
                     other => panic!("test program must be base/builtin-only, got {other:?}"),
                 }
                 let out_fast = fast.join_extensional(leg, rows.clone());
@@ -6285,5 +6368,76 @@ mod tests {
             "an empty relation under negation must still PASS rows (short-circuit must \
              not fire on negative legs)"
         );
+    }
+    // ── P3: incoming ≡ edge-Reverse dispatch equivalence (round-009 H4) ──
+
+    /// The §6.3 fold under pin: an `incoming(D, S, T)` leg and the endpoint-swapped
+    /// `edge(S, D, T)` leg are the SAME relation read through the two declared runs.
+    /// Plan level: the `incoming` leg's plan-resolved dispatch is EDGE's PredicateId
+    /// with `SortOrder::Reverse`. Output level: the two programs derive identical
+    /// fact sets on the fixture — under both the build-once and the per-row paths
+    /// (min_rows 0 vs the usize::MAX force-per-row sentinel).
+    #[test]
+    fn incoming_leg_is_edge_reverse_run() {
+        use crate::facts::SortOrder;
+
+        let mut v = FixtureStorageView::new(1);
+        node(&mut v, "f1", "FUNCTION");
+        node(&mut v, "f2", "FUNCTION");
+        node(&mut v, "f3", "FUNCTION");
+        edge(&mut v, "f1", "f2", "CALLS");
+        edge(&mut v, "f3", "f2", "CALLS");
+        edge(&mut v, "f2", "f1", "CALLS");
+
+        let src_incoming = r#"r(X, Y) :- node(X, "FUNCTION"), incoming(X, Y, "CALLS")."#;
+        let src_edge_rev = r#"r(X, Y) :- node(X, "FUNCTION"), edge(Y, X, "CALLS")."#;
+
+        // Plan level: the incoming leg resolves to edge's id + Reverse.
+        let prog = parse_ext_program(src_incoming).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let mut catalog = crate::derive::catalog::PredicateCatalog::with_base_relations();
+        let plans = crate::derive::plan::plan_program_with_catalog(
+            &rules,
+            &strat,
+            &Stats::default(),
+            &mut catalog,
+        )
+        .expect("plan");
+        let edge_id = catalog.get("edge").unwrap().id;
+        let leg = plans[0]
+            .legs
+            .iter()
+            .find(|l| l.literal.atom().predicate() == "incoming")
+            .expect("incoming leg planned");
+        match &leg.source {
+            LegSource::Base { name, dispatch } => {
+                assert_eq!(name, "incoming", "surface name preserved");
+                assert_eq!(dispatch.id, edge_id, "incoming IS edge's relation");
+                assert_eq!(dispatch.order, SortOrder::Reverse, "…read through the Reverse run");
+            }
+            other => panic!("incoming must be a base leg, got {other:?}"),
+        }
+
+        // Output level, both dispatch modes.
+        for min_rows in [0usize, usize::MAX] {
+            let facts_of = |src: &str| -> std::collections::BTreeSet<Vec<Value>> {
+                let prog = parse_ext_program(src).expect("parse");
+                let strat = stratify(&prog).expect("stratify");
+                let rules = prog.rules();
+                let plans =
+                    plan_program(&rules, &strat, &Stats::default()).expect("plan");
+                let exec = Executor::<BoolTag>::new(&v).with_build_once_min_rows(min_rows);
+                let eval = exec.evaluate(&plans, &rules, &strat).expect("eval");
+                eval.facts("r").iter().map(|f| f.to_vec()).collect()
+            };
+            let via_incoming = facts_of(src_incoming);
+            let via_edge_rev = facts_of(src_edge_rev);
+            assert_eq!(
+                via_incoming, via_edge_rev,
+                "incoming and endpoint-swapped edge must derive identical facts (min_rows {min_rows})"
+            );
+            assert_eq!(via_incoming.len(), 3, "fixture has 3 incoming pairs");
+        }
     }
 }

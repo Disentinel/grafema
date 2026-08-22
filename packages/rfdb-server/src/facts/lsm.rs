@@ -263,10 +263,11 @@ impl LsmFactStore {
     }
 
     fn read_decl(&self, p: CatalogPredicateId) -> FactResult<&PredicateDecl> {
-        // Unknown id → E-CAT-001 (ledger C10: fixed code budget; the catalog is
-        // the authority that cannot resolve it; migrates to E-CAT-002 in P3).
+        // Unknown id → E-CAT-002 (P3, ledger round-007-pre C10: the P2 read path
+        // rejected this with E-CAT-001 under the fixed pre-P3 code budget; P3 owns
+        // the undeclared-predicate code and the migration happened with round-009).
         self.catalog.get_by_id(p).ok_or(FactStoreError {
-            code: "E-CAT-001",
+            code: "E-CAT-002",
             detail: format!("unknown predicate id {p:?} (not declared in this catalog)"),
         })
     }
@@ -1601,8 +1602,11 @@ mod tests {
             )
             .err()
             .expect("typed error");
-        assert_eq!(err.code, "E-CAT-001");
-        // Unknown author on write, same code (ledger C10/C11).
+        // P3 (round-007-pre C10): the unknown-ID read path migrated E-CAT-001 →
+        // E-CAT-002 with round-009.
+        assert_eq!(err.code, "E-CAT-002");
+        // Unknown author on write stays E-CAT-001 (an interning error, not the
+        // undeclared-predicate class).
         let foreign_author = AuthorId(999);
         let err = fs
             .assert_batch(AssertBatch {

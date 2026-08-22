@@ -24,8 +24,6 @@
 //! Regenerate (only legitimate at a plan-CHANGING phase boundary, with the
 //! ledger updated): `cargo test --lib derive::plan_golden::regen -- --ignored`.
 
-use std::collections::HashMap;
-
 use super::builtin::Stats;
 use super::parser_ext::parse_ext_program;
 use super::plan::{plan_program, LegSource, RulePlan};
@@ -63,10 +61,7 @@ const FIXTURES: &[(&str, &str)] = &[
         "fx_cross_join_reject",
         r#"h(X, Y) :- node(X, "A"), node(Y, "B")."#,
     ),
-    (
-        "fx_node_free_free_reject",
-        r#"h(X, T) :- node(X, T)."#,
-    ),
+    ("fx_node_free_free_reject", r#"h(X, T) :- node(X, T)."#),
     (
         "fx_reach_closure",
         "reach(X, Y) :- edge(X, Y, \"CALLS\").\n\
@@ -164,7 +159,7 @@ fn stats_empty() -> Stats {
 /// Name-level leg-source render — stable across the P3 `LegSource` migration.
 fn render_source(s: &LegSource) -> String {
     match s {
-        LegSource::Base(name) => format!("base:{name}"),
+        LegSource::Base { name, .. } => format!("base:{name}"),
         LegSource::Builtin(n) => format!("builtin:{n}"),
         LegSource::Derived { name, recursive } => format!("derived:{name}:{recursive}"),
     }

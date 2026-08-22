@@ -165,6 +165,14 @@ pub enum PlanCode {
     /// The literals cannot be ordered bound-first: a builtin/base leg needs a binding that
     /// no other literal in the body can provide (circular feasibility). Spec §7.
     Infeasible,
+    /// P3 (rofl-fact-model.md §3.4, ledger round-009): a catalog rejection at plan
+    /// time — a program predicate whose arity conflicts with its catalog
+    /// declaration (strict head validation per round-005 C3, including a head
+    /// shadowing a base-relation name at a different arity; and a body-only
+    /// open-space name used at two arities in one program), or — defensively — a
+    /// leg predicate the catalog cannot resolve at all. Shares the stable string
+    /// with [`CatalogError`](crate::derive::catalog::CatalogError)'s P3 code.
+    CatalogRejected,
 }
 
 impl PlanCode {
@@ -174,6 +182,7 @@ impl PlanCode {
             PlanCode::UnsupportedMode => "E-PLAN-001",
             PlanCode::GuardRejected => "E-PLAN-003",
             PlanCode::Infeasible => "E-PLAN-002",
+            PlanCode::CatalogRejected => "E-CAT-002",
         }
     }
 }
@@ -215,8 +224,17 @@ pub type PlanResult<T> = Result<T, PlanError>;
 pub enum LegSource {
     /// A base relation served from a storage column family (`node`/`type`/`edge`/
     /// `incoming`/`attr`). Extensional: served over a sorted run (merge-join leg) or a
-    /// typed scan (generator).
-    Base(String),
+    /// typed scan (generator). Since P3 the leg carries its plan-time-resolved
+    /// [`BaseDispatch`](crate::derive::catalog::BaseDispatch) — the owning
+    /// predicate's catalog id and the declared run — so the executor dispatches on
+    /// `(PredicateId, SortOrder, bound_column_mask)` instead of the surface name
+    /// (`incoming` resolves to `edge`'s Reverse run, `type` to `node`; §6.3).
+    Base {
+        /// Surface name as written in the program (diagnostics + registry-eval key).
+        name: String,
+        /// The plan-time-resolved storage dispatch key (P3).
+        dispatch: crate::derive::catalog::BaseDispatch,
+    },
     /// A builtin filter/function shared with the query engine (`neq`/`gt`/`starts_with`/…). Consumes the
     /// current row; never a join leg.
     Builtin(String),
@@ -288,32 +306,94 @@ pub fn plan_program(
 ) -> PlanResult<Vec<RulePlan>> {
     // One catalog per evaluation context: callers that don't thread their own (the
     // engine maintain paths, tests) get a fresh engine-resident catalog here — same
-    // registration, same (absence of) planning effect.
+    // registration, same planning effect.
     let mut catalog = crate::derive::catalog::PredicateCatalog::with_base_relations();
     plan_program_with_catalog(rules, strat, stats, &mut catalog)
 }
 
-/// [`plan_program`] with the P1 catalog wiring (rofl-fact-model.md §3.1): every
-/// rule-head name is registered in `catalog` via `declare_default` at plan
-/// construction — the single, minimal "everything references the catalog" seam.
-/// Registration is OBSERVATIONAL in P1: no planning decision reads the catalog
-/// (locked by the `catalog_registration_changes_no_plan` differential test); the
-/// planner starts CONSUMING it with P3's `(PredicateId, SortOrder, bound_mask)`
-/// dispatch migration. `declare_default` is name-level get-or-declare, so a rule
-/// head shadowing a base-relation name (planner semantics: the stratum check in
-/// leg classification wins over [`BASE_RELATIONS`]) registers nothing new and
-/// never rejects — pre-P1 program acceptance is unchanged by construction.
+/// Map a strict-registration [`CatalogError`](crate::derive::catalog::CatalogError)
+/// to the planner's stable `E-CAT-002` rejection, attributed to the offending
+/// rule's head.
+fn catalog_reject(head: &str, e: crate::derive::catalog::CatalogError) -> PlanError {
+    PlanError {
+        code: PlanCode::CatalogRejected,
+        head: head.to_string(),
+        detail: e.detail,
+    }
+}
+
+/// P3 program registration (rofl-fact-model.md §3.1/§3.4, ledger round-009 H3):
+/// every rule-head name is registered STRICTLY (`E-CAT-002` on an arity conflict
+/// with an existing declaration — round-005 C3's strict head validation,
+/// including a head shadowing a base-relation name at a different arity), and
+/// every body-only predicate — not a derived head, not storage-served, not a
+/// registered builtin/filter-function — is registered under the §3.1 OPEN-SPACE
+/// default rule («новый предикат не требует ничьего разрешения»): it becomes a
+/// legal, catalog-declared EMPTY relation (the ROFL F2 semantics, pinned by
+/// `exec.rs::unknown_predicate_leg_terminates_with_empty_result` and 12 tier-0
+/// seeds), used at ONE arity — a second arity in the same program is `E-CAT-002`
+/// (pre-P3 that shape was a silently-empty join).
+///
+/// Returns the OPEN-SPACE names registered by the second loop, so both planner
+/// entry points can seed their estimate context with 0 for each of them: an
+/// open-space relation has no rules and no facts BY CONSTRUCTION, so its only
+/// sound cardinality is the empty relation's. Without the seed a positive
+/// var-introducing open-space leg falls to `derived_estimate`'s whole-graph
+/// None-fallback and — at prod-scale stats — spuriously trips the §3 guard on a
+/// today-accepted program (pre-P3 the same leg classified `Builtin`, estimate 1;
+/// E-PLAN-003 is an availability HARD REJECT — round-009 defect D1).
+fn register_program(
+    rules: &[&Rule],
+    strat: &Stratification,
+    catalog: &mut crate::derive::catalog::PredicateCatalog,
+) -> PlanResult<Vec<String>> {
+    for rule in rules {
+        let head = rule.head();
+        let arity = u8::try_from(head.args().len()).unwrap_or(u8::MAX);
+        catalog
+            .declare_strict(head.predicate(), arity)
+            .map_err(|e| catalog_reject(head.predicate(), e))?;
+    }
+    let mut open_space: Vec<String> = Vec::new();
+    for rule in rules {
+        for lit in rule.body() {
+            let atom = lit.atom();
+            let pred = atom.predicate();
+            if strat.stratum_of(pred).is_some()
+                || catalog.base_dispatch(pred).is_some()
+                || is_known_builtin(pred)
+            {
+                continue;
+            }
+            let arity = u8::try_from(atom.args().len()).unwrap_or(u8::MAX);
+            catalog
+                .declare_strict(pred, arity)
+                .map_err(|e| catalog_reject(rule.head().predicate(), e))?;
+            if !open_space.iter().any(|n| n == pred) {
+                open_space.push(pred.to_string());
+            }
+        }
+    }
+    Ok(open_space)
+}
+
+/// [`plan_program`] with the catalog threading (rofl-fact-model.md §3.1). Since P3
+/// the catalog is CONSUMED, not just populated: rule heads register strictly and
+/// body-only names under the §3.1 default rule ([`register_program`], `E-CAT-002`
+/// on conflict), the base decls' [`PredicateStats`] carry the run's live
+/// magnitudes ([`populate_base_live_stats`]), base-leg classification resolves
+/// through [`base_dispatch`](crate::derive::catalog::PredicateCatalog::base_dispatch)
+/// (`incoming` = edge's Reverse run, `type` = node), and [`base_estimate`] is a
+/// function of `(PredicateDecl, pattern)`. Plan equality with the pre-P3 planner
+/// on the base five is pinned by the `plan_golden` fingerprints (round-009 H1).
 pub fn plan_program_with_catalog(
     rules: &[&Rule],
     strat: &Stratification,
     stats: &Stats,
     catalog: &mut crate::derive::catalog::PredicateCatalog,
 ) -> PlanResult<Vec<RulePlan>> {
-    for rule in rules {
-        let head = rule.head();
-        let arity = u8::try_from(head.args().len()).unwrap_or(u8::MAX);
-        catalog.declare_default(head.predicate(), arity);
-    }
+    let open_space = register_program(rules, strat, catalog)?;
+    catalog.populate_base_live_stats(stats.total_nodes, stats.total_edges);
     // Per-predicate cardinality estimates, populated STRATUM-BOTTOM-UP: a predicate's
     // estimate is the (saturating) sum of its rules' output estimates, recorded before any
     // higher stratum that references it is planned. This is what lets `derived_estimate`
@@ -321,7 +401,16 @@ pub fn plan_program_with_catalog(
     // magnitude (the q-error that spuriously tripped E-PLAN-003 on recursive closures and
     // on chains of small derived relations — see the flipped
     // `recursive_closure_*_qerror` test).
+    //
+    // Open-space names are seeded at 0: they are EMPTY relations by construction
+    // (no rules, no storage), so `derived_estimate` sizes their legs at 1 —
+    // exactly the pre-P3 `Builtin` leg estimate — instead of the whole-graph
+    // None-fallback whose product spuriously trips E-PLAN-003 at prod-scale
+    // stats (`register_program` doc, round-009 defect D1).
     let mut estimates: HashMap<String, u64> = HashMap::new();
+    for name in &open_space {
+        estimates.insert(name.clone(), 0);
+    }
     let mut plans: Vec<Option<RulePlan>> = (0..rules.len()).map(|_| None).collect();
 
     // Per-predicate, per-column domain bounds, published stratum-bottom-up alongside the
@@ -374,8 +463,16 @@ pub fn plan_program_with_catalog(
             if is_recursive {
                 continue;
             }
-            let plan =
-                plan_rule_with(rule, strat, stats, &local_estimates, None, &facts, &local_domains)?;
+            let plan = plan_rule_with(
+                rule,
+                strat,
+                stats,
+                &local_estimates,
+                None,
+                &facts,
+                &local_domains,
+                catalog,
+            )?;
             let e = base_case.entry(head.to_string()).or_insert(0);
             *e = (*e).max(plan.estimate);
             let le = local_estimates.entry(head.to_string()).or_insert(0);
@@ -400,6 +497,7 @@ pub fn plan_program_with_catalog(
                 Some(bc),
                 &facts,
                 &local_domains,
+                catalog,
             )?;
             let le = local_estimates
                 .entry(rule.head().predicate().to_string())
@@ -438,14 +536,25 @@ pub fn plan_program_with_catalog(
 /// 3. Pick the join kind (hash on Δ for same-stratum derived legs; merge on Total/EDB).
 /// 4. Apply the §3 guards: cross-join body and per-rule estimate (`E-PLAN-003`).
 pub fn plan_rule(rule: &Rule, strat: &Stratification, stats: &Stats) -> PlanResult<RulePlan> {
+    // Direct callers (tests, the defensive program fallback) get a fresh registered
+    // catalog: same strict-registration and stats-population semantics as
+    // `plan_program_with_catalog`, scoped to this one rule — including the
+    // open-space estimate-0 seed (`register_program` doc, round-009 defect D1);
+    // everything else stays the conservative empty-context fallback.
+    let mut catalog = crate::derive::catalog::PredicateCatalog::with_base_relations();
+    let open_space = register_program(std::slice::from_ref(&rule), strat, &mut catalog)?;
+    catalog.populate_base_live_stats(stats.total_nodes, stats.total_edges);
+    let estimates: HashMap<String, u64> =
+        open_space.into_iter().map(|name| (name, 0)).collect();
     plan_rule_with(
         rule,
         strat,
         stats,
-        &HashMap::new(),
+        &estimates,
         None,
         &FactStats::default(),
         &HashMap::new(),
+        &catalog,
     )
 }
 
@@ -454,6 +563,7 @@ pub fn plan_rule(rule: &Rule, strat: &Stratification, stats: &Stats) -> PlanResu
 /// `self_base` carries the head's base-case estimate when THIS rule is recursive (None for
 /// non-recursive rules). Without the context (empty map, None) the planner falls back to
 /// the conservative whole-graph magnitude — the pre-fix behavior.
+#[allow(clippy::too_many_arguments)]
 fn plan_rule_with(
     rule: &Rule,
     strat: &Stratification,
@@ -462,11 +572,12 @@ fn plan_rule_with(
     self_base: Option<u64>,
     facts: &FactStats,
     col_domains: &HashMap<String, Vec<u64>>,
+    catalog: &crate::derive::catalog::PredicateCatalog,
 ) -> PlanResult<RulePlan> {
     let head = rule.head().predicate().to_string();
     let head_stratum = strat.stratum_of(&head);
 
-    let ordered = order_literals(rule.body(), &head, stats)?;
+    let ordered = order_literals(rule.body(), &head, stats, catalog)?;
 
     let mut bound: HashSet<String> = HashSet::new();
     let mut legs: Vec<PlanLeg> = Vec::with_capacity(ordered.len());
@@ -501,23 +612,27 @@ fn plan_rule_with(
             });
         }
 
-        let source = classify(pred, strat, head_stratum);
+        let source = classify(pred, strat, head_stratum, catalog, &head)?;
 
         // Registry mode check (E-PLAN-001): reject a base/builtin literal whose actual
         // binding pattern is supported by no registered mode — an unbound comparison, or a
         // base relation asked for a run that no sort order serves (e.g. `node(Free, Free)`,
         // which would require enumerating every (id, type) pair without a bound key).
+        // The mode registry is keyed by the SURFACE name (`type`/`incoming` carry their
+        // own entries with the shared mode tables), so the check is dispatch-neutral.
         // Derived predicates have no registry entry and are checked by stratification, not
         // here.
         match &source {
-            LegSource::Builtin(name) | LegSource::Base(name) => {
+            LegSource::Builtin(name) | LegSource::Base { name, .. } => {
                 check_builtin_mode(name, &pattern, &head)?;
             }
             LegSource::Derived { .. } => {}
         }
 
         let join = pick_join(&source, &pattern);
-        let estimate = leg_estimate(&source, atom, &pattern, stats, estimates, self_base, facts);
+        let estimate = leg_estimate(
+            &source, atom, &pattern, stats, estimates, self_base, facts, catalog,
+        );
 
         // Only positive, tuple-introducing legs (those that bind previously-free variables)
         // grow the output-size estimate. Anti-joins (negative literals) and fully-bound
@@ -541,6 +656,7 @@ fn plan_rule_with(
                 col_domains,
                 &mut domains,
                 &mut support,
+                catalog,
             );
         }
         bound.extend(provided);
@@ -603,7 +719,12 @@ fn plan_rule_with(
 ///
 /// Returns `E-PLAN-002` if no candidate can be placed (circular feasibility) — the query
 /// engine's "circular dependency" rejection, surfaced with a stable code (I5).
-fn order_literals(body: &[Literal], head: &str, stats: &Stats) -> PlanResult<Vec<Literal>> {
+fn order_literals(
+    body: &[Literal],
+    head: &str,
+    stats: &Stats,
+    catalog: &crate::derive::catalog::PredicateCatalog,
+) -> PlanResult<Vec<Literal>> {
     let mut bound: HashSet<String> = HashSet::new();
     let mut result: Vec<Literal> = Vec::with_capacity(body.len());
     let mut remaining: Vec<Literal> = body.to_vec();
@@ -647,7 +768,7 @@ fn order_literals(body: &[Literal], head: &str, stats: &Stats) -> PlanResult<Vec
             } else {
                 0
             };
-            let cost = ordering_estimate(lit, &bound, stats);
+            let cost = ordering_estimate(lit, &bound, stats, catalog);
             // Order of magnitude: 64 − leading_zeros = number of significant bits. Costs within
             // the same power-of-two band tie here and defer to hub_rank.
             let cost_band = (u64::BITS - cost.leading_zeros()) as u64;
@@ -764,7 +885,12 @@ fn strands_body(
 ///   mode (binds the free id) as a keyed reverse-lookup — NOT as the 0-cost filter the old
 ///   `is_filter_or_function("attr")` blanket made it, which mis-ranked it ahead of cheaper
 ///   point-check legs.
-fn ordering_estimate(lit: &Literal, bound: &HashSet<String>, stats: &Stats) -> u64 {
+fn ordering_estimate(
+    lit: &Literal,
+    bound: &HashSet<String>,
+    stats: &Stats,
+    catalog: &crate::derive::catalog::PredicateCatalog,
+) -> u64 {
     let atom = lit.atom();
     let pred = atom.predicate();
     // A leg that introduces no new variable under the current bindings is a pure filter /
@@ -778,8 +904,11 @@ fn ordering_estimate(lit: &Literal, bound: &HashSet<String>, stats: &Stats) -> u
         return 0;
     }
     let pattern = arg_pattern(atom, bound);
-    if BASE_RELATIONS.contains(&pred) {
-        base_estimate(pred, atom, &pattern, stats)
+    if let Some(dispatch) = catalog.base_dispatch(pred) {
+        let decl = catalog
+            .get_by_id(dispatch.id)
+            .expect("base dispatch resolves to a declared predicate");
+        base_estimate(decl, atom, &pattern, stats)
     } else {
         // A derived predicate (rule head) reachable here. Ordering runs per rule WITHOUT
         // the program-level estimates context (it only ranks candidate orders — it never
@@ -951,10 +1080,22 @@ fn provided_vars(atom: &Atom, bound: &HashSet<String>) -> HashSet<String> {
 
 // ── Classification helpers ─────────────────────────────────────────
 
-/// Base relations served directly from storage (extensional). Mirrors the stratifier.
-/// `pub(crate)` for the catalog drift guard (catalog.rs tests): the P1 base-relation
-/// registration must stay in lockstep with this list until P3 unifies them.
-pub(crate) const BASE_RELATIONS: &[&str] = &["node", "type", "edge", "incoming", "attr"];
+// P3: the base-relation name list (`BASE_RELATIONS`) retired with round-009 — the
+// catalog's `base_dispatch` registration (catalog.rs `with_base_relations`) is the
+// single owner of which SURFACE names are storage-served, and of their
+// `(PredicateId, SortOrder)` resolution (`incoming` = edge's Reverse run,
+// `type` = node).
+
+/// Names the executor can serve for a leg that is neither storage-served (Base)
+/// nor a derived head: the derive registry builtins plus the closed
+/// query-engine-shared function set (`path`/`parent_function`/`resolved_import` —
+/// planner-accepted, engine-side evaluated; the executor's registry-miss arm is
+/// reachable ONLY for these three, see `exec.rs::join_extensional`). Everything
+/// outside this set and the catalog is the `E-CAT-002` class (round-009 H3).
+fn is_known_builtin(pred: &str) -> bool {
+    builtin::lookup(pred).is_some()
+        || matches!(pred, "path" | "parent_function" | "resolved_import")
+}
 
 /// Builtin filters/functions shared with the query engine that consume the current row (never join legs,
 /// never introduce new tuples). `path`/`parent_function`/`resolved_import` bind from
@@ -1005,21 +1146,53 @@ fn introduces_tuples(pred: &str) -> bool {
     !is_filter_or_function(pred)
 }
 
-/// Classify a body predicate into its [`LegSource`].
-fn classify(pred: &str, strat: &Stratification, head_stratum: Option<usize>) -> LegSource {
+/// Classify a body predicate into its [`LegSource`] (P3: catalog-driven, total over
+/// REGISTERED names, `E-CAT-002` otherwise).
+///
+/// Order: a stratified derived head wins (shadowing semantics unchanged); then a
+/// storage-served base name resolves through the catalog's dispatch map to its
+/// `(PredicateId, SortOrder)`; then the registered builtin/filter-function set;
+/// then a catalog-registered §3.1 OPEN-SPACE name — a body-only predicate with no
+/// rules, classified as a non-recursive derived leg so the executor serves it as
+/// the LEGAL EMPTY relation through the derived-relation path's missing-relation
+/// arm (ROFL F2 semantics; positive ⇒ no rows, negated ⇒ anti-join passes) —
+/// never through the old unknown-name fallback. A name registered NOWHERE is the
+/// plan-time `E-CAT-002` abort (defensive: `register_program` makes this
+/// unreachable through the public entries).
+fn classify(
+    pred: &str,
+    strat: &Stratification,
+    head_stratum: Option<usize>,
+    catalog: &crate::derive::catalog::PredicateCatalog,
+    head: &str,
+) -> PlanResult<LegSource> {
     if let Some(s) = strat.stratum_of(pred) {
         let recursive = head_stratum == Some(s);
-        return LegSource::Derived {
+        return Ok(LegSource::Derived {
             name: pred.to_string(),
             recursive,
-        };
+        });
     }
-    if BASE_RELATIONS.contains(&pred) {
-        return LegSource::Base(pred.to_string());
+    if let Some(dispatch) = catalog.base_dispatch(pred) {
+        return Ok(LegSource::Base {
+            name: pred.to_string(),
+            dispatch,
+        });
     }
-    // Anything else that reaches the planner is a builtin (the query-engine-shared filter/function
-    // set). `node`/`edge` are base; comparisons and string ops are builtins.
-    LegSource::Builtin(pred.to_string())
+    if is_known_builtin(pred) {
+        return Ok(LegSource::Builtin(pred.to_string()));
+    }
+    if catalog.get(pred).is_some() {
+        return Ok(LegSource::Derived {
+            name: pred.to_string(),
+            recursive: false,
+        });
+    }
+    Err(PlanError {
+        code: PlanCode::CatalogRejected,
+        head: head.to_string(),
+        detail: format!("predicate '{pred}' is registered nowhere (not a rule head, not a base relation, not a builtin)"),
+    })
 }
 
 /// Pick the join kind for a classified leg (spec §7).
@@ -1028,7 +1201,7 @@ fn pick_join(source: &LegSource, _pattern: &[ArgMode]) -> JoinKind {
         // Filters/functions never join: they prune or bind within the current row.
         LegSource::Builtin(_) => JoinKind::None,
         // Base relations and frozen lower strata are merge-joined over sorted runs.
-        LegSource::Base(_) => JoinKind::MergeOnTotal,
+        LegSource::Base { .. } => JoinKind::MergeOnTotal,
         LegSource::Derived { recursive, .. } => {
             if *recursive {
                 JoinKind::HashOnDelta
@@ -1089,6 +1262,7 @@ fn synth_arg_spec(pattern: &[ArgMode]) -> builtin::ArgSpec {
 /// - A filter prunes (fan-out ≤ 1); a function binds one row (fan-out 1).
 /// - A derived leg estimates against the larger relation magnitude (conservative; the run
 ///   stats refine this at execution time per the §7 re-plan rule).
+#[allow(clippy::too_many_arguments)]
 fn leg_estimate(
     source: &LegSource,
     atom: &Atom,
@@ -1097,24 +1271,59 @@ fn leg_estimate(
     estimates: &HashMap<String, u64>,
     self_base: Option<u64>,
     facts: &FactStats,
+    catalog: &crate::derive::catalog::PredicateCatalog,
 ) -> u64 {
     match source {
         LegSource::Builtin(_) => 1,
-        LegSource::Base(rel) => base_estimate(rel, atom, pattern, stats),
+        LegSource::Base { dispatch, .. } => {
+            let decl = catalog
+                .get_by_id(dispatch.id)
+                .expect("base dispatch resolves to a declared predicate");
+            base_estimate(decl, atom, pattern, stats)
+        }
         LegSource::Derived { name, recursive } => {
             derived_estimate(name, *recursive, atom, pattern, stats, estimates, self_base, facts)
         }
     }
 }
 
-/// The cardinality estimate of a base-relation leg under its current bind pattern (spec §7).
-/// Factored out so the planner's literal ordering ([`order_literals`]) can rank candidate
-/// legs by the SAME per-type / per-endpoint oracle that the per-rule guard folds in — the
-/// ordering is no longer cardinality-blind. Pure function of `(rel, atom, pattern, stats)`.
-fn base_estimate(rel: &str, atom: &Atom, pattern: &[ArgMode], stats: &Stats) -> u64 {
+/// The cardinality estimate of a base-relation leg under its current bind pattern
+/// (spec §7 / rofl-fact-model.md §3.4 normative 2, P3): a function of
+/// `(PredicateDecl, pattern)`, keyed on the decl's PHYSICS (strategy, arity) —
+/// never on the surface name. The general form: `live_facts` when the columns are
+/// free, `live_facts / distinct[i]` when column `i` is bound, `max_fanout` as the
+/// probe ceiling. While `distinct`/`max_fanout` are UNKNOWN (= 0, the
+/// pre-compaction state — all of P3; compaction-computed stats are P6), each
+/// family falls back to EXACTLY the pre-P3 formula, which is what makes the P3
+/// plans provably identical (`plan_golden`, round-009 H1). The two historical
+/// estimator regression classes stay pinned inside the fallbacks:
+/// bound-endpoint adjacency = avg-degree ⌈E/N⌉ (NOT √E — the ~300× hop
+/// inflation), const-edge-type narrowing = `narrowed_fanout(live)` (the depends
+/// 54M-vs-1.6k class). Factored out so the literal ordering ranks by the same
+/// oracle the per-rule guard folds in. Pure function of
+/// `(decl, atom, pattern, stats)`.
+fn base_estimate(
+    decl: &crate::derive::catalog::PredicateDecl,
+    atom: &Atom,
+    pattern: &[ArgMode],
+    stats: &Stats,
+) -> u64 {
+    use crate::derive::catalog::PhysStrategy;
+
+    let pstats = &decl.stats;
+    // A distinct count of 0 is the documented "not computed" sentinel, never a divisor.
+    let distinct_of = |i: usize| pstats.distinct.get(i).copied().filter(|&d| d > 0);
+    // `max_fanout` caps any KEYED-probe estimate once compaction computes it (P6).
+    let probe_cap = |est: u64| {
+        if pstats.max_fanout > 0 {
+            est.min(pstats.max_fanout)
+        } else {
+            est
+        }
+    };
     let first_bound = pattern.first().map(|m| *m == ArgMode::Bound).unwrap_or(false);
-    match rel {
-        "node" | "type" => {
+    match (decl.strategy, decl.arity) {
+        (PhysStrategy::Attribute, 2) => {
             // Per-type cardinality oracle (§7): a CONST type literal narrows the estimate
             // to that type's live count. When the oracle is populated, a const type ABSENT
             // from the map has zero live nodes (not "unknown") — so it estimates ~0 and the
@@ -1122,23 +1331,43 @@ fn base_estimate(rel: &str, atom: &Atom, pattern: &[ArgMode], stats: &Stats) -> 
             // node(M, "MESSAGE_TYPE") in a graph with no MESSAGE_TYPE nodes). A variable
             // type, or an empty oracle (unit tests), conservatively falls back to the whole
             // relation.
+            // The node-family live count is the decl's plan-time-populated
+            // `live_facts` (= the oracle's total_nodes; identical by construction —
+            // `populate_base_live_stats`); the per-TYPE counts stay in the graph-level
+            // oracle until P4 turns node types into per-predicate relations.
+            let total = if pstats.live_facts > 0 {
+                pstats.live_facts
+            } else {
+                stats.total_nodes
+            };
             let const_ty = atom.args().get(1).and_then(|t| t.const_value());
             let magnitude = match const_ty {
                 Some(ty) if !stats.nodes_by_type.is_empty() => {
                     stats.nodes_by_type.get(ty).copied().unwrap_or(0)
                 }
-                _ => stats.total_nodes,
+                _ => total,
             };
             if first_bound {
-                narrowed_fanout(magnitude)
+                match distinct_of(0) {
+                    Some(d) => probe_cap((magnitude / d).max(1)),
+                    None => narrowed_fanout(magnitude),
+                }
             } else {
                 magnitude.max(1)
             }
         }
-        "edge" | "incoming" => {
+        // Adjacency/3 — the edge family. The formulas are ENDPOINT-SYMMETRIC, so the
+        // Forward (`edge`) and Reverse (`incoming`) runs share them — the estimator's
+        // edge == incoming symmetry the pre-P3 name-match encoded.
+        (PhysStrategy::Adjacency, 3) => {
             // An edge leg is keyed if EITHER endpoint is bound — storage_v2 serves both
             // get_outgoing_edges_at (bound src) and get_incoming_edges_at (bound dst), so a
             // bound destination is as cheap as a bound source, not a full relation scan.
+            let live = if pstats.live_facts > 0 {
+                pstats.live_facts
+            } else {
+                stats.total_edges
+            };
             let endpoint_bound = pattern.first() == Some(&ArgMode::Bound)
                 || pattern.get(1) == Some(&ArgMode::Bound);
             // A CONST edge type narrows the scan even with both endpoints free: storage_v2
@@ -1150,19 +1379,33 @@ fn base_estimate(rel: &str, atom: &Atom, pattern: &[ArgMode], stats: &Stats) -> 
             // `depends` rule estimated at total_edges·N^½ ≈ 54M vs an actual ~1.6k IMPORTS_FROM).
             let const_type = atom.args().get(2).and_then(|t| t.const_value()).is_some();
             if endpoint_bound {
-                // A bound endpoint is a per-node adjacency probe: its true fan-out is the
-                // node's degree, whose sound population-level proxy is the graph's AVERAGE
-                // degree (⌈E/N⌉), not √E. The √E model inflated every traversal hop ~300×
-                // on the dogfood graph (920 vs ~3), and a 3-hop chain rule (method_calls
-                // receiver chain) multiplied to 779M — a spurious E-PLAN-003.
-                avg_degree(stats)
+                // A bound endpoint is a per-node adjacency probe: with a computed
+                // per-endpoint distinct count the fan-out is rows-per-distinct-key
+                // (`live / distinct[endpoint]`), capped by `max_fanout`. UNKNOWN
+                // distinct falls back to the population-level proxy: the graph's
+                // AVERAGE degree (⌈E/N⌉), not √E — the √E model inflated every
+                // traversal hop ~300× on the dogfood graph (920 vs ~3), and a 3-hop
+                // chain rule (method_calls receiver chain) multiplied to 779M — a
+                // spurious E-PLAN-003. (The formulas are continuous: live/distinct
+                // converges to E/N as distinct[endpoint] → N.)
+                let endpoint = if pattern.first() == Some(&ArgMode::Bound) { 0 } else { 1 };
+                match distinct_of(endpoint) {
+                    Some(d) => probe_cap((live / d).max(1)),
+                    None => avg_degree(stats),
+                }
             } else if const_type {
-                narrowed_fanout(stats.total_edges)
+                // A CONST edge type narrows the scan even with both endpoints free
+                // (per-type edge index): rows-per-distinct-type when computed, else
+                // the narrowed fan-out of the live relation — the depends 54M pin.
+                match distinct_of(2) {
+                    Some(d) => (live / d).max(1),
+                    None => narrowed_fanout(live),
+                }
             } else {
-                stats.total_edges.max(1)
+                live.max(1)
             }
         }
-        "attr" => {
+        (PhysStrategy::Attribute, 3) => {
             // Bound-id reader (`attr(boundId, "key", V)`) is a genuine point lookup: it reads
             // ONE node's column, so its fan-out is exactly 1 — it binds the value of a single
             // attribute, never a set. Modeling it at √N over-estimated a chain of column reads
@@ -1174,24 +1417,45 @@ fn base_estimate(rel: &str, atom: &Atom, pattern: &[ArgMode], stats: &Stats) -> 
             // than a key-prefix scan, so cost it as a doubly-narrowed fan-out (not √N, which is
             // the key-prefix model). This keeps a join that keys two MODULE nodes by an exact
             // `file` value (functionally ~1 module per file) from being mis-estimated as N².
+            let total = if pstats.live_facts > 0 {
+                pstats.live_facts
+            } else {
+                stats.total_nodes
+            };
             let value_bound = pattern.get(2) == Some(&ArgMode::Bound);
             let key_bound = pattern.get(1) == Some(&ArgMode::Bound);
             if first_bound {
                 // Point column read: exactly one value.
                 1
             } else if key_bound && value_bound {
-                // Equality reverse-lookup: doubly narrowed (≈ N^¼).
-                narrowed_fanout(narrowed_fanout(stats.total_nodes))
+                // Equality reverse-lookup: rows-per-distinct-value when computed
+                // (capped by max_fanout), else doubly narrowed (≈ N^¼).
+                match distinct_of(2) {
+                    Some(d) => probe_cap((total / d).max(1)),
+                    None => narrowed_fanout(narrowed_fanout(total)),
+                }
             } else {
-                stats.total_nodes.max(1)
+                total.max(1)
             }
         }
+        // The §3.1 open predicate space (Nary/Composite/Reified — fact-backed from
+        // P4 on): live_facts when free, live/distinct on a bound first column with
+        // the max_fanout ceiling, whole-graph magnitude only when nothing is known
+        // («статистика по нему всё равно набирается компакцией, поэтому
+        // планировщик не слепнет»).
         _ => {
-            let magnitude = stats.total_nodes.max(stats.total_edges);
-            if first_bound {
-                narrowed_fanout(magnitude)
+            let live = if pstats.live_facts > 0 {
+                pstats.live_facts
             } else {
-                magnitude.max(1)
+                stats.total_nodes.max(stats.total_edges)
+            };
+            if first_bound {
+                match distinct_of(0) {
+                    Some(d) => probe_cap((live / d).max(1)),
+                    None => narrowed_fanout(live),
+                }
+            } else {
+                live.max(1)
             }
         }
     }
@@ -1283,6 +1547,7 @@ const UNBOUNDED: u64 = u64::MAX;
 /// Record an upper bound on the number of DISTINCT values each variable this leg newly
 /// binds can take. Only an upper bound is needed, and an over-estimate is always safe: it
 /// merely loosens the cap.
+#[allow(clippy::too_many_arguments)]
 fn record_domains(
     source: &LegSource,
     atom: &Atom,
@@ -1293,6 +1558,7 @@ fn record_domains(
     col_domains: &HashMap<String, Vec<u64>>,
     domains: &mut HashMap<String, u64>,
     support: &mut HashMap<String, BTreeSet<String>>,
+    catalog: &crate::derive::catalog::PredicateCatalog,
 ) {
     // A builtin is single-valued in its inputs, so everything it binds shares ONE support:
     // the union of its input variables' supports. `split` is the exception — it emits many
@@ -1341,7 +1607,12 @@ fn record_domains(
             continue;
         }
         let domain = match source {
-            LegSource::Base(rel) => base_column_domain(rel, atom, i, stats),
+            LegSource::Base { dispatch, .. } => {
+                let decl = catalog
+                    .get_by_id(dispatch.id)
+                    .expect("base dispatch resolves to a declared predicate");
+                base_column_domain(decl, atom, i, stats)
+            }
             LegSource::Derived { name, .. } => derived_column_domain(
                 name, i, stats, estimates, facts, col_domains,
             ),
@@ -1386,12 +1657,23 @@ fn derived_column_domain(
     }
 }
 
-/// Upper bound on the distinct values a base relation's column `i` can yield.
-fn base_column_domain(rel: &str, atom: &Atom, i: usize, stats: &Stats) -> u64 {
-    match rel {
+/// Upper bound on the distinct values a base relation's column `i` can yield —
+/// keyed, like [`base_estimate`], on the decl's physics (P3), with a computed
+/// `distinct[i]` (P6 compaction stats) taking precedence once it exists.
+fn base_column_domain(
+    decl: &crate::derive::catalog::PredicateDecl,
+    atom: &Atom,
+    i: usize,
+    stats: &Stats,
+) -> u64 {
+    use crate::derive::catalog::PhysStrategy;
+    if let Some(d) = decl.stats.distinct.get(i).copied().filter(|&d| d > 0) {
+        return d;
+    }
+    match (decl.strategy, decl.arity) {
         // (id, type): an id column is bounded by the live nodes of that type; the type
         // column by the number of distinct types the oracle knows.
-        "node" | "type" => match i {
+        (PhysStrategy::Attribute, 2) => match i {
             0 => {
                 let const_ty = atom.args().get(1).and_then(|t| t.const_value());
                 match const_ty {
@@ -1405,8 +1687,9 @@ fn base_column_domain(rel: &str, atom: &Atom, i: usize, stats: &Stats) -> u64 {
             _ => stats.total_nodes,
         },
         // (src, dst, type): endpoints are node ids; the type column is bounded — loosely
-        // but soundly — by the edge count.
-        "edge" | "incoming" => match i {
+        // but soundly — by the edge count. Endpoint-symmetric, so Forward (`edge`) and
+        // Reverse (`incoming`) share it.
+        (PhysStrategy::Adjacency, 3) => match i {
             0 | 1 => stats.total_nodes,
             _ => stats.total_edges,
         },
@@ -1414,7 +1697,7 @@ fn base_column_domain(rel: &str, atom: &Atom, i: usize, stats: &Stats) -> u64 {
         // value per node per key, so its distinct count is bounded by the node count. The
         // key column is unbounded by graph size (keys are a schema property) — but it is
         // never a head column in practice, so the loose node-count bound is enough.
-        "attr" => stats.total_nodes,
+        (PhysStrategy::Attribute, 3) => stats.total_nodes,
         _ => whole_graph_magnitude(stats),
     }
 }
@@ -1637,14 +1920,18 @@ mod tests {
 
     // ── P1 catalog wiring: zero planner behavior change ─────────────
 
-    /// The minimal-wiring differential (§3.1 P1): planning a fixture program (recursion,
-    /// negation, filters) (a) registers every rule-head name in the catalog and (b)
-    /// produces an IDENTICAL plan to the un-threaded entry — proving registration is
-    /// observational and changes NO planning decision. (The planning body itself is the
-    /// pre-P1 code, untouched; this pins that P3's consuming migration must flip this
-    /// test consciously.)
+    /// P3 EXTENSION of the P1 minimal-wiring differential (round-009 H7, consciously
+    /// extended): since P3 the catalog HAS a planning effect by design — this test now
+    /// pins (a) that the internal-catalog entry (`plan_program`) and the threaded entry
+    /// (`plan_program_with_catalog`) still agree plan-for-plan, (b) that rule heads
+    /// register strictly with the §3.1 defaults, and (c) that base legs carry the
+    /// plan-time-resolved `(PredicateId, SortOrder)` dispatch (`incoming` = edge's
+    /// Reverse run). Equality with the PRE-P3 planner is pinned separately by the
+    /// `plan_golden` fingerprints.
     #[test]
     fn catalog_registration_changes_no_plan() {
+        use crate::derive::catalog::PhysStrategy;
+        use crate::facts::SortOrder;
         let src = r#"
             same(X, Y) :- edge(X, Y, "ALIASES").
             same(X, Y) :- edge(Y, X, "ALIASES").
@@ -1653,6 +1940,7 @@ mod tests {
             linked(F, B) :- node(F, "HTTP_REQUEST"), edge(F, E1, "REFERS"),
                             node(B, "http:route"), edge(B, E2, "REFERS"),
                             same(E1, E2), gt(F, 0).
+            uses_rev(X, Y) :- node(X, "FUNCTION"), incoming(X, Y, "CALLS").
         "#;
         let prog = parse_ext_program(src).expect("parse");
         let strat = stratify(&prog).expect("stratify");
@@ -1664,40 +1952,72 @@ mod tests {
                 .expect("plan");
         assert_eq!(
             baseline, with_catalog,
-            "catalog registration must not change any planning decision"
+            "the internal and threaded catalog entries must plan identically"
         );
         // Every rule-head name is registered with the §3.1 defaults and its head arity.
-        for (name, arity) in [("same", 2), ("flagged", 1), ("linked", 2)] {
+        for (name, arity) in [("same", 2), ("flagged", 1), ("linked", 2), ("uses_rev", 2)] {
             let decl = catalog.get(name).unwrap_or_else(|| panic!("{name} registered"));
             assert_eq!(decl.arity, arity);
-            assert_eq!(decl.strategy, crate::derive::catalog::PhysStrategy::Nary);
+            assert_eq!(decl.strategy, PhysStrategy::Nary);
         }
-        // Base five + the three heads; body-only names (gt is a builtin) register nothing.
-        assert_eq!(catalog.len(), 8);
+        // Base five + the four heads; builtin body names register nothing.
+        assert_eq!(catalog.len(), 9);
         assert!(catalog.get("gt").is_none(), "builtins are not predicates in the catalog");
+        // (c) P3 dispatch resolution on the emitted legs: `edge` legs carry edge's id
+        // Forward; the `incoming` leg carries EDGE's id with the Reverse run.
+        let edge_id = catalog.get("edge").unwrap().id;
+        let mut saw_edge = 0;
+        let mut saw_incoming = 0;
+        for plan in &with_catalog {
+            for leg in &plan.legs {
+                if let LegSource::Base { name, dispatch } = &leg.source {
+                    match name.as_str() {
+                        "edge" => {
+                            saw_edge += 1;
+                            assert_eq!(dispatch.id, edge_id);
+                            assert_eq!(dispatch.order, SortOrder::Forward);
+                        }
+                        "incoming" => {
+                            saw_incoming += 1;
+                            assert_eq!(dispatch.id, edge_id, "incoming resolves to edge's id");
+                            assert_eq!(dispatch.order, SortOrder::Reverse);
+                        }
+                        _ => {}
+                    }
+                    assert_eq!(dispatch.strategy, catalog.get_by_id(dispatch.id).unwrap().strategy);
+                }
+            }
+        }
+        assert!(saw_edge > 0 && saw_incoming > 0, "fixture covers both runs");
     }
 
-    /// A rule head that SHADOWS a base-relation name (planner semantics: the stratum
-    /// check wins over BASE_RELATIONS) keeps planning exactly as before P1 — the
-    /// name-level get-or-declare registers nothing new and never rejects.
+    /// P3 CONSCIOUS FLIP of the P1 shadowing pin (round-009 H3b / ledger round-005
+    /// C3): a rule head that shadows a base-relation name at a CONFLICTING arity is
+    /// now strict-head-validation `E-CAT-002`, not a silently-accepted shadow.
+    /// (Verified before flipping: no bundled stdlib pack and no tier-0 seed heads a
+    /// base-relation name.) A SAME-arity shadow still plans — the stratum check
+    /// keeps winning in classification.
     #[test]
-    fn base_shadowing_head_still_plans_and_registers_nothing_new() {
+    fn base_shadowing_head_arity_conflict_is_e_cat_002() {
         let src = r#"edge(X) :- node(X, "FUNCTION")."#;
         let prog = parse_ext_program(src).expect("parse");
         let strat = stratify(&prog).expect("stratify");
         let rules = prog.rules();
-        let baseline = plan_program(&rules, &strat, &stats(10, 10)).expect("plan");
+        let err = plan_program(&rules, &strat, &stats(10, 10))
+            .expect_err("edge/1 over base edge/3 must be rejected");
+        assert_eq!(err.code, PlanCode::CatalogRejected, "{err}");
+        assert_eq!(err.code.as_str(), "E-CAT-002");
+        // The catalog is not mutated by the rejected head.
         let mut catalog = crate::derive::catalog::PredicateCatalog::with_base_relations();
-        let with_catalog =
-            plan_program_with_catalog(&rules, &strat, &stats(10, 10), &mut catalog)
-                .expect("shadowing head must still plan");
-        assert_eq!(baseline, with_catalog);
-        assert_eq!(catalog.len(), 5, "no new decl for the shadowed base name");
-        assert_eq!(
-            catalog.get("edge").unwrap().arity,
-            3,
-            "the base declaration is not mutated by the shadowing head"
-        );
+        let _ = plan_program_with_catalog(&rules, &strat, &stats(10, 10), &mut catalog);
+        assert_eq!(catalog.get("edge").unwrap().arity, 3);
+        // Same-arity shadow: still plans (stratum wins over base classification).
+        let src = r#"edge(X, Y, T) :- node(X, "FUNCTION"), edge(X, Y, T)."#;
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        plan_program(&rules, &strat, &stats(10, 10))
+            .expect("a same-arity base shadow still plans");
     }
 
     // ── bound-first reorder ─────────────────────────────────────────
@@ -1720,7 +2040,11 @@ mod tests {
         assert_eq!(plan.legs[0].literal.atom().predicate(), "node");
         assert_eq!(plan.legs[1].literal.atom().predicate(), "gt");
         // The node generator binds the type column too; it is a base merge leg.
-        assert_eq!(plan.legs[0].source, LegSource::Base("node".to_string()));
+        assert!(
+            matches!(&plan.legs[0].source, LegSource::Base { name, .. } if name == "node"),
+            "node generator must be a base leg, got {:?}",
+            plan.legs[0].source
+        );
         assert_eq!(plan.legs[0].join, JoinKind::MergeOnTotal);
         // The filter is a no-join leg whose X arg is now bound.
         assert_eq!(plan.legs[1].join, JoinKind::None);
@@ -2067,5 +2391,283 @@ mod tests {
                 p.estimate
             );
         }
+    }
+    // ── P3: estimator formula-verbatim pins (round-009 H2) ──────────
+    //
+    // The two HISTORICAL regression classes and every base-five fallback formula,
+    // pinned mechanically: for each (relation × bind pattern) the catalog-driven
+    // `base_estimate` must emit EXACTLY the pre-P3 formula's value while
+    // distinct/max_fanout are unknown. Expected values are written THROUGH the
+    // formula helpers (avg_degree / narrowed_fanout) — formula-verbatim, not
+    // magic numbers.
+
+    /// Build the registered+populated catalog a plan entry would construct.
+    fn p3_catalog(st: &Stats) -> crate::derive::catalog::PredicateCatalog {
+        let mut cat = crate::derive::catalog::PredicateCatalog::with_base_relations();
+        cat.populate_base_live_stats(st.total_nodes, st.total_edges);
+        cat
+    }
+
+    /// Invoke the P3 `base_estimate` through the same dispatch resolution the
+    /// planner uses (`name` is the SURFACE name — `incoming`/`type` resolve
+    /// through the fold).
+    fn est(cat: &crate::derive::catalog::PredicateCatalog, name: &str, atom: &Atom, pattern: &[ArgMode], st: &Stats) -> u64 {
+        let d = cat.base_dispatch(name).expect("base name resolves");
+        base_estimate(cat.get_by_id(d.id).expect("decl"), atom, pattern, st)
+    }
+
+    #[test]
+    fn base_estimate_formula_verbatim_edge_family() {
+        // Deliberately DENSE graph so avg_degree ≠ narrowed_fanout ≠ total.
+        let st = stats_typed(1_000, 50_000, &[("FUNCTION", 300)]);
+        let cat = p3_catalog(&st);
+        let b = ArgMode::Bound;
+        let f = ArgMode::Free;
+        let edge_atom = Atom::new("edge", vec![v("X"), v("Y"), c("CALLS")]);
+        let edge_var_ty = Atom::new("edge", vec![v("X"), v("Y"), v("T")]);
+        for name in ["edge", "incoming"] {
+            let mut a = edge_atom.clone();
+            let mut a_var = edge_var_ty.clone();
+            if name == "incoming" {
+                a = Atom::new("incoming", edge_atom.args().to_vec());
+                a_var = Atom::new("incoming", edge_var_ty.args().to_vec());
+            }
+            // THE 300×-hop pin: a bound endpoint (either one) is the AVERAGE degree
+            // ⌈E/N⌉ — never √E (which would be 224 here vs the correct 50).
+            for pat in [[b, f, b], [f, b, b], [b, b, b]] {
+                assert_eq!(est(&cat, name, &a, &pat, &st), avg_degree(&st), "{name} bound-endpoint");
+                assert_eq!(est(&cat, name, &a, &pat, &st), 50);
+            }
+            // THE depends-54M pin: const type, free endpoints = narrowed fan-out of
+            // the live edge relation.
+            assert_eq!(est(&cat, name, &a, &[f, f, b], &st), narrowed_fanout(st.total_edges), "{name} const-type");
+            // Variable type, free endpoints: the whole live relation.
+            assert_eq!(est(&cat, name, &a_var, &[f, f, f], &st), st.total_edges, "{name} free scan");
+        }
+    }
+
+    #[test]
+    fn base_estimate_formula_verbatim_node_family() {
+        let st = stats_typed(1_000, 50_000, &[("FUNCTION", 300)]);
+        let cat = p3_catalog(&st);
+        let b = ArgMode::Bound;
+        let f = ArgMode::Free;
+        for name in ["node", "type"] {
+            // Const type present in the oracle: that type's live count; bound id
+            // narrows it.
+            let a = Atom::new(name, vec![v("X"), c("FUNCTION")]);
+            assert_eq!(est(&cat, name, &a, &[f, b], &st), 300, "{name} per-type oracle");
+            assert_eq!(est(&cat, name, &a, &[b, b], &st), narrowed_fanout(300), "{name} bound-id");
+            // ABSENT type with a populated oracle: ~0 live nodes (not "unknown"),
+            // floored at 1 by the generator floor — the MESSAGE_TYPE class (the
+            // pre-P3 formula's exact `magnitude.max(1)` on magnitude 0).
+            let a = Atom::new(name, vec![v("X"), c("MISSING_TYPE")]);
+            assert_eq!(est(&cat, name, &a, &[f, b], &st), 0u64.max(1), "{name} absent type ~0");
+            // Variable type: the whole node relation.
+            let a = Atom::new(name, vec![v("X"), v("T")]);
+            assert_eq!(est(&cat, name, &a, &[f, f], &st), st.total_nodes, "{name} var type");
+            // Empty oracle: const type falls back to total_nodes.
+            let st2 = stats(1_000, 50_000);
+            let cat2 = p3_catalog(&st2);
+            let a = Atom::new(name, vec![v("X"), c("FUNCTION")]);
+            assert_eq!(est(&cat2, name, &a, &[f, b], &st2), st2.total_nodes, "{name} empty oracle");
+        }
+    }
+
+    #[test]
+    fn base_estimate_formula_verbatim_attr_family() {
+        let st = stats_typed(1_000, 50_000, &[("FUNCTION", 300)]);
+        let cat = p3_catalog(&st);
+        let b = ArgMode::Bound;
+        let f = ArgMode::Free;
+        let a = Atom::new("attr", vec![v("X"), c("file"), v("V")]);
+        // Bound-id column read: exactly 1 — never √N (the depends four-column-read pin).
+        assert_eq!(est(&cat, "attr", &a, &[b, b, f], &st), 1);
+        assert_eq!(est(&cat, "attr", &a, &[b, b, b], &st), 1);
+        // Key+value equality reverse-lookup: doubly narrowed.
+        assert_eq!(
+            est(&cat, "attr", &a, &[f, b, b], &st),
+            narrowed_fanout(narrowed_fanout(st.total_nodes))
+        );
+        // Key-only (free id, free value): the whole node relation.
+        assert_eq!(est(&cat, "attr", &a, &[f, b, f], &st), st.total_nodes);
+    }
+
+    /// The GENERAL form the fallbacks specialize (spec §3.4 normative 2): once
+    /// distinct/max_fanout are computed (P6 compaction), a bound column estimates
+    /// `live/distinct[i]` with `max_fanout` as the probe ceiling — proven here on a
+    /// synthetic decl so the P3 code path is exercised, not dead.
+    #[test]
+    fn base_estimate_general_form_uses_distinct_and_max_fanout_when_computed() {
+        let st = stats_typed(1_000, 50_000, &[("FUNCTION", 300)]);
+        let mut cat = p3_catalog(&st);
+        // Simulate computed stats on the edge decl: 500 distinct sources, cap 40.
+        let edge_id = cat.base_dispatch("edge").unwrap().id;
+        {
+            // Test-side mutation through a scoped rebuild: declare a fresh catalog is
+            // not needed — reach the decl via the public iterator surface.
+            let decl = cat
+                .iter()
+                .find(|d| d.id == edge_id)
+                .expect("edge decl")
+                .clone();
+            let mut updated = decl;
+            updated.stats.distinct = vec![500, 400, 12].into_boxed_slice();
+            updated.stats.max_fanout = 40;
+            // Rebuild a catalog carrying the computed stats (decl-level replace).
+            let mut cat2 = crate::derive::catalog::PredicateCatalog::new();
+            for d in cat.iter() {
+                let mut nd = d.clone();
+                if nd.id == edge_id {
+                    nd.stats = updated.stats.clone();
+                }
+                nd.id = crate::derive::catalog::CatalogPredicateId(0);
+                cat2.declare(nd).expect("rebuild");
+            }
+            let decl2 = cat2.get("edge").unwrap();
+            let b = ArgMode::Bound;
+            let f = ArgMode::Free;
+            let a = Atom::new("edge", vec![v("X"), v("Y"), c("CALLS")]);
+            // live/distinct[0] = 50_000/500 = 100, capped by max_fanout 40.
+            assert_eq!(base_estimate(decl2, &a, &[b, f, b], &st), 40);
+            // live/distinct[1] = 50_000/400 = 125 → capped 40.
+            assert_eq!(base_estimate(decl2, &a, &[f, b, b], &st), 40);
+            // const type: live/distinct[2] = 50_000/12 = 4166 (no probe cap on scans).
+            assert_eq!(base_estimate(decl2, &a, &[f, f, b], &st), 50_000 / 12);
+        }
+    }
+
+    // ── P3: E-CAT-002 cases (round-009 H3) ──────────────────────────
+
+    /// (a-scoped) A body-only OPEN-SPACE predicate used at two arities in one
+    /// program: pre-P3 this was a silently-empty join; now it is a plan-time
+    /// `E-CAT-002`.
+    #[test]
+    fn open_space_body_predicate_arity_conflict_is_e_cat_002() {
+        let src = r#"
+            p0("c0").
+            q0(X) :- p0(X), mystery(X), mystery(X, X).
+        "#;
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let err = plan_program(&rules, &strat, &stats(100, 100))
+            .expect_err("mystery/1 vs mystery/2 must be rejected");
+        assert_eq!(err.code, PlanCode::CatalogRejected, "{err}");
+        assert_eq!(err.code.as_str(), "E-CAT-002");
+    }
+
+    /// (a-scoped, negated position) The arity conflict fires whether the second
+    /// occurrence is positive or negated — pre-P3 the negated leg was a VACUOUS
+    /// pass.
+    #[test]
+    fn open_space_negated_arity_conflict_is_e_cat_002() {
+        let src = r#"
+            p0("c0").
+            q0(X) :- p0(X), mystery(X), \+ mystery(X, X).
+        "#;
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let err = plan_program(&rules, &strat, &stats(100, 100))
+            .expect_err("negated mystery/2 vs mystery/1 must be rejected");
+        assert_eq!(err.code, PlanCode::CatalogRejected, "{err}");
+    }
+
+    /// (b) Strict head validation between the program's OWN heads: two clauses of
+    /// one predicate at different arities (the plan-level twin of E-BIND-002,
+    /// which fires earlier on the engine path).
+    #[test]
+    fn head_head_arity_conflict_is_e_cat_002() {
+        let src = "p(X) :- node(X, \"A\").\np(X, Y) :- edge(X, Y, \"E\").";
+        let prog = parse_ext_program(src).expect("parse");
+        // The stratifier may or may not object; the plan-time gate must. Build the
+        // registration directly to keep the test independent of stratifier order.
+        let mut cat = crate::derive::catalog::PredicateCatalog::with_base_relations();
+        cat.declare_strict("p", 1).expect("first arity");
+        let err = cat.declare_strict("p", 2).unwrap_err();
+        assert_eq!(err.code, "E-CAT-002");
+        drop(prog);
+    }
+
+    /// The ROFL F2 / §3.1 OPEN-SPACE half of round-009 H3: a body-only predicate at
+    /// ONE consistent arity is NOT an error — it registers under the default rule
+    /// and classifies as a non-recursive DERIVED leg (the legal empty relation the
+    /// executor serves via the missing-relation arm; never the pre-P3 unknown-name
+    /// fallback). Pinned here at the plan level; the output-level pins are the F2
+    /// exec tests and 12 tier-0 seeds.
+    #[test]
+    fn open_space_body_predicate_registers_and_classifies_as_empty_derived() {
+        let src = r#"
+            p0("c0").
+            q0(X) :- p0(X), p9(X).
+            q1(X) :- p0(X), \+ p9(X).
+        "#;
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let mut catalog = crate::derive::catalog::PredicateCatalog::with_base_relations();
+        let plans = plan_program_with_catalog(&rules, &strat, &stats(100, 100), &mut catalog)
+            .expect("an open-space body predicate is legal (F2)");
+        let p9 = catalog.get("p9").expect("registered under the §3.1 default rule");
+        assert_eq!(p9.arity, 1);
+        assert_eq!(p9.strategy, crate::derive::catalog::PhysStrategy::Nary);
+        let mut seen = 0;
+        for plan in &plans {
+            for leg in &plan.legs {
+                if leg.literal.atom().predicate() == "p9" {
+                    seen += 1;
+                    assert!(
+                        matches!(&leg.source, LegSource::Derived { name, recursive: false } if name == "p9"),
+                        "p9 must classify as a non-recursive derived (empty) leg, got {:?}",
+                        leg.source
+                    );
+                }
+            }
+        }
+        assert_eq!(seen, 2, "both the positive and the negated p9 legs planned");
+    }
+
+    /// Round-009 defect D1 (review blocker): a POSITIVE, variable-INTRODUCING
+    /// open-space leg at PROD-SCALE stats must still plan, with the leg
+    /// contributing exactly 1 — the pre-P3 `Builtin` leg estimate. The first P3
+    /// cut classified it `Derived` with no estimates entry, fell to
+    /// `derived_estimate`'s whole-graph None-fallback (95 000 × 1096 ≈ 1.04·10⁸ >
+    /// `MAX_MATERIALIZED_FACTS`) and tripped E-PLAN-003 on a today-accepted
+    /// program — the spec's availability HARD REJECT class. The fix seeds every
+    /// §3.1 open-space name at estimate 0 (empty by construction), so
+    /// `derived_estimate`'s Some(k) branch yields `k.max(1)` = 1.
+    #[test]
+    fn open_space_positive_var_introducing_leg_plans_at_prod_scale() {
+        let src = r#"hit(X, Y) :- node(X, "FUNCTION"), fresh_pred(X, Y)."#;
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let mut st = stats(413_000, 1_200_000);
+        st.nodes_by_type.insert("FUNCTION".to_string(), 95_000);
+        let plans = plan_program(&rules, &strat, &st)
+            .expect("a today-accepted open-space program must not trip E-PLAN-003 (availability hard reject)");
+        // Pre-P3 value: node leg 95 000 × open-space leg 1 (verified against the
+        // pre-P3 planner at be7d5de6 with this exact program and stats).
+        assert_eq!(plans[0].estimate, 95_000, "the open-space leg contributes 1, not the whole-graph fan-out");
+    }
+
+    /// Round-009 defect D1, free-free shape, on BOTH planner entry points: an
+    /// open-space leg with no bound column estimates 1 (the empty relation),
+    /// never the whole-graph magnitude (the first P3 cut said 1 200 000 —
+    /// cascade fuel for downstream `derived_estimate` q-error).
+    #[test]
+    fn open_space_free_free_leg_estimates_one_at_prod_scale() {
+        let src = r#"q(X, Y) :- fresh_pred(X, Y)."#;
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let st = stats(413_000, 1_200_000);
+        let plans = plan_program(&rules, &strat, &st).expect("plan");
+        assert_eq!(plans[0].estimate, 1, "pre-P3 value: the Builtin-classified leg estimated 1");
+        // The direct `plan_rule` path registers its own catalog and must seed the
+        // same open-space estimate context.
+        let plan = plan_rule(rules[0], &strat, &st).expect("plan_rule");
+        assert_eq!(plan.estimate, 1, "plan_rule seeds open-space names identically");
     }
 }

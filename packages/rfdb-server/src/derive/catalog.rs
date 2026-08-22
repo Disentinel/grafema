@@ -6,22 +6,26 @@
 //! «каталог живёт в манифесте» and the compaction-driven [`PredicateStats`] become true
 //! in P2/P3 when the store seam exists; P1 is normatively "no format change" (§10.4).
 //!
-//! Population in P1:
+//! Population (P1, made LIVE by P3):
 //! - [`PredicateCatalog::with_base_relations`] pre-registers exactly the five base
-//!   relations the planner serves from storage (`plan.rs` `BASE_RELATIONS`), with
-//!   arities matching the executor's builtin registry (locked by a drift-guard test).
-//! - [`PredicateCatalog::declare_default`] registers every rule-head name at plan
-//!   construction (`plan::plan_program_with_catalog`) — the single, minimal
-//!   "everything references the catalog" wiring. Registration is OBSERVATIONAL in P1:
-//!   no planning decision reads the catalog (guarded by a plan-equality test); the
-//!   `(PredicateId, SortOrder, bound_mask)` dispatch migration that makes the planner
-//!   consume it is P3 (§3.4).
+//!   relation SURFACE names the planner serves from storage, with arities matching
+//!   the executor's builtin registry (locked by a drift-guard test), and — P3 —
+//!   the name → [`BaseDispatch`] resolution the planner and executor key on
+//!   (`incoming` = `edge`'s Reverse run, `type` = `node`; §6.3 / §3.4).
+//! - [`PredicateCatalog::declare_strict`] registers every rule-head name (strict
+//!   arity validation, `E-CAT-002`) and every §3.1 open-space body-only name at
+//!   plan construction (`plan::plan_program_with_catalog`). Since P3 the planner
+//!   CONSUMES the catalog: base-leg classification via [`Self::base_dispatch`],
+//!   cardinality via each decl's [`PredicateStats`]
+//!   ([`Self::populate_base_live_stats`]).
 //!
 //! §2.7's reflexive predicates (`rule/2`, `asserted_by/2`, …) are deliberately NOT
 //! pre-declared: they have no facts and no consumers until P4, and a dead registry
 //! would be an empty implementation.
 
 use std::collections::HashMap;
+
+use crate::facts::SortOrder;
 
 /// A catalog-interned predicate identifier (§3.1: `u32`, dense, insertion-ordered
 /// within a catalog instance).
@@ -125,11 +129,16 @@ pub struct PredicateDecl {
 /// (arity/strategy/cardinality/temporal/semiring/key_cols/reverse/author_priority —
 /// everything except the assigned `id` and the runtime-mutable `stats`). A physical-axis
 /// difference is never silently dropped: P3+ dispatch and tag_fold key off
-/// semiring/key_cols. (`E-CAT-002`, the undeclared-predicate gate on the read path,
-/// is P3.)
+/// semiring/key_cols.
+///
+/// `E-CAT-002` (P3) — the undeclared/conflicting-predicate gate: strict head
+/// validation ([`PredicateCatalog::declare_head_strict`], ledger round-005 C3) and the
+/// FactStore read path's unknown-`CatalogPredicateId` rejection (migrated from P2's
+/// `E-CAT-001` per round-007-pre C10). At the planner it surfaces as
+/// `PlanCode::CatalogRejected` with the same stable string.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CatalogError {
-    /// The stable taxonomy code: `"E-CAT-001"`.
+    /// The stable taxonomy code: `"E-CAT-001"` | `"E-CAT-002"`.
     pub code: &'static str,
     /// Human-oriented hint (never load-bearing).
     pub detail: String,
@@ -143,12 +152,40 @@ impl std::fmt::Display for CatalogError {
 
 impl std::error::Error for CatalogError {}
 
+/// The plan-time-resolved dispatch key of a storage-served base-relation leg (P3,
+/// §3.4 normative 1): the OWNING predicate's catalog id and which declared run
+/// serves the leg. This is where the two name-level aliases dissolve (§6.3):
+/// `incoming` resolves to `edge`'s id with [`SortOrder::Reverse`] (incoming IS
+/// edge's reverse run), and `type` resolves to `node`'s id (the registry alias).
+/// The executor keys its generalized build-once instances on
+/// `(id, order, bound_column_mask)`; the estimator reads the resolved decl's
+/// physics + [`PredicateStats`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BaseDispatch {
+    /// Catalog id of the OWNING predicate (`incoming` → `edge`'s id, `type` →
+    /// `node`'s id).
+    pub id: CatalogPredicateId,
+    /// Which declared run serves the leg (§3.1 `key_cols` vs `reverse`).
+    pub order: SortOrder,
+    /// The owning decl's physical strategy — copied at resolution so the executor
+    /// (which holds no catalog) selects its build-once instance from the physics.
+    pub strategy: PhysStrategy,
+    /// The owning decl's arity (same rationale).
+    pub arity: u8,
+}
+
 /// The predicate catalog: name → id interning (dense `u32`, insertion order) plus the
 /// declarations.
 #[derive(Debug, Clone, Default)]
 pub struct PredicateCatalog {
     ids: HashMap<String, CatalogPredicateId>,
     decls: Vec<PredicateDecl>,
+    /// P3: name → storage-served dispatch key for the base-relation SURFACE names.
+    /// Populated by [`Self::with_base_relations`] only — rule heads and §3.1
+    /// open-space defaults never enter here, so `base_dispatch` is also the
+    /// planner's base-leg classification predicate (the single owner of what
+    /// used to be `plan.rs::BASE_RELATIONS`).
+    base_names: HashMap<String, BaseDispatch>,
 }
 
 impl PredicateCatalog {
@@ -158,21 +195,22 @@ impl PredicateCatalog {
         Self::default()
     }
 
-    /// A catalog pre-registered with exactly the five base relations the planner
-    /// serves from storage. Arities mirror the executor's builtin registry
-    /// (`builtin.rs` — `node/2`, `type/2`, `edge/3`, `incoming/3`, `attr/3`); the
-    /// name set mirrors `plan.rs` `BASE_RELATIONS` (drift-guarded by tests in both
-    /// directions).
+    /// A catalog pre-registered with exactly the five base relation SURFACE names
+    /// the planner serves from storage — since P3 this registration IS the owner of
+    /// the base name set (`plan.rs::BASE_RELATIONS` retired with round-009).
+    /// Arities mirror the executor's builtin registry (`builtin.rs` — `node/2`,
+    /// `type/2`, `edge/3`, `incoming/3`, `attr/3`; drift-guarded by a test).
     ///
     /// Reverse runs per the §6.3 normative matrix:
     /// - `edge` (Adjacency, key `(0,1)`) declares reverse `(1,0)` — the incoming run.
-    /// - `incoming` IS `edge`'s reverse run per §6.3, but the planner treats it as its
-    ///   own relation name (`plan.rs`), so P1 registers it as its own Adjacency decl
-    ///   keyed `(1,0)`; P3's dispatch migration folds it into `edge`'s reverse
-    ///   `SortOrder`.
+    /// - `incoming` IS `edge`'s reverse run per §6.3: since P3 its DISPATCH resolves
+    ///   to `(edge, Reverse)` ([`Self::base_dispatch`]); its own Adjacency decl keyed
+    ///   `(1,0)` is kept for the P2 facts layer (own-name fid identity) until P6's
+    ///   physical rebuild de-aliases it.
     /// - `node`/`type` (Attribute over the node-type column) and `attr` declare the
     ///   `(1,0)` reverse — §6.3 gives `node_type` a reverse run (today's `by_type` L1
-    ///   index) and the attr families (`file`/`name`) likewise.
+    ///   index) and the attr families (`file`/`name`) likewise; `type`'s dispatch
+    ///   resolves to `node` (the registry alias, dissolved at plan time since P3).
     pub fn with_base_relations() -> Self {
         let mut cat = Self::new();
         let adjacency = |name: &str, arity: u8, key: &[u8], rev: &[u8]| PredicateDecl {
@@ -201,16 +239,102 @@ impl PredicateCatalog {
             author_priority: Box::new([]),
             stats: PredicateStats::default(),
         };
-        // Registration order = the planner's BASE_RELATIONS order (ids are dense and
-        // insertion-ordered; NOT load-bearing — §9.2 forbids hashing interned ids).
-        cat.declare(attribute("node", 2)).expect("fresh catalog");
+        // Registration order = the historical planner base-relation order (ids are
+        // dense and insertion-ordered; NOT load-bearing — §9.2 forbids hashing
+        // interned ids).
+        let node = cat.declare(attribute("node", 2)).expect("fresh catalog");
         cat.declare(attribute("type", 2)).expect("fresh catalog");
-        cat.declare(adjacency("edge", 3, &[0, 1], &[1, 0]))
+        let edge = cat
+            .declare(adjacency("edge", 3, &[0, 1], &[1, 0]))
             .expect("fresh catalog");
         cat.declare(adjacency("incoming", 3, &[1, 0], &[0, 1]))
             .expect("fresh catalog");
-        cat.declare(attribute("attr", 3)).expect("fresh catalog");
+        let attr = cat.declare(attribute("attr", 3)).expect("fresh catalog");
+        // P3 dispatch resolution (§3.4 normative 1 / §6.3): the SURFACE names map to
+        // (owning id, run). `incoming` folds into edge's Reverse run and `type` into
+        // node — at the DISPATCH level only. The alias DECLS above are kept for the
+        // P2 facts layer (each still a legal own-name predicate with its own fid
+        // identity; Q4 explicitly permits the alias-decl form — the physical
+        // de-aliasing is P6's rebuild).
+        for (name, id, order) in [
+            ("node", node, SortOrder::Forward),
+            ("type", node, SortOrder::Forward),
+            ("edge", edge, SortOrder::Forward),
+            ("incoming", edge, SortOrder::Reverse),
+            ("attr", attr, SortOrder::Forward),
+        ] {
+            let owner = &cat.decls[id.0 as usize];
+            let dispatch = BaseDispatch {
+                id,
+                order,
+                strategy: owner.strategy,
+                arity: owner.arity,
+            };
+            cat.base_names.insert(name.to_string(), dispatch);
+        }
         cat
+    }
+
+    /// P3: resolve a base-relation SURFACE name to its storage dispatch key, or
+    /// `None` when the name is not storage-served (a rule head, an open-space
+    /// default, a builtin — the planner classifies those elsewhere).
+    pub fn base_dispatch(&self, name: &str) -> Option<BaseDispatch> {
+        self.base_names.get(name).copied()
+    }
+
+    /// P3: the plan-time [`PredicateStats`] population (round-009 H5 / open
+    /// question Q1): map the run's live relation magnitudes into the base decls'
+    /// `live_facts`/`live_asserts`. `node`/`type` and `attr` carry the live node
+    /// count (an attr row is a node column — the node count is the magnitude the
+    /// pre-P3 estimator used and the sound plan-time proxy until P6's compaction
+    /// stats count true attr rows); `edge`/`incoming` carry the live edge count.
+    /// `distinct`/`max_fanout` stay 0 and `updated_at_tx` stays 0 — the documented
+    /// "compaction stats never computed" state (P6 owns them); the estimator gates
+    /// its distinct-branch on `distinct[i] > 0`, which is what makes the P3 plans
+    /// provably identical to pre-P3.
+    pub fn populate_base_live_stats(&mut self, total_nodes: u64, total_edges: u64) {
+        for decl in &mut self.decls {
+            let live = match decl.strategy {
+                PhysStrategy::Adjacency => total_edges,
+                PhysStrategy::Attribute => total_nodes,
+                // Open-space / rule-head decls carry no storage-backed live count
+                // until P4 wires FactStore::stats() through here.
+                _ => continue,
+            };
+            decl.stats.live_facts = live;
+            decl.stats.live_asserts = live;
+        }
+    }
+
+    /// P3 strict registration (`E-CAT-002`, ledger round-005 C3): register a
+    /// program predicate name with the §3.1 default rule, REJECTING an arity
+    /// conflict with an existing declaration instead of silently returning it.
+    /// Used by the planner for BOTH rule heads (strict head validation — including
+    /// a head shadowing a base-relation name at a different arity, `edge/1` over
+    /// base `edge/3`: the round-009 conscious flip of the P1 shadowing pin) and
+    /// for the §3.1 open-space registration of body-only predicates (a name used
+    /// at two arities in one program was a silently-empty join pre-P3). A name
+    /// matching the existing decl's arity returns the existing id unmutated (a
+    /// same-arity base shadow still plans; the stratum check wins downstream).
+    pub fn declare_strict(
+        &mut self,
+        name: &str,
+        arity: u8,
+    ) -> Result<CatalogPredicateId, CatalogError> {
+        if let Some(&id) = self.ids.get(name) {
+            let existing = &self.decls[id.0 as usize];
+            if existing.arity != arity {
+                return Err(CatalogError {
+                    code: "E-CAT-002",
+                    detail: format!(
+                        "predicate '{name}/{arity}' conflicts with the declared '{name}/{}'",
+                        existing.arity
+                    ),
+                });
+            }
+            return Ok(id);
+        }
+        Ok(self.declare_default(name, arity))
     }
 
     /// Declare a predicate. Identical redeclaration (same name AND every declared field
@@ -326,19 +450,20 @@ impl PredicateCatalog {
 mod tests {
     use super::*;
 
+    /// P3 rewrite of the P1 drift guards (round-009 H7: they retired WITH the
+    /// `plan.rs::BASE_RELATIONS` const they guarded — the catalog is now the single
+    /// owner of the base name set). Each base SURFACE name's decl arity is still
+    /// mechanically locked to the executor's builtin registry.
     #[test]
     fn base_relations_registered_with_executor_arities() {
         let cat = PredicateCatalog::with_base_relations();
-        // Exactly the base relations, each arity read LIVE from the executor's builtin
-        // registry (builtin.rs `registry()`) — a mechanical lock like the name drift
-        // guard below, so an arity change in `registry()` fails HERE instead of
-        // silently diverging from the catalog registration.
         let registry = crate::derive::builtin::registry();
-        assert_eq!(cat.len(), crate::derive::plan::BASE_RELATIONS.len());
-        for name in crate::derive::plan::BASE_RELATIONS {
+        let base_names = ["node", "type", "edge", "incoming", "attr"];
+        assert_eq!(cat.len(), base_names.len());
+        for name in base_names {
             let executor_arity = registry
                 .iter()
-                .find(|b| b.name == *name)
+                .find(|b| b.name == name)
                 .unwrap_or_else(|| panic!("{name} must be an executor builtin"))
                 .arity;
             let decl = cat.get(name).unwrap_or_else(|| panic!("{name} registered"));
@@ -353,8 +478,9 @@ mod tests {
             );
             assert_eq!(decl.semiring, crate::storage_v2::types::BOOLTAG_SEMIRING_ID);
         }
-        // edge is Adjacency keyed (0,1) with reverse (1,0); incoming is the reverse-run
-        // VIEW registered as its own name, keyed (1,0) (folded into edge in P3).
+        // edge is Adjacency keyed (0,1) with reverse (1,0); incoming keeps its P2
+        // alias DECL keyed (1,0) for the facts layer while its DISPATCH resolves to
+        // edge's Reverse run (guarded below).
         let edge = cat.get("edge").unwrap();
         assert_eq!(edge.strategy, PhysStrategy::Adjacency);
         assert_eq!(&edge.key_cols[..], &[0, 1]);
@@ -364,20 +490,77 @@ mod tests {
         assert_eq!(&incoming.key_cols[..], &[1, 0]);
     }
 
-    /// Drift guard: the catalog's base-name set must equal the planner's
-    /// `BASE_RELATIONS` (plan.rs) so the P3 dispatch migration cannot silently diverge
-    /// from the P1 registration.
+    /// P3 §6.3 dispatch fold: `incoming` resolves to EDGE's id + Reverse, `type`
+    /// to NODE's id + Forward; the three physical names resolve to themselves
+    /// Forward; non-base names (heads, open-space defaults) never resolve.
     #[test]
-    fn base_names_match_plan_base_relations() {
-        let cat = PredicateCatalog::with_base_relations();
-        let catalog_names: std::collections::BTreeSet<&str> =
-            cat.iter().map(|d| d.name.as_str()).collect();
-        let plan_names: std::collections::BTreeSet<&str> =
-            crate::derive::plan::BASE_RELATIONS.iter().copied().collect();
-        assert_eq!(
-            catalog_names, plan_names,
-            "catalog base registration and plan.rs BASE_RELATIONS must stay in lockstep"
-        );
+    fn base_dispatch_folds_incoming_and_type_aliases() {
+        let mut cat = PredicateCatalog::with_base_relations();
+        let node = cat.get("node").unwrap().id;
+        let edge = cat.get("edge").unwrap().id;
+        let attr = cat.get("attr").unwrap().id;
+        for (name, id, order, strategy, arity) in [
+            ("node", node, SortOrder::Forward, PhysStrategy::Attribute, 2),
+            ("type", node, SortOrder::Forward, PhysStrategy::Attribute, 2),
+            ("edge", edge, SortOrder::Forward, PhysStrategy::Adjacency, 3),
+            ("incoming", edge, SortOrder::Reverse, PhysStrategy::Adjacency, 3),
+            ("attr", attr, SortOrder::Forward, PhysStrategy::Attribute, 3),
+        ] {
+            assert_eq!(
+                cat.base_dispatch(name),
+                Some(BaseDispatch { id, order, strategy, arity }),
+                "{name} dispatch"
+            );
+        }
+        // Rule heads and open-space defaults are NOT storage-served.
+        cat.declare_default("reaches", 2);
+        assert_eq!(cat.base_dispatch("reaches"), None);
+        assert_eq!(cat.base_dispatch("gt"), None, "builtins are not base-dispatched");
+    }
+
+    /// P3 strict registration: same-arity get-or-declare; conflicting arity is
+    /// `E-CAT-002` — including a base-relation shadow at a different arity (the
+    /// round-009 conscious flip of the P1 shadowing acceptance).
+    #[test]
+    fn declare_strict_rejects_arity_conflict_with_e_cat_002() {
+        let mut cat = PredicateCatalog::with_base_relations();
+        let a = cat.declare_strict("reaches", 2).expect("fresh declare");
+        let b = cat.declare_strict("reaches", 2).expect("same arity is idempotent");
+        assert_eq!(a, b);
+        let err = cat.declare_strict("reaches", 3).unwrap_err();
+        assert_eq!(err.code, "E-CAT-002");
+        // Base shadowing: same arity returns the base decl unmutated…
+        let edge_id = cat.declare_strict("edge", 3).expect("same-arity base shadow");
+        assert_eq!(edge_id, cat.get("edge").unwrap().id);
+        assert_eq!(cat.get("edge").unwrap().strategy, PhysStrategy::Adjacency);
+        // …a conflicting arity is E-CAT-002 (was silently accepted in P1).
+        assert_eq!(cat.declare_strict("edge", 1).unwrap_err().code, "E-CAT-002");
+    }
+
+    /// P3 plan-time stats population (round-009 H5): Adjacency decls carry the
+    /// live edge count, Attribute decls the live node count; distinct/max_fanout
+    /// and updated_at_tx stay 0 (compaction stats are P6's by name); open-space
+    /// decls stay zeroed.
+    #[test]
+    fn populate_base_live_stats_maps_the_oracle_magnitudes() {
+        let mut cat = PredicateCatalog::with_base_relations();
+        cat.declare_default("reaches", 2);
+        cat.populate_base_live_stats(413, 1200);
+        for (name, live) in [
+            ("node", 413),
+            ("type", 413),
+            ("attr", 413),
+            ("edge", 1200),
+            ("incoming", 1200),
+        ] {
+            let s = &cat.get(name).unwrap().stats;
+            assert_eq!(s.live_facts, live, "{name} live_facts");
+            assert_eq!(s.live_asserts, live, "{name} live_asserts");
+            assert!(s.distinct.is_empty(), "{name} distinct stays uncomputed");
+            assert_eq!(s.max_fanout, 0, "{name} max_fanout stays uncomputed");
+            assert_eq!(s.updated_at_tx, 0, "{name} 0 = compaction never computed");
+        }
+        assert_eq!(cat.get("reaches").unwrap().stats, PredicateStats::default());
     }
 
     #[test]
