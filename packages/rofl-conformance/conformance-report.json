@@ -4,8 +4,8 @@
       "rev": "052a4c5"
     },
     "rfdb": {
-      "gitSha": "6b51dbecdb7a248a8c68940bda28e4d27785024d",
-      "binary": "/home/dev/grafema-rofl/packages/rfdb-server/target/release/rfdb-server",
+      "gitSha": "a3c6e7656ff6729f62961dbc8216975c09663db2",
+      "binary": "/tmp/rofl-verify-target/release/rfdb-server",
       "serverVersion": "0.4.1",
       "protocolVersion": 3
     }
@@ -20,6 +20,26 @@
     "whynotChecks": {
       "passed": 554,
       "failed": 0
+    },
+    "store": {
+      "seeds": 120,
+      "seedsMeasured": 120,
+      "agreeWithText": 120,
+      "agreeWithOracle": 120,
+      "reflectedFactsTotal": 5168,
+      "emptyStoreControlsPassed": 120,
+      "storeModeConfirmed": 120,
+      "unreflectable": [],
+      "refusalControlCode": "E-REFLECT-003",
+      "divergences": [],
+      "witnessChecks": {
+        "passed": 325,
+        "failed": 0
+      },
+      "whynotChecks": {
+        "passed": 554,
+        "failed": 0
+      }
     }
   },
   "tier1": [
@@ -93,7 +113,7 @@
       "tier": "tier1",
       "verdict": "RED",
       "reason_code": "missing:whynot-shape",
-      "evidence": "v0 why() is a recursive tree '<key> <= r<fnv1a> @tick N' (api.ts:250-277); RFDB witness for path(a,c) is flat {ruleAstHash, body[]} (derive/exec.rs:279-287) — witness EXISTS but the tree shape is unrepresentable. Live-probed R15/P5a: explainDatalogFact on u_r ← u_q ← u_p returns ONE level (body=[u_q(a)], no nesting into u_p) and carries no tick, and the rule id is a 64-hex ast hash, not v0's r<fnv1a>"
+      "evidence": "v0 why() is a recursive tree '<key> <= r<fnv1a> @tick N' (api.ts:250-277); RFDB witness for path(a,c) is flat {ruleAstHash, body[]} (derive/exec.rs:298-306) — witness EXISTS but the tree shape is unrepresentable. Live-probed R15/P5a: explainDatalogFact on u_r ← u_q ← u_p returns ONE level (body=[u_q(a)], no nesting into u_p) and carries no tick, and the rule id is a 64-hex ast hash, not v0's r<fnv1a>"
     },
     {
       "id": "p2-persp-isolation",
@@ -253,7 +273,7 @@
       "tier": "tier1",
       "verdict": "RED",
       "reason_code": "missing:holes",
-      "evidence": "load with an evaluation budget: v0 commits partial results + hole/2 facts on exhaustion (engine.ts:188-198); RFDB aborts without committing (E-codes, engine_v2.rs:681-684) — the known policy contradiction, ТЗ P1 mandates holes"
+      "evidence": "load with an evaluation budget: v0 commits partial results + hole/2 facts on exhaustion (engine.ts:188-198); RFDB aborts without committing (E-codes, engine_v2.rs:749-750) — the known policy contradiction, ТЗ P1 mandates holes"
     },
     {
       "id": "boot-load",
@@ -341,12 +361,19 @@
       "found": "green",
       "match": true,
       "note": "120 seeds with no translator normalization for F1/F2/F3 (translate.ts workarounds removed; engine fixes regression-pinned in exec.rs/plan.rs/stratify.rs)"
+    },
+    {
+      "claim": "exp_rules_from_store_agrees",
+      "expected": "green",
+      "found": "green",
+      "match": true,
+      "note": "120 of 120 seeds carried whole by Projection T (0 refused on the merits, refusal control E-REFLECT-003); 5168 rule-facts written; each seed's answer taken from a fresh database whose SAME selectors returned 0 rows before reflection"
     }
   ],
   "discoveredEngineFindings": [
-    "F1 FIXED (was: RFDB `\\+ p(X, _)` — wildcard inside a NEGATED literal — silently returned wrong answers; probe q0(X) :- p0(X), \\+ p2(X, _) with p0(c0). p0(c1). p2(c1,c9). returned {c0, c1}, correct {c0}). Engine fix: exec.rs join_derived negated branch now anti-joins existentially over the non-wildcard columns (regression: exec.rs::negated_derived_leg_with_wildcard_is_existential). The translator's aux-predicate projection workaround is REMOVED — negated wildcards go to the wire as-is.",
-    "F2 FIXED (was: a body literal over a predicate with NO facts and NO rules gave no response past the 30s EvalLimits deadline — a stratify.rs debug_assert panic killed the DEBUG-build connection thread). Engine fix: the debug_assert removed, unknown predicate = legal empty relation; deadline abort pinned by exec.rs::unknown_predicate_leg_expired_deadline_aborts_with_e_exec_001. The translator's empty-predicate elimination workaround is REMOVED — unknown predicates go to the wire as-is.",
-    "F3 FIXED (was: a fully-ground body literal in a multi-literal rule tripped E-PLAN-003 after planner reordering; q0(X) :- p0(X), p1(\"c1\",\"c2\"). rejected). Engine fix: plan.rs shares_no_binding treats an empty bound set as \"preceding legs were filters\", so a ground probe is safe in any position (regression: plan.rs::ground_probe_leg_is_safe_in_any_position). The translator's ground-body-literal rejection is REMOVED; the structural cross-join guard for genuinely disconnected generators remains.",
+    "F1 FIXED (was: RFDB `\\+ p(X, _)` — wildcard inside a NEGATED literal — silently returned wrong answers; probe q0(X) :- p0(X), \\+ p2(X, _) with p0(c0). p0(c1). p2(c1,c9). returned {c0, c1}, correct {c0}). Engine fix: the negated branch of join_derived in exec.rs now anti-joins existentially over the non-wildcard columns (regression test negated_derived_leg_with_wildcard_is_existential in exec.rs). The translator's aux-predicate projection workaround is REMOVED — negated wildcards go to the wire as-is.",
+    "F2 FIXED (was: a body literal over a predicate with NO facts and NO rules gave no response past the 30s EvalLimits deadline — a debug_assert in the stratifier panicked and killed the DEBUG-build connection thread; that assert no longer exists, so there is nothing left to cite). Engine fix: the debug_assert removed, unknown predicate = legal empty relation; deadline abort pinned by the regression test unknown_predicate_leg_expired_deadline_aborts_with_e_exec_001 in exec.rs. The translator's empty-predicate elimination workaround is REMOVED — unknown predicates go to the wire as-is.",
+    "F3 FIXED (was: a fully-ground body literal in a multi-literal rule tripped E-PLAN-003 after planner reordering; q0(X) :- p0(X), p1(\"c1\",\"c2\"). rejected). Engine fix: shares_no_binding in plan.rs treats an empty bound set as \"preceding legs were filters\", so a ground probe is safe in any position (regression test ground_probe_leg_is_safe_in_any_position in plan.rs). The translator's ground-body-literal rejection is REMOVED; the structural cross-join guard for genuinely disconnected generators remains.",
     "executeDatalog \"first rule head\" includes ground FACTS (a fact is a bodyless rule): the target predicate's first RULE must be hoisted above all facts or the response is the first fact's relation with empty bindings. (Wire-protocol dialect rule, NOT a bug — the translator keeps the hoist.)"
   ]
 }
