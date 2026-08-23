@@ -54,7 +54,13 @@ export interface QueryGraphArgs {
 export interface ExplainFactArgs {
   /** The derived predicate (e.g. "depends"). */
   predicate: string;
-  /** The fact's ground key tuple as wire-string terms (node ids as decimal, else string). */
+  /**
+   * The fact's ground key tuple as wire-string terms. Untagged text keeps its plain reading
+   * (all-digit = node id, else string); a typed value is tagged — `~id:` `~int:` `~float:`
+   * `~big:` `~str:"…"` `~term:"f"(…)`. `~int:1` and `1` name DIFFERENT facts (integer 1 vs
+   * node id 1). Grammar: `WIRE_KEY_GRAMMAR` in definitions/query-tools.ts, mirroring the
+   * server's single codec in `datalog::wire`.
+   */
   key: string[];
   /** Optional Datalog program (derive engine); empty/omitted ⇒ the bundled depends.dl. */
   source?: string;
@@ -74,7 +80,11 @@ export interface SimDatalogArgs {
 export interface ExplainGapArgs {
   /** The derived predicate of the MISSING fact (e.g. "depends"). */
   predicate: string;
-  /** The missing fact's ground key tuple as wire-string terms (node ids as decimal). */
+  /**
+   * The missing fact's ground key tuple as wire-string terms — same grammar as
+   * {@link ExplainFactArgs.key}: untagged = node id (all-digit) or string, and `~id:` `~int:`
+   * `~float:` `~big:` `~str:"…"` `~term:"f"(…)` for a typed value.
+   */
   key: string[];
   /** Optional Datalog program (derive engine); empty/omitted ⇒ the bundled depends.dl. */
   source?: string;

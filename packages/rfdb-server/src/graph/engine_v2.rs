@@ -1442,19 +1442,19 @@ impl GraphEngineV2 {
     }
 }
 
-/// Stringify a derive-engine Datalog [`crate::datalog::Value`] for the wire (ids render as their
-/// decimal u128, mirroring how v1 surfaces `Value::Id`/`Value::Str` to `WireViolation`).
-/// P1 additions, both deliberate wire choices: a `BigInt` renders as its exact decimal
-/// STRING (JSON numbers above 2^53 are unsafe on the JS side); a `Term` as its canonical
-/// text `functor(a1,…,an)` — the same surface `Value::as_str` defines.
+/// Stringify a derive-engine Datalog [`crate::datalog::Value`] for the wire — THE codec,
+/// [`crate::datalog::value_to_wire_string`], not a local copy of it.
+///
+/// This is deliberate rather than incidental. [`GraphEngineV2::eval_derive`] rows become
+/// `WireViolation` bindings (`queryDatalog`/`checkGuarantee`) and [`GraphEngineV2::sim_derive`]
+/// rows go to the wire verbatim (`simDatalog`), and BOTH are addresses, not just display text:
+/// the documented what-if loop (see `sim_derive`) is "a coverage gap names an unbound premise;
+/// sim proves a candidate edge closes it", which means feeding a row element back in as an
+/// `explainDatalogFact` / `explainDatalogGap` `key`. If this rendered `Int(1)` as `1` while the
+/// explain path parsed `1` as `Id(1)`, that round trip would silently name a different fact.
+/// One codec on every value-to-text boundary is what makes the loop closed.
 fn value_to_wire_string(v: &crate::datalog::Value) -> String {
-    match v {
-        crate::datalog::Value::Id(id) => id.to_string(),
-        crate::datalog::Value::Str(s) => s.clone(),
-        crate::datalog::Value::Int(i) => i.to_string(),
-        crate::datalog::Value::Float(f) => f.to_string(),
-        crate::datalog::Value::BigInt(_) | crate::datalog::Value::Term(_) => v.as_str(),
-    }
+    crate::datalog::value_to_wire_string(v)
 }
 
 // ── GraphStore Implementation ───────────────────────────────────────
@@ -2563,27 +2563,71 @@ impl GraphEngineV2 {
 #[cfg(test)]
 mod wire_value_tests {
     use super::value_to_wire_string;
-    use crate::datalog::{TermBlob, Value};
+    use crate::datalog::{wire_string_to_value, TermBlob, Value};
     use std::sync::Arc;
 
-    /// P1: the wire renders a BigInt as its exact decimal STRING and a Term as its
-    /// canonical text — explicit, deliberate arms (JSON numbers >2^53 are unsafe).
+    /// The derive-engine wire (`eval_derive` → `WireViolation`, `sim_derive` → `simDatalog`)
+    /// renders through THE codec, so every row element is an address the explain path can read
+    /// back — the property `queryDatalog`/`simDatalog` rows need to be usable as
+    /// `explainDatalogFact` keys.
+    ///
+    /// This REPLACES an earlier expectation that pinned the two P1 arms as `BigInt` → bare
+    /// decimal and `Term` → `functor(a1,…)`. Those expectations were wrong, and the
+    /// `readback_of_the_former_expectation` assertions below are the proof rather than an
+    /// assertion of it: the exact texts they demanded are read back by the SAME protocol's
+    /// parse direction as a *different value* — the BigInt text as a node `Id`, the term text
+    /// as a `Str`. That is precisely the type-loss R-14 removes, so keeping them would have
+    /// been pinning the defect. Coverage is strictly wider here, not narrower: both variants
+    /// are still exercised, now under round-trip rather than under a fixed byte string.
     #[test]
-    fn wire_renders_bigint_decimal_and_term_text() {
-        assert_eq!(
-            value_to_wire_string(&Value::big_int(1_i128 << 68)),
-            "295147905179352825856"
-        );
+    fn derive_wire_rows_render_through_the_codec_and_read_back_as_themselves() {
+        let big = Value::big_int(1_i128 << 68);
         let term = Value::Term(Arc::new(TermBlob {
             functor: "pair".to_string(),
             args: vec![Value::Str("a".into()), Value::Int(7)].into_boxed_slice(),
         }));
-        assert_eq!(value_to_wire_string(&term), r#"pair("a",7)"#);
-        // The four pre-P1 surfaces are unchanged.
+
+        // ── Why the former expectation was wrong ──
+        // `Value::as_str`'s surface is not readable back: these two texts name other values.
+        let readback_of_the_former_expectation = [
+            (
+                "295147905179352825856",
+                Value::Id(295_147_905_179_352_825_856),
+            ),
+            (r#"pair("a",7)"#, Value::Str(r#"pair("a",7)"#.to_string())),
+        ];
+        for (text, other) in readback_of_the_former_expectation {
+            assert_eq!(
+                wire_string_to_value(text),
+                other,
+                "{text:?} names a DIFFERENT value on the read path — it cannot be the wire form"
+            );
+        }
+
+        // ── What the codec renders instead: round-trippable, for every variant ──
+        for v in [
+            big,
+            term,
+            Value::Id(42),
+            Value::Str("s".into()),
+            Value::Int(-3),
+            Value::Float(1.5),
+        ] {
+            assert_eq!(
+                wire_string_to_value(&value_to_wire_string(&v)),
+                v,
+                "derive row element must survive the wire: {v:?}"
+            );
+        }
+
+        // The common surfaces stay byte-identical to the pre-codec wire, so ordinary
+        // violation bindings (node ids and names) are unchanged.
         assert_eq!(value_to_wire_string(&Value::Id(42)), "42");
         assert_eq!(value_to_wire_string(&Value::Str("s".into())), "s");
-        assert_eq!(value_to_wire_string(&Value::Int(-3)), "-3");
-        assert_eq!(value_to_wire_string(&Value::Float(1.5)), "1.5");
+        assert_eq!(
+            value_to_wire_string(&Value::Str("IMPORTS_FROM".into())),
+            "IMPORTS_FROM"
+        );
     }
 }
 

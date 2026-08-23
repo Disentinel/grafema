@@ -507,6 +507,29 @@ export abstract class BaseRFDBClient extends EventEmitter implements IRFDBClient
    * why()/explain_fact (spec §11): explain ONE supporting derivation of `predicate(key)` under a
    * v2 program (empty `source` ⇒ the bundled depends.dl). Resolves to `null` when the fact is not
    * derivable by the program (a true negative). derive-engine-only — rejects when RFDB_DERIVE_ENGINE is off.
+   *
+   * ## `key` wire grammar
+   *
+   * The server's value domain is typed while the key travels as text, so an untagged decimal
+   * alone cannot name every fact. Untagged text keeps its plain reading — an all-digit string
+   * is a NODE ID, anything else is a string — and a typed value is tagged:
+   *
+   * | form | value |
+   * |---|---|
+   * | `1`, `IMPORTS_FROM` | node id 1 / the string (untagged, the common case) |
+   * | `~id:1` | node id 1 (tagged spelling of the bare decimal) |
+   * | `~int:1` | the INTEGER 1 — a different fact from `1` |
+   * | `~float:1.5` | float (also `inf`, `-inf`, `NaN`) |
+   * | `~big:295147905179352825856` | integer of any width |
+   * | `~str:"42"` | the string "42" — needed because `42` would read as a node id |
+   * | `~term:"pair"(~str:"a",~int:7)` | compound term; 0-ary has no parens (`~term:"nil"`) |
+   *
+   * Inside `~str:` / `~term:` quotes, `"` and `\` are backslash-escaped. Anything that is not a
+   * COMPLETE tagged form (e.g. `~int:5x`, or a path like `~/.grafema/bin`) keeps the plain
+   * reading, so a client that never uses the tags is unaffected. The same grammar renders
+   * every value the server sends back ({@link FactWitness} body tuples, {@link simDatalog}
+   * rows), so a returned element can be pasted straight back in as a key — one codec,
+   * `datalog::wire`, serves both directions.
    */
   async explainDatalogFact(
     source: string,
@@ -521,7 +544,9 @@ export abstract class BaseRFDBClient extends EventEmitter implements IRFDBClient
    * what-if/sim (spec §6): predict the NEW `predicate` facts a hypothetical overlay of
    * nodes+edges would create under a v2 program (empty `source` ⇒ the bundled depends.dl),
    * WITHOUT committing anything. Resolves to the predicted-new ground tuples (sim ∖ base) as
-   * wire strings. derive-engine-only — rejects when RFDB_DERIVE_ENGINE is off.
+   * wire strings, in the same grammar {@link explainDatalogFact}'s `key` documents — so a
+   * predicted row can be fed straight back into explain_fact/explain_gap.
+   * derive-engine-only — rejects when RFDB_DERIVE_ENGINE is off.
    */
   async simDatalog(
     source: string,
@@ -538,6 +563,8 @@ export abstract class BaseRFDBClient extends EventEmitter implements IRFDBClient
    * premise prefix + the first unsatisfiable premise. Resolves to `null` when there is no gap
    * (the fact is derivable, or no clause head matches the key). The companion to simDatalog:
    * gap names the missing premise, sim verifies that adding it produces the fact. v2-only.
+   *
+   * `key` uses the wire grammar documented on {@link explainDatalogFact}.
    */
   async explainDatalogGap(
     source: string,

@@ -673,6 +673,12 @@ export async function handleExplainFact(args: ExplainFactArgs): Promise<ToolResu
   if (witness.body.length === 0) {
     lines.push('  (the rule body has no positive facts — supported by builtins/constants alone)');
   } else {
+    // Tuple elements are printed VERBATIM, tags and all (`~int:1`, `~str:"42"`). Deliberate:
+    // they are addresses, not decoration — a body fact printed here is meant to be pasted back
+    // in as the `key` of another explain_fact/explain_gap call, and the tag is what makes that
+    // land on the same fact. Prettifying them here would need a second, client-side codec —
+    // the exact duplication `datalog::wire` exists to remove — and would silently produce keys
+    // that name a different value. The grammar is documented on the tool (WIRE_KEY_GRAMMAR).
     for (const f of witness.body) {
       lines.push(`  • ${f.predicate}(${f.tuple.join(', ')})`);
     }
@@ -772,6 +778,8 @@ export async function handleExplainGap(args: ExplainGapArgs): Promise<ToolResult
     lines.push('  satisfied premises: (none)');
   } else {
     lines.push('  satisfied premises:');
+    // Verbatim wire strings, tags included — see the note in handleExplainFact: these are
+    // pasteable addresses, so they must not be prettified into a second representation.
     for (const f of gap.satisfied) {
       lines.push(`    • ${f.predicate}(${f.tuple.join(', ')})`);
     }

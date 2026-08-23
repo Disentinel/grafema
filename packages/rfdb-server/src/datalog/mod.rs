@@ -19,11 +19,13 @@ mod parser;
 mod eval;
 mod eval_explain;
 mod utils;
+mod wire;
 
 pub use types::*;
 pub use parser::*;
 pub use eval::*;
 pub use eval_explain::*;
+pub use wire::{value_to_wire_string, wire_string_to_value};
 
 #[cfg(test)]
 mod tests;

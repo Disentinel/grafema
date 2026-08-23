@@ -5,6 +5,30 @@
 import type { ToolDefinition } from './types.js';
 import { DEFAULT_LIMIT, MAX_LIMIT } from '../utils.js';
 
+/**
+ * The wire grammar for one `key` element — the single client-side description of it, shared by
+ * explain_fact and explain_gap so the two can never drift apart.
+ *
+ * The server's value domain is typed (node id / string / int / float / bigint / term) while a
+ * key travels as text, so an untagged decimal alone cannot name every fact: `1` is the node id
+ * 1, and a rule head carrying the integer literal `1` is a DIFFERENT fact. The tags are how the
+ * typed one is addressed. They mirror `datalog::wire` on the server, which is the single codec
+ * for BOTH directions — so any element of a returned tuple (an explain body fact, a sim_datalog
+ * row, a violation binding) can be pasted straight back in as a key.
+ */
+const WIRE_KEY_GRAMMAR = `Each \`key\` element is a wire-string term. Untagged text keeps its plain reading —
+an all-digit string is a NODE ID, anything else is a string — which covers the common
+case. A typed value is addressed with a tag:
+- \`~id:<decimal>\` node id (the tagged spelling of the bare decimal)
+- \`~int:<decimal>\` integer, e.g. \`~int:1\` — NOT the same fact as \`1\`, which is node id 1
+- \`~float:<number>\` float, e.g. \`~float:1.5\` (also \`inf\`, \`-inf\`, \`NaN\`)
+- \`~big:<decimal>\` integer of any width, e.g. \`~big:295147905179352825856\`
+- \`~str:"<text>"\` string, needed when the plain form would be misread (\`~str:"42"\` ≠ \`42\`);
+  inside the quotes, \`"\` and backslash are backslash-escaped
+- \`~term:"<functor>"(<arg>,...)\` compound term with tagged args, e.g.
+  \`~term:"pair"(~str:"a",~int:7)\`; a 0-ary term has no parens (\`~term:"nil"\`)
+Returned tuples use this same grammar, so a result element can be pasted back in as a key.`;
+
 export const QUERY_TOOLS: ToolDefinition[] = [
   {
     name: 'query_graph',
@@ -364,9 +388,10 @@ Default program is the bundled depends.dl, so the common use is explaining a
 MODULE→MODULE dependency edge:
 - "Why does module A depend on B?" → explain_fact(predicate="depends", key=["<A_id>", "<B_id>"])
 
-For a custom rule, pass its source. \`key\` is the fact's ground tuple as wire-string
-terms (node ids as their decimal id). A null/"no derivation" result means the fact
-is not derivable by the program (it does not hold as a derived fact).`,
+For a custom rule, pass its source. A null/"no derivation" result means the fact is
+not derivable by the program (it does not hold as a derived fact).
+
+${WIRE_KEY_GRAMMAR}`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -377,7 +402,9 @@ is not derivable by the program (it does not hold as a derived fact).`,
         key: {
           type: 'array',
           items: { type: 'string' },
-          description: 'The fact\'s ground key tuple as wire-string terms (node ids as decimal).',
+          description:
+            'The fact\'s ground key tuple as wire-string terms. Untagged = node id (all-digit) or string; '
+            + 'tag a typed value: ~id: ~int: ~float: ~big: ~str:"…" ~term:"f"(…). See the tool description.',
         },
         source: {
           type: 'string',
@@ -402,7 +429,11 @@ dependencies:
 Hypothetical node ids may be NEW (invent a decimal id) — an edge may reference them,
 so you can simulate a wholly new module/import, not only bridge existing nodes.
 The committed graph is never touched. Companion to explain_gap: gap names the missing
-premise, sim verifies that adding it produces the fact.`,
+premise, sim verifies that adding it produces the fact.
+
+Predicted rows come back as wire-string tuples in the same grammar explain_fact's \`key\`
+uses (untagged = node id or string; \`~int:\` \`~float:\` \`~big:\` \`~str:\` \`~term:\` for typed
+values), so a predicted row can be pasted straight into explain_fact/explain_gap.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -459,7 +490,9 @@ MODULE→MODULE dependency:
 - "Why does module A NOT depend on B?" → explain_gap(predicate="depends", key=["<A_id>", "<B_id>"])
 
 A "no gap" result means the fact actually IS derivable (use explain_fact), or no rule
-head matches the key.`,
+head matches the key.
+
+${WIRE_KEY_GRAMMAR}`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -470,7 +503,9 @@ head matches the key.`,
         key: {
           type: 'array',
           items: { type: 'string' },
-          description: 'The missing fact\'s ground key tuple as wire-string terms (node ids as decimal).',
+          description:
+            'The missing fact\'s ground key tuple as wire-string terms. Untagged = node id (all-digit) or '
+            + 'string; tag a typed value: ~id: ~int: ~float: ~big: ~str:"…" ~term:"f"(…). See the tool description.',
         },
         source: {
           type: 'string',

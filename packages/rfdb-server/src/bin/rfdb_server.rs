@@ -3199,29 +3199,29 @@ fn dispatch_explain_datalog_gap(
     }))
 }
 
-/// Parse a wire term: an all-`u128` string is a node id ([`rfdb::datalog::Value::Id`]); anything
-/// else is a string literal ([`rfdb::datalog::Value::Str`]). Inverse of
-/// [`datalog_value_to_wire_string`]; mirrors how the v2 read path treats numeric ids.
+/// Parse a wire term into a datalog [`rfdb::datalog::Value`] — the READ direction of the
+/// protocol's value surface (the `key` arrays of `ExplainDatalogFact`/`ExplainDatalogGap`).
+///
+/// The exact inverse of [`datalog_value_to_wire_string`]; both directions are the single
+/// codec in [`rfdb::datalog::wire_string_to_value`]'s module, which documents the tag
+/// grammar and the rule that resolves the bare-decimal ambiguity (a bare decimal is a node
+/// id; every other variant is tagged; a `Str` is escaped only when the verbatim form would
+/// be re-read as something else). Untagged input keeps its legacy reading, so clients that
+/// never learn the tags keep working.
 fn wire_string_to_value(s: &str) -> rfdb::datalog::Value {
-    match s.parse::<u128>() {
-        Ok(id) => rfdb::datalog::Value::Id(id),
-        Err(_) => rfdb::datalog::Value::Str(s.to_string()),
-    }
+    rfdb::datalog::wire_string_to_value(s)
 }
 
-/// Render a datalog [`rfdb::datalog::Value`] to its wire string (ids → decimal u128, strings
-/// verbatim). P1 additions, both deliberate wire choices: a `BigInt` renders as its exact
-/// decimal STRING (JSON numbers above 2^53 are unsafe on the JS side); a `Term` as its
-/// canonical text `functor(a1,…,an)` — both exactly `Value::as_str`'s surface, which the
-/// four pre-P1 arms already mirrored.
+/// Render a datalog [`rfdb::datalog::Value`] to its wire string — the WRITE direction of the
+/// protocol's value surface (`WireBodyFact.tuple`).
+///
+/// The exact inverse of [`wire_string_to_value`]: node ids and ordinary strings render
+/// byte-identically to the pre-codec wire, while `Int`/`Float`/`BigInt`/`Term` (and any
+/// `Str` whose text would be re-read as another variant) render tagged so the value survives
+/// the round trip with its type. See [`rfdb::datalog::value_to_wire_string`]'s module for the
+/// grammar and the ambiguity rule.
 fn datalog_value_to_wire_string(v: &rfdb::datalog::Value) -> String {
-    match v {
-        rfdb::datalog::Value::Id(id) => id.to_string(),
-        rfdb::datalog::Value::Str(s) => s.clone(),
-        rfdb::datalog::Value::Int(i) => i.to_string(),
-        rfdb::datalog::Value::Float(f) => f.to_string(),
-        rfdb::datalog::Value::BigInt(_) | rfdb::datalog::Value::Term(_) => v.as_str(),
-    }
+    rfdb::datalog::value_to_wire_string(v)
 }
 
 /// Convert a `QueryResult` into a `WireExplainResult`
@@ -7991,6 +7991,173 @@ mod protocol_tests {
         let none = dispatch_explain_datalog_fact(&engine, "", "depends", &[b, a], cf())
             .expect("explain succeeds under v2");
         assert!(none.is_none(), "depends(b,a) is not derivable (only a→b imports) → null witness");
+
+        match prev {
+            Some(v) => std::env::set_var("RFDB_DERIVE_ENGINE", v),
+            None => std::env::remove_var("RFDB_DERIVE_ENGINE"),
+        }
+    }
+
+    /// Owner ruling R-14 end-to-end: a TYPED integer key survives the wire and reaches the
+    /// engine. The rule head carries a bare `1`, which the derive parser types as
+    /// `Value::Int(1)` — so the fact is `numbered(<id>, Int(1))`, NOT `numbered(<id>, Id(1))`.
+    /// Before the wire codec the two-arm parser turned every all-digit key into `Value::Id`,
+    /// so this fact was unexplainable through the protocol at all; now `~int:1` names it and
+    /// the untagged `1` correctly names the DIFFERENT (non-existent) `Id(1)` fact.
+    #[test]
+    fn explain_fact_reads_a_typed_integer_key_off_the_wire() {
+        let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+        let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
+        std::env::set_var("RFDB_DERIVE_ENGINE", "on");
+
+        let mut engine = GraphEngineV2::create_ephemeral();
+        engine.add_nodes(vec![NodeRecord {
+            id: string_to_id("m"),
+            node_type: Some("MODULE".to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".to_string(),
+            exported: false,
+            replaces: None,
+            deleted: false,
+            name: Some("m".to_string()),
+            file: Some("m.js".to_string()),
+            metadata: None,
+            semantic_id: Some("m".to_string()),
+        }]);
+        engine.flush().unwrap();
+
+        let src = r#"numbered(X, 1) :- node(X, "MODULE")."#;
+        let cf = || Arc::new(AtomicBool::new(false));
+        let m = string_to_id("m").to_string();
+
+        // Tagged: the key parses to Value::Int(1) — the value the head literal produces.
+        let typed = dispatch_explain_datalog_fact(
+            &engine,
+            src,
+            "numbered",
+            &[m.clone(), "~int:1".to_string()],
+            cf(),
+        )
+        .expect("explain succeeds under v2")
+        .expect("numbered(m, Int(1)) is derivable → Some witness");
+        assert!(
+            !typed.rule_ast_hash.is_empty(),
+            "witness names the deriving rule"
+        );
+
+        // Untagged: the same digits mean the node id Value::Id(1) — a different fact, and one
+        // the program does not derive. The two readings are now distinguishable on the wire.
+        let as_node_id =
+            dispatch_explain_datalog_fact(&engine, src, "numbered", &[m, "1".to_string()], cf())
+                .expect("explain succeeds under v2");
+        assert!(
+            as_node_id.is_none(),
+            "untagged `1` is the node id Id(1), which numbered/2 never derives → null witness"
+        );
+
+        match prev {
+            Some(v) => std::env::set_var("RFDB_DERIVE_ENGINE", v),
+            None => std::env::remove_var("RFDB_DERIVE_ENGINE"),
+        }
+    }
+
+    /// R-14, the OTHER half: the query/sim surface and the explain surface speak the SAME
+    /// wire grammar, so a value that comes OUT of one can go straight INTO the other.
+    ///
+    /// This is the property the engine's own what-if loop rests on ("a coverage gap names an
+    /// unbound premise; sim proves a candidate edge closes it" — `GraphEngineV2::sim_derive`):
+    /// closing it means copying a row element into an `explainDatalogFact` key. It holds only
+    /// because `engine_v2::value_to_wire_string` renders through THE codec instead of a local
+    /// copy — restore the copy's `Int(i) => i.to_string()` arm and the binding below is `"1"`,
+    /// which the explain path reads as the node id `Id(1)`, so the witness comes back `None`.
+    #[test]
+    fn a_query_row_element_is_a_valid_explain_key_for_the_same_fact() {
+        let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+        let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
+        std::env::set_var("RFDB_DERIVE_ENGINE", "on");
+
+        let mut engine = GraphEngineV2::create_ephemeral();
+        engine.add_nodes(vec![NodeRecord {
+            id: string_to_id("m"),
+            node_type: Some("MODULE".to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".to_string(),
+            exported: false,
+            replaces: None,
+            deleted: false,
+            name: Some("m".to_string()),
+            file: Some("m.js".to_string()),
+            metadata: None,
+            semantic_id: Some("m".to_string()),
+        }]);
+        engine.flush().unwrap();
+
+        // Two rules on purpose: the inner head carries the integer LITERAL, the outer binds it
+        // to a variable — so `N` is a real result column (a constant head column is not
+        // surfaced as a binding at all) carrying `Value::Int(1)`.
+        let src = r#"numbered(X, N) :- one(X, N).
+one(X, 1) :- node(X, "MODULE")."#;
+        let cf = || Arc::new(AtomicBool::new(false));
+        let m = string_to_id("m").to_string();
+
+        // 1. Ask the QUERY surface (queryDatalog/checkGuarantee → WireViolation bindings).
+        let violations = match dispatch_execute_datalog(&engine, src, false, cf())
+            .expect("derive-engine query succeeds")
+        {
+            DatalogResponse::Violations(v) => v,
+            _ => panic!("derive-engine query must answer with Violations"),
+        };
+        assert_eq!(violations.len(), 1, "one MODULE ⇒ one numbered/2 fact");
+        let n = violations[0]
+            .bindings
+            .get("N")
+            .expect("column N is bound")
+            .clone();
+
+        // 2. It is TYPED on the wire — the integer literal, not a bare decimal that the
+        //    explain path would re-read as a node id.
+        assert_eq!(
+            n, "~int:1",
+            "the query surface renders Int(1) through the codec"
+        );
+
+        // 3. Paste it straight back in as an explain key. Same text, same fact, real witness.
+        let witness =
+            dispatch_explain_datalog_fact(&engine, src, "numbered", &[m.clone(), n.clone()], cf())
+                .expect("explain succeeds under v2")
+                .expect("the query row names a derivable fact → Some witness");
+        assert!(
+            !witness.rule_ast_hash.is_empty(),
+            "witness names the deriving rule"
+        );
+
+        // 4. The SIM surface agrees byte-for-byte: a hypothetical MODULE yields the same typed
+        //    column, so a predicted row is addressable exactly the same way.
+        let sim_rows = dispatch_sim_datalog(
+            &engine,
+            src,
+            "numbered",
+            &[WireSimNode {
+                id: string_to_id("hypothetical").to_string(),
+                node_type: "MODULE".to_string(),
+                name: "hypothetical".to_string(),
+                file: "h.js".to_string(),
+            }],
+            &[],
+            cf(),
+        )
+        .expect("sim succeeds under v2");
+        assert_eq!(
+            sim_rows.len(),
+            1,
+            "only the hypothetical module's fact is new"
+        );
+        assert_eq!(
+            sim_rows[0][1], n,
+            "sim renders the same value with the same bytes as query and explain"
+        );
 
         match prev {
             Some(v) => std::env::set_var("RFDB_DERIVE_ENGINE", v),
