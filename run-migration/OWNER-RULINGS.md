@@ -209,3 +209,119 @@ Binding: stage 2's premise phase produces the explicit list of the 32 subjects a
 and node_view (S2-d) does not land until it exists. If the cause turns out to be a converter
 lossiness class rather than a property of the base, that is a stage-1 defect and comes back as a
 repair round — which is precisely why it must be answered BEFORE anything is built on sid.
+
+## R-12. R-11 CLOSED — and its premise was WRONG. Recorded as a repair, not a rewrite.
+
+R-11 asserted "503,372 id-metadata subjects vs 503,404 sid subjects; the delta is a set difference
+over two enumerable sets". **That premise is false and I authored it.** Measured in R12: the
+symmetric difference between the two subject sets is **0** — nothing is lost and nothing is
+invented. The 32 is a *value-multiplicity* surplus on the id side: 503,404 distinct entity ids
+collapse onto 503,372 distinct sid strings because **21 sid strings are each shared by 2–4
+entities** (53 ids in total, Σ(|g|−1) = 32).
+
+Cause, verified from code at HEAD (I re-read both sites myself, they are exactly as reported):
+- `packages/rfdb-server/src/graph/engine_v2.rs:102-104` — when an incoming node carries no
+  `semantic_id`, the engine mints the fallback `format!("{}:{}@{}", node_type, name, file)`.
+- `plugins/type-inference.mjs:569-582` — mints `builtin::${className}::${methodName}` with
+  `file: '<builtin>'` and `metadata.parentClass`, and sends **no `semanticId`**.
+  Two builtin methods with the same method name under different parent classes therefore both
+  fall back to `METHOD:<name>@<builtin>` and alias.
+
+**Ruling: NOT a converter defect.** The skew is upstream, in the producer's id-minting path, and is
+a pre-existing property of the source graph. Stage 1 is cleared; no repair round against the
+converter. R-11's binding requirement (produce the 32 with a stated cause before anything is built
+on sid) is **satisfied**.
+
+**BINDING CONSEQUENCE, load-bearing for stage 2:** `node_view` keyed on entity id is safe and
+lossless. The reverse direction MUST be typed `sid -> Set<Id>` behind a mechanical uniformity gate,
+and MUST NEVER be typed `sid -> Id` / `Option<Id>` — that type silently drops 32 entities. This is a
+type-level obligation, not a comment.
+
+Carried-forward caveat (R12 §10 declared it honestly): the 53/21/Σ=32 enumeration was measured in
+its premise phase and NOT re-run after compaction. The MECHANISM above is verified at HEAD; the
+counts are not. Next round re-runs the group-by-sid enumeration and asserts Σ(|g|−1) == 32 with
+every member `type=METHOD, file=<builtin>`.
+
+## R-13. kernel-grep contract scope (answers R-req-1) — BAN THE VOCABULARY, NOT THE ENGLISH
+
+The v0 contract (`scripts/kernel_grep.ts:52-57`) forbids appendix-program relation names from
+appearing as code identifiers in kernel source. Ported literally to `packages/rfdb-server/src/`, the
+eight names delta/reach/flow/step/move/dep/temp/close hit **828 times**. Those hits are ordinary
+English used by a storage engine (`delta` manifests, `close()` handles, `temp` files) that predates
+ROFL and means something unrelated.
+
+**Ruling: the contract's PURPOSE is that the kernel must not special-case the appendix programs —
+it must not know their vocabulary.** A literal identifier ban is a proxy that, at 828 hits, has
+clearly stopped measuring that. Scope it to what the purpose actually requires:
+1. The ban applies to **string literals and match arms that name an appendix RELATION as data** —
+   i.e. the kernel must contain no `"reach"`, no `rel == "flow"`, no lookup table keyed by these.
+2. It does NOT apply to Rust identifiers, field names, English prose in comments, or unrelated
+   engine concepts.
+3. Scope = the evaluator + storage kernel (`derive/`, `storage_v2/`, `graph/`), NOT test files,
+   fixtures, `.dl` stdlib packs, or the conformance harness.
+
+The gate must be MECHANICAL (a script with an exact count, checked in), and its first run records
+the baseline. If the narrowed ban still returns non-zero, that is a real finding — report it, do not
+re-narrow the rule to make it pass. Re-narrowing a failing gate to reach green is forbidden.
+
+## R-14. Typed numerics on the wire (answers R-req-2) — FIX THE WIRE, IT IS A DEFECT
+
+`bin/rfdb_server.rs:3205-3210` `wire_string_to_value` has exactly two arms: parses-as-u128 →
+`Value::Id`, else `Value::Str`. The derive parser already produces typed literals
+(`parser_ext.rs:1041-1054` yields `Term::Lit(Value::Int(0))` for a bare `0`).
+
+**Ruling: this is a WIRE DEFECT, not a missing engine feature, and it gets fixed — it is not an
+acceptable long-term asymmetry.** Grounds: (a) the engine side is already typed, so the wire is
+losing information the engine has; (b) `Value::Term` renders at `:3212-3219` but has no parse arm,
+so the round-trip is asymmetric in the same function — one fix, both bugs; (c) it is a prerequisite
+for `has_premise(R,1)`, `V = 20`, and boot itself, so it blocks the widest lane; (d) an untyped wire
+in front of a typed engine will silently corrupt A3 determinism comparisons later, when the same
+logical value crosses as `Id` in one path and `Str` in another.
+
+Binding: the fix carries an explicit round-trip property test over every `Value` variant
+(Int/Id/Str/Term at minimum) asserting `parse(render(v)) == v`. A fix without that test does not
+count as landed. Back-compat for existing untagged clients is the implementer's problem to solve
+explicitly, not to skip.
+
+## R-15. Where perspectives live (answers R-req-3) — A REAL EVALUATOR DIMENSION. Name-mangling REJECTED.
+
+Perspectives sit behind 14 boot-loading tier-1 cases plus `p2-persp-isolation` — the single widest
+blocker in the set.
+
+**Ruling: perspective becomes a first-class dimension threaded through evaluation.** Encoding
+`breach[audit]` into the relation name is explicitly REJECTED. Grounds: name-mangling makes the
+perspective invisible to the evaluator, so per-perspective isolation, cross-perspective queries, and
+`canonicalState()` would each have to re-parse the mangled name to recover a value the system
+deliberately threw away; and the converted fact store **already carries a perspectives column**
+(`/tmp/rofl-out-f1/rofl_manifest.json`), so mangling would put the wire and the store in permanent
+disagreement — precisely the class of split that A4's cross-backend differential exists to catch.
+
+This is the largest single item in the language lane and it is BOUNDED (a column threaded through
+the evaluator, not a research problem), so per the completeness standard it is FINISHED, not parked.
+It gets its own design round before any implementation.
+
+## R-16. PROCESS: a failed agent must never reach a downstream prompt as `null`
+
+R12 lost its second design lane: `design:native-rfdb` died on
+`API Error: Claude's response exceeded the 32000 output token maximum`. Per `parallel()` semantics a
+failed thunk resolves to `null`, and the script interpolated `JSON.stringify(designB, null, 1)`
+straight into three downstream prompts. Critic B was therefore handed the literal text
+`=== THE DESIGN YOU MUST TRY TO BREAK (premise: NATIVE RFDB) === null` and still returned a verdict
+of **UNSOUND with 10 fatal flaws**. That verdict is an artifact and is hereby **struck from the
+record** — `critique_verdicts.native_rfdb` in R12's result must not be cited by any later round.
+(The other null-fed agent noticed and honestly reviewed the premise instead; the synthesizer also
+caught it and set `grafted_from_loser: []` rather than inventing content. The round's own honesty is
+what makes this recoverable.)
+
+**Consequence: R12 was a two-design judge panel on paper and a one-design round in fact.** Its
+committed design of record is a post-critique synthesis of design A only, which means **the design
+of record itself has never been adversarially reviewed.** That review is the next round's first job.
+
+Binding rules for every future round I author:
+1. Every `parallel()` / `pipeline()` result is `.filter(Boolean)`-ed, or explicitly guarded, BEFORE
+   interpolation into another prompt. Never `JSON.stringify(x)` a value that can be `null`.
+2. If a fan-out lane dies, the round must either re-run it or **declare the degradation in its
+   result** — a panel that silently loses a member must not report as a panel.
+3. Structured-output schemas for long-form design agents get SPLIT (or their required-field count
+   cut) so a single response cannot approach the 32k output ceiling. R12's `DESIGN_SCHEMA` had 11
+   required fields, several being arrays of objects — that is what blew the limit.
