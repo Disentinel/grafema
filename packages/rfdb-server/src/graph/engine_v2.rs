@@ -6218,11 +6218,12 @@ mod tests {
     // ── W8 Part 3: durable D2 pin (maintain cache across restart) ────
 
     /// Program-key derivation — must mirror `eval_derive_materialize_cached` exactly.
+    /// It CALLS the production derivation rather than re-deriving it: a hand-copied
+    /// mirror silently rots the moment the key gains a component (it did, when the key
+    /// started carrying the rule-source bit), and the test then asserts against a
+    /// sidecar filename that production never writes. These W8 databases are text-mode.
     fn w8_program_key(source: &str) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        source.hash(&mut hasher);
-        hasher.finish()
+        GraphEngineV2::derive_program_key(source, crate::derive::RuleSource::Text)
     }
 
     /// materialize → (drop = server restart) → reopen → materialize again must take the
