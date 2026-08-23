@@ -35,6 +35,15 @@ pub struct DeclJson {
     pub kind: String,
     /// Tuple arity.
     pub arity: u8,
+    /// Column NAMES, one per arity position, in tuple order. Without this a
+    /// reader holding `span/5` sees five untyped Ints and cannot tell `column`
+    /// from `endLine`; the meaning would live only in converter source.
+    pub columns: Vec<String>,
+    /// What column 0 (the subject) ranges over: `node` (a v2 node id), `edge`
+    /// (a computed edge EID, see [`SchemesJson::eid`]), `node|edge` (a metadata
+    /// predicate carrying both, discriminated only by which universe the id is
+    /// in), or `pair` (Adjacency: columns 0 and 1 are both node ids).
+    pub subject_universe: String,
     /// §3.1 strategy name: `Adjacency` | `Attribute` | `Composite` | `Nary`.
     pub strategy: String,
     /// §2.3: `Functional` | `MultiValued`.
@@ -110,6 +119,79 @@ pub struct ProvenanceJson {
     pub converter: String,
 }
 
+/// The derivation rules a reader needs to reconstruct the store's identifiers
+/// WITHOUT the converter source (round-012-pre Q2: the catalog must be
+/// "complete enough to reconstruct the semantics"). Every field is a fixed
+/// string constant of this format version — they are recorded, not computed, so
+/// they cost nothing and cannot drift silently: if the converter ever changes a
+/// scheme it must change the string, and an old store keeps its old string.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SchemesJson {
+    /// Canonical value encoding these tuples are hashed and sorted under.
+    pub canon: String,
+    /// How a fact id (fid) is derived from (perspective NAME, predicate NAME,
+    /// tuple).
+    pub fid: String,
+    /// How an edge's subject id (EID) is derived. Variant A stores no
+    /// `edge_of/3`, so edge-metadata subjects are ONLY reconstructible from
+    /// this rule.
+    pub eid: String,
+    /// The §5.2 shard routing function.
+    pub routing: String,
+    /// The per-segment bloom probe function and parameter rule.
+    pub bloom: String,
+    /// How the u32 author component of [`RoflManifest::canonical_state_sha`]
+    /// and of every physical row is derived from the author table.
+    pub author_interning: String,
+    /// The §9.1 state-digest formula, by name and version tag.
+    pub state_sha: String,
+}
+
+impl SchemesJson {
+    /// The rules of format version [`FORMAT_TAG`].
+    pub fn v1() -> Self {
+        Self {
+            canon: "canon-v1 (crate::derive::canon::canon_bytes; tag byte then \
+                    big-endian payload for Id/Int/Float, LEB128 length-prefixed bytes \
+                    for Str/BigInt/Term; Str order is shortlex = LEB128(len) then bytes)"
+                .to_string(),
+            fid: "fid = LE-u128 of the first 16 bytes of \
+                  BLAKE3(\"ROFL-FID-canon-v1\\n\" || canon(perspective NAME) || \
+                  canon(predicate NAME) || varint(arity) || canon(col) for each column)"
+                .to_string(),
+            eid: "edge subject (EID) = fid(\"main\", <EDGE_TYPE predicate name>, \
+                  [Id(src), Id(dst)]) — the §6.2 variant-A decomposition stores no \
+                  edge_of/3, so an edge-metadata subject is reconstructible ONLY by \
+                  recomputing this fid over the edge's own adjacency tuple"
+                .to_string(),
+            routing: "shard = (LE-u64 of the first 8 bytes of \
+                      BLAKE3(canon(row[key_cols[0]]))) % shard_count"
+                .to_string(),
+            bloom: "built only when EVERY row's leading key column is Id-typed; \
+                    k = 2, m_bits = clamp(next_power_of_two(rows * 10), 64, 1<<26); \
+                    probes are (id >> 64) % m_bits and (id as u64) % m_bits"
+                .to_string(),
+            author_interning: "shortlex-rank: the u32 author component is the \
+                               position of the author NAME in the shortlex-sorted \
+                               `authors` table of THIS manifest. It is invariant to \
+                               interning order but is NOT injective over names \
+                               across stores — a store whose author set sorts to a \
+                               different table assigns different ranks, and two \
+                               different author sets that sort to the same ranks are \
+                               indistinguishable in canonical_state_sha. See \
+                               run-migration/OWNER-RULINGS.md open question OQ-C3-1."
+                .to_string(),
+            state_sha: "ROFL-STATE-v1 (design doc §9.1): BLAKE3(\"ROFL-STATE-v1\\n\" || \
+                        varint(max tick) || for each live fact in §9.2 canonical order \
+                        (perspective NAME, predicate NAME, tuple canon bytes): \
+                        fact-key canon bytes || varint(|assertions|) || for each \
+                        assertion LE-u32(author rank) || LE-u64(tick) || \
+                        LE-u16(semiring) || varint(|tag|) || tag)"
+                .to_string(),
+        }
+    }
+}
+
 /// The single-version manifest of a converted store.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RoflManifest {
@@ -121,6 +203,8 @@ pub struct RoflManifest {
     pub perspectives: Vec<String>,
     /// Author table in canonical shortlex order; id = position.
     pub authors: Vec<String>,
+    /// The identifier-derivation rules of this format version.
+    pub schemes: SchemesJson,
     /// The full persisted catalog, in id (= shortlex rank) order.
     pub catalog: Vec<DeclJson>,
     /// Segment descriptors in (predicate, direction fwd-then-rev, shard) order.

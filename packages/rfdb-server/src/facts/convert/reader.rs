@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 
 use crate::datalog::Value;
 use crate::derive::canon::push_varint;
@@ -19,7 +20,7 @@ use crate::facts::{fact_key_canon_bytes, fid, PERSPECTIVE_MAIN_NAME};
 use crate::storage_v2::types::BOOLTAG_SEMIRING_ID;
 
 use super::manifest::RoflManifest;
-use super::segment::{read_segment, DIR_FWD, DIR_REV};
+use super::segment::{decode_segment, DIR_FWD, DIR_REV};
 use super::{cerr, tuple_canon, ConvertError, EdgeIn, NodeIn, META_PREFIX, SPAN_KEYS};
 
 /// The reader's fact map: (pred id, persp id, tuple canon bytes) →
@@ -45,6 +46,34 @@ impl ConvertedStore {
                     decl.id
                 ));
             }
+            if decl.columns.len() != decl.arity as usize {
+                return Err(format!(
+                    "predicate '{}' declares arity {} but names {} columns",
+                    decl.name,
+                    decl.arity,
+                    decl.columns.len()
+                ));
+            }
+        }
+        // The AUTHOR table's shortlex order is load-bearing, not cosmetic: R-1a
+        // F3 compares authors by NAME in shortlex order, and both the converter
+        // and this reader compare interned author IDS instead — which is only
+        // the same relation while id == shortlex rank. A store whose table is
+        // out of order would silently resolve Functional conflicts differently
+        // from the base. Same argument for perspectives (§9.2 ordering).
+        for (label, table) in [
+            ("author", &manifest.authors),
+            ("perspective", &manifest.perspectives),
+        ] {
+            for w in table.windows(2) {
+                if super::segment::canon_str_cmp(&w[0], &w[1]) != std::cmp::Ordering::Less {
+                    return Err(format!(
+                        "{label} table is not in strict shortlex order: '{}' precedes '{}' — \
+                         interned ids would stop being canonical ranks",
+                        w[0], w[1]
+                    ));
+                }
+            }
         }
         Ok(Self {
             root: root.to_path_buf(),
@@ -65,7 +94,47 @@ impl ConvertedStore {
             if desc.direction != dir_name {
                 continue;
             }
-            let seg = read_segment(&self.root.join(&desc.path)).map_err(|e| e.to_string())?;
+            let path = self.root.join(&desc.path);
+            let bytes =
+                std::fs::read(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
+            // INTEGRITY: the manifest's per-segment sha256 is the only thing that
+            // makes the descriptor a commitment rather than a comment. Digest the
+            // exact buffer we are about to decode (never a second read of the
+            // path), and check the declared byte length too — a truncation that
+            // preserved a prefix hash would otherwise pass.
+            if bytes.len() as u64 != desc.bytes {
+                return Err(format!(
+                    "segment length drift at {}: {} bytes on disk vs {} in descriptor",
+                    desc.path,
+                    bytes.len(),
+                    desc.bytes
+                ));
+            }
+            let mut hasher = Sha256::new();
+            hasher.update(&bytes);
+            let digest: String = hasher
+                .finalize()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            if digest != desc.sha256 {
+                return Err(format!(
+                    "segment sha256 drift at {}: {digest} on disk vs {} in descriptor",
+                    desc.path, desc.sha256
+                ));
+            }
+            let seg = decode_segment(&bytes, &desc.path).map_err(|e| e.to_string())?;
+            let decl = self
+                .manifest
+                .catalog
+                .get(desc.predicate as usize)
+                .ok_or_else(|| format!("segment {} names undeclared predicate {}", desc.path, desc.predicate))?;
+            if seg.arity != decl.arity {
+                return Err(format!(
+                    "arity drift at {}: segment declares {} columns, predicate '{}' declares {}",
+                    desc.path, seg.arity, decl.name, decl.arity
+                ));
+            }
             if seg.pred_id != desc.predicate || seg.direction != direction {
                 return Err(format!(
                     "descriptor/segment drift at {}: pred {} dir {} vs descriptor pred {} \
@@ -146,8 +215,24 @@ impl ConvertedStore {
 
 /// §9.1 canonical state sha over the reader's live fact set, in §9.2 canonical
 /// order (perspective NAME, predicate NAME, tuple canon bytes — never interned
-/// ids; the u32 author component is the canonical shortlex table rank,
-/// round-012-pre D6 pinned call).
+/// ids).
+///
+/// SCOPE OF THE INVARIANCE, stated exactly (round-012-pre D6 pinned this call,
+/// and it is narrower than "id-independent"): the ORDERING and the fact-key
+/// bytes are over names, so the digest is invariant to how predicates and
+/// perspectives were interned. The per-assertion AUTHOR component is NOT — §9.1
+/// normatively says `u32(author)`, and D6 pinned that u32 to the author's
+/// shortlex rank in this manifest's `authors` table. Consequences, both real:
+/// the digest is invariant to the ORDER in which authors were interned (the
+/// table is sorted), but it is NOT injective over author NAMES — renaming an
+/// author without changing its rank leaves the digest unchanged, and two stores
+/// with different author sets that happen to sort to the same ranks are
+/// indistinguishable. Digesting the author NAME instead would close that, at
+/// the cost of diverging from the §9.1 formula and from D6; it is escalated as
+/// OWNER-RULINGS OQ-C3-1 and pinned honestly by
+/// `canonical_state_sha_author_component_is_the_rank_not_the_name`. The rule as
+/// implemented is recorded in the manifest itself
+/// (`schemes.author_interning`), so a reader never has to infer it.
 pub fn canonical_state_sha(man: &RoflManifest, facts: &FactMap) -> [u8; 32] {
     let mut entries: Vec<(&str, &str, &Vec<u8>, &Vec<Value>, &BTreeSet<(u32, u64)>)> = facts
         .iter()
@@ -212,6 +297,12 @@ pub struct NormNode {
     pub name: String,
     /// file column.
     pub file: String,
+    /// content_hash column. The stage-1 vocabulary carries NO predicate for it,
+    /// so reassembly can only produce 0 — which is sound ONLY because
+    /// `load_input` hard-aborts (E-CONV-ENVELOPE) on any nonzero content_hash.
+    /// Comparing the field here makes C1 re-prove that gate on the real data
+    /// instead of trusting it: weaken the gate and C1 goes red.
+    pub content_hash: u64,
     /// Non-reserved metadata, sorted by key, values as canonical JSON text.
     pub meta: Vec<(String, String)>,
 }
@@ -234,6 +325,16 @@ pub struct NormEdge {
 }
 
 /// Normalize an INPUT node record (the left side of the C1 comparison).
+///
+/// The S5 blob copies (`name`/`file`/`semantic_id` repeated inside the metadata
+/// blob) are dropped on BOTH sides, which would make C1 blind to a copy that
+/// disagreed with its column — so the blindness is closed elsewhere, not here:
+/// the decomposition counts every disagreement in `blob_copies_differing`, and
+/// `gate_silent_drops` turns a nonzero count into a hard E-CONV-ENVELOPE abort
+/// before anything is written. Given that gate, dropping an AGREEING copy is
+/// lossless (the column carries the value). Edges have no such columns, so
+/// [`normalize_edge`] deliberately filters only the reserved keys and an edge's
+/// `name`/`file` metadata round-trips as a `$meta:`-guarded fact.
 pub fn normalize_node(n: &NodeIn) -> NormNode {
     let meta = n
         .meta
@@ -252,6 +353,7 @@ pub fn normalize_node(n: &NodeIn) -> NormNode {
         semantic_id: n.rec.semantic_id.clone(),
         name: n.rec.name.clone(),
         file: n.rec.file.clone(),
+        content_hash: n.rec.content_hash,
         meta,
     }
 }
@@ -482,6 +584,9 @@ pub fn reassemble(man: &RoflManifest, facts: &FactMap) -> Result<Reassembled, St
                 semantic_id: acc.semantic_id.unwrap_or_default(),
                 name: acc.name.unwrap_or_default(),
                 file: acc.file.unwrap_or_default(),
+                // No stage-1 predicate carries content_hash; the input gate
+                // proves every input record's is 0 (see [`NormNode`]).
+                content_hash: 0,
                 meta: acc.meta.into_iter().collect(),
             },
             type_fid,
@@ -544,8 +649,18 @@ pub struct C1Summary {
     pub edge_mismatches: u64,
     /// The resolved-view exceptions, each joined to conflict/5.
     pub exceptions: Vec<C1Exception>,
-    /// Every conflict loser maps into the exception set and the exception
-    /// count equals the type-conflict count.
+    /// Distinct INPUT subjects carrying more than one node record. Reported so
+    /// the conflict machinery cannot be judged against its own output.
+    pub input_multi_record_subjects: u64,
+    /// Of those, the subjects whose records disagree on `node_type` — the exact
+    /// population that MUST produce a `type` conflict/5.
+    pub input_type_divergent_subjects: u64,
+    /// Distinct subjects covered by a `type` conflict/5 in the store.
+    pub type_conflict_subjects: u64,
+    /// Every conflict loser maps into the exception set, the exception count
+    /// equals the type-conflict count, AND every input-derived type-divergent
+    /// subject is covered by a conflict (so a store that emitted ZERO conflicts
+    /// cannot pass vacuously).
     pub resolved_view_consistent: bool,
 }
 
@@ -622,20 +737,27 @@ pub fn verify_c1(input: &Path, store_root: &Path) -> Result<C1Summary, ConvertEr
     let mut exceptions: Vec<C1Exception> = Vec::new();
     let mut exception_keys: BTreeSet<(u128, String, u64)> = BTreeSet::new();
     for r in &re.nodes {
-        if let Some(&(subject, winner_fid)) = type_losers
-            .get(&r.type_fid)
-            .map(|v| v)
-            .filter(|&&(s, _)| s == r.node.id)
+        if let Some(&(subject, winner_fid)) =
+            type_losers.get(&r.type_fid).filter(|&&(s, _)| s == r.node.id)
         {
             exception_keys.insert((r.node.id, r.node.author.clone(), r.node.tick));
+            // A conflict/5 names a winner fid; the winner fact MUST be present
+            // in the store the conflict was written into. An absent one is a
+            // dangling audit reference, not an empty string.
+            let winner_type = type_value_by_fid.get(&winner_fid).cloned().ok_or_else(|| {
+                cerr(
+                    "E-CONV-VERIFY",
+                    format!(
+                        "conflict/5 on {subject:032x} names winner fid {winner_fid:032x}, \
+                         which no live `type` fact of that subject carries"
+                    ),
+                )
+            })?;
             exceptions.push(C1Exception {
                 subject: format!("{subject:032x}"),
                 semantic_id: r.node.semantic_id.clone(),
                 loser_type: r.node.node_type.clone(),
-                winner_type: type_value_by_fid
-                    .get(&winner_fid)
-                    .cloned()
-                    .unwrap_or_default(),
+                winner_type,
                 loser_author: r.node.author.clone(),
                 loser_tick: r.node.tick,
                 conflict_pred: "type".to_string(),
@@ -643,11 +765,45 @@ pub fn verify_c1(input: &Path, store_root: &Path) -> Result<C1Summary, ConvertEr
             });
         }
     }
-    exceptions.sort_by(|a, b| a.subject.cmp(&b.subject));
+    // Total order: `subject` alone is NOT a key (one subject can lose more than
+    // once), so sorting on it leaves the report's row order at the mercy of the
+    // sort's stability and of upstream iteration order.
+    exceptions.sort_by(|a, b| {
+        a.subject
+            .cmp(&b.subject)
+            .then_with(|| a.loser_fid.cmp(&b.loser_fid))
+            .then_with(|| a.loser_author.cmp(&b.loser_author))
+            .then_with(|| a.loser_tick.cmp(&b.loser_tick))
+    });
+
+    // NON-VACUITY (the C1 counterpart of the run-level coverage gate): derive
+    // the conflict population from the INPUT, independently of anything the
+    // converter emitted. Every subject whose input records disagree on
+    // node_type must be covered by a `type` conflict/5. Without this, a
+    // converter that emitted ZERO conflicts would satisfy every other clause
+    // below by construction (0 == 0) and C1 would call it consistent.
+    let mut records_by_subject: HashMap<u128, Vec<&NormNode>> = HashMap::new();
+    for n in &input_nodes {
+        records_by_subject.entry(n.id).or_default().push(n);
+    }
+    let mut input_multi_record_subjects: u64 = 0;
+    let mut type_divergent: BTreeSet<u128> = BTreeSet::new();
+    for (subject, recs) in &records_by_subject {
+        if recs.len() < 2 {
+            continue;
+        }
+        input_multi_record_subjects += 1;
+        let first = recs[0].node_type.as_str();
+        if recs.iter().any(|r| r.node_type != first) {
+            type_divergent.insert(*subject);
+        }
+    }
+    let conflict_subjects: BTreeSet<u128> = type_losers.values().map(|&(s, _)| s).collect();
+    let mut consistent = type_divergent.is_subset(&conflict_subjects);
 
     // Consistency: every type loser found exactly one exception group, and
     // every OTHER predicate's loser fact lives inside the exception groups.
-    let mut consistent = exceptions.len() == type_losers.len();
+    consistent &= exceptions.len() == type_losers.len();
     for (pname, subject, loser_fid) in &other_losers {
         let decl = man.catalog.iter().find(|d| &d.name == pname);
         let Some(decl) = decl else {
@@ -689,6 +845,9 @@ pub fn verify_c1(input: &Path, store_root: &Path) -> Result<C1Summary, ConvertEr
         node_mismatches,
         edge_mismatches,
         exceptions,
+        input_multi_record_subjects,
+        input_type_divergent_subjects: type_divergent.len() as u64,
+        type_conflict_subjects: conflict_subjects.len() as u64,
         resolved_view_consistent: consistent,
     })
 }
@@ -697,7 +856,7 @@ pub fn verify_c1(input: &Path, store_root: &Path) -> Result<C1Summary, ConvertEr
 mod tests {
     use super::*;
     use crate::facts::convert::manifest::{DeclJson, ProvenanceJson, SegmentJson, FORMAT_TAG};
-    use crate::facts::convert::segment::{encode_segment, PhysRow};
+    use crate::facts::convert::segment::{encode_segment, read_segment, PhysRow};
     use crate::facts::convert::{run, RunOptions};
     use crate::facts::lsm::{LsmFactStore, SEEDED_PRIORITY_HIGH, SEEDED_PRIORITY_LOW};
     use crate::storage_v2::types::{EdgeRecordV2, NodeRecordV2};
@@ -1026,9 +1185,24 @@ mod tests {
             panic!("a `name` value must be a Str")
         };
         rows[victim].tuple[1] = Value::Str(format!("{original}-TAMPERED"));
-        let (bytes, _meta) =
+        let (bytes, meta) =
             encode_segment(seg.pred_id, seg.direction, seg.arity, &rows, 0).expect("re-encode");
         std::fs::write(&path, &bytes).expect("overwrite the segment");
+        // RE-SEAL the descriptor: this test is about C1's power over a store
+        // that is INTERNALLY CONSISTENT (the integrity layer added for finding
+        // F17/F31 would otherwise reject the file first, and C1 would never be
+        // exercised at all). A converter bug produces exactly this shape — a
+        // wrong value with a matching digest.
+        let mut resealed = man.clone();
+        for s in resealed.segments.iter_mut() {
+            if s.path == desc.path {
+                s.sha256 = meta.sha256.clone();
+                s.bytes = bytes.len() as u64;
+            }
+        }
+        resealed
+            .write_atomic(&tampered)
+            .expect("rewrite the manifest");
 
         // The structural checks still pass — the store OPENS and LOADS, with the
         // same fact count. Only a VALUE moved.
@@ -1067,6 +1241,8 @@ mod tests {
             name: name.to_string(),
             kind: "meta".to_string(),
             arity: 2,
+            columns: vec!["subject".to_string(), name.to_string()],
+            subject_universe: "node".to_string(),
             strategy: "Attribute".to_string(),
             cardinality: "MultiValued".to_string(),
             temporal: "Timeless".to_string(),
@@ -1088,6 +1264,7 @@ mod tests {
             shard_count: 2,
             perspectives: perspectives.iter().map(|s| s.to_string()).collect(),
             authors: vec!["$legacy".to_string(), "analyzer".to_string()],
+            schemes: crate::facts::convert::manifest::SchemesJson::v1(),
             catalog: pred_names
                 .iter()
                 .enumerate()
@@ -1200,5 +1377,220 @@ mod tests {
             sha_a,
             "predicate NAMES are what the digest commits to"
         );
+    }
+
+    /// The honest counterpart of the test above, and the reason OQ-C3-1 exists:
+    /// the per-assertion AUTHOR component is the shortlex RANK (§9.1 `u32(author)`,
+    /// pinned by round-012-pre D6), so unlike predicates and perspectives the
+    /// digest does NOT commit to author names. This test PINS the limitation
+    /// rather than leaving it to be discovered: renaming an author without
+    /// disturbing its rank leaves the digest byte-identical, and the manifest is
+    /// required to SAY so in `schemes.author_interning` so no reader has to
+    /// infer it from the converter's source.
+    #[test]
+    fn canonical_state_sha_author_component_is_the_rank_not_the_name() {
+        let man = mini_manifest(&["main"], &["type"]);
+        let mut facts: FactMap = BTreeMap::new();
+        let tuple = vec![Value::Id(1), Value::Str("FUNCTION".into())];
+        facts.insert(
+            (0, 0, tuple_canon(&tuple)),
+            (tuple, [(1u32, 7u64)].into_iter().collect()),
+        );
+        let base = canonical_state_sha(&man, &facts);
+
+        // Rename author id 1 ("analyzer" → "zzz-renamed"): still rank 1 in a
+        // two-entry table sorted shortlex against "$legacy".
+        let mut renamed = man.clone();
+        renamed.authors[1] = "zzz-renamed".to_string();
+        assert_eq!(
+            crate::facts::convert::segment::canon_str_cmp(&renamed.authors[0], &renamed.authors[1]),
+            std::cmp::Ordering::Less,
+            "the rename must preserve the shortlex ORDER, else the ranks move \
+             and the test would prove nothing"
+        );
+        assert_eq!(
+            canonical_state_sha(&renamed, &facts),
+            base,
+            "KNOWN, RECORDED limitation (OQ-C3-1): the digest commits to author \
+             RANKS, so a rank-preserving rename is invisible to it"
+        );
+
+        // What DOES move the digest: the rank itself.
+        let mut reranked = man.clone();
+        let mut facts_reranked: FactMap = BTreeMap::new();
+        let tuple2 = vec![Value::Id(1), Value::Str("FUNCTION".into())];
+        facts_reranked.insert(
+            (0, 0, tuple_canon(&tuple2)),
+            (tuple2, [(0u32, 7u64)].into_iter().collect()),
+        );
+        reranked.authors = vec!["analyzer".to_string(), "$legacy".to_string()];
+        assert_ne!(
+            canonical_state_sha(&reranked, &facts_reranked),
+            base,
+            "the rank IS digested"
+        );
+
+        // And the store is required to publish the rule it used.
+        assert!(
+            man.schemes.author_interning.contains("shortlex-rank")
+                && man.schemes.author_interning.contains("OQ-C3-1"),
+            "the manifest must state the author-interning rule and its open question"
+        );
+    }
+
+    /// Integrity: the manifest's per-segment `sha256` must be a COMMITMENT. A
+    /// byte-level edit that leaves every structural invariant intact (same
+    /// predicate, direction, row count, arity) has to be rejected at load, not
+    /// silently decoded.
+    #[test]
+    fn a_segment_whose_bytes_disagree_with_the_manifest_digest_is_rejected() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let input = tmp.path().join("in");
+        std::fs::create_dir(&input).expect("mkdir in");
+        fixture_input(&input);
+        let output = tmp.path().join("out");
+        run(&RunOptions {
+            input: input.clone(),
+            output: output.clone(),
+            verify_c1: false,
+        })
+        .expect("conversion succeeds");
+        let _ = std::fs::remove_file(input.join("LOCK"));
+
+        let man = RoflManifest::read(&output).expect("manifest");
+        let name_id = man
+            .catalog
+            .iter()
+            .find(|d| d.name == "name")
+            .expect("name predicate")
+            .id;
+        let desc = man
+            .segments
+            .iter()
+            .find(|s| s.predicate == name_id && s.direction == "fwd" && s.rows > 0)
+            .expect("a forward `name` segment")
+            .clone();
+
+        // Control: it loads clean as written.
+        ConvertedStore::open(&output)
+            .expect("opens")
+            .load_facts()
+            .expect("clean store loads");
+
+        // Re-encode with ONE changed value and DO NOT re-seal the descriptor.
+        let path = output.join(&desc.path);
+        let seg = read_segment(&path).expect("decode");
+        let mut rows: Vec<PhysRow> = seg.rows.clone();
+        let Value::Str(original) = rows[0].tuple[1].clone() else {
+            panic!("a `name` value must be a Str")
+        };
+        rows[0].tuple[1] = Value::Str(format!("{original}!"));
+        let (bytes, _meta) =
+            encode_segment(seg.pred_id, seg.direction, seg.arity, &rows, 0).expect("re-encode");
+        std::fs::write(&path, &bytes).expect("overwrite");
+
+        let err = ConvertedStore::open(&output)
+            .expect("manifest itself is untouched")
+            .load_facts()
+            .expect_err("unsealed byte edit must be rejected");
+        assert!(
+            err.contains("sha256 drift") || err.contains("length drift"),
+            "expected an integrity rejection, got: {err}"
+        );
+
+        // Arity is checked against the CATALOG too: a segment re-encoded with a
+        // different column count under the same descriptor is rejected even if
+        // its bytes are correctly sealed.
+        let mut narrow_rows: Vec<PhysRow> = seg.rows.clone();
+        for r in narrow_rows.iter_mut() {
+            r.tuple.truncate(1);
+        }
+        let (nbytes, nmeta) =
+            encode_segment(seg.pred_id, seg.direction, 1, &narrow_rows, 0).expect("re-encode");
+        std::fs::write(&path, &nbytes).expect("overwrite");
+        let mut resealed = man.clone();
+        for s in resealed.segments.iter_mut() {
+            if s.path == desc.path {
+                s.sha256 = nmeta.sha256.clone();
+                s.bytes = nbytes.len() as u64;
+            }
+        }
+        resealed.write_atomic(&output).expect("rewrite manifest");
+        let err = ConvertedStore::open(&output)
+            .expect("opens")
+            .load_facts()
+            .expect_err("arity drift must be rejected");
+        assert!(err.contains("arity drift"), "expected arity rejection, got: {err}");
+        let _ = std::fs::remove_file(input.join("LOCK"));
+    }
+
+    /// C1's conflict clause must not be satisfiable by emitting NO conflicts.
+    /// Strip every `conflict/5` fact from a converted store, re-seal it, and C1
+    /// must go inconsistent because the INPUT still carries a type-divergent
+    /// subject that nothing accounts for.
+    #[test]
+    fn c1_rejects_a_store_that_dropped_its_conflicts() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let input = tmp.path().join("in");
+        std::fs::create_dir(&input).expect("mkdir in");
+        fixture_input(&input);
+        let output = tmp.path().join("out");
+        run(&RunOptions {
+            input: input.clone(),
+            output: output.clone(),
+            verify_c1: true,
+        })
+        .expect("conversion succeeds");
+        let _ = std::fs::remove_file(input.join("LOCK"));
+
+        // Control: consistent, and NON-VACUOUSLY so — the input really does
+        // carry a divergent subject and the store really does cover it.
+        let base = verify_c1(&input, &output).expect("C1 runs");
+        assert!(base.resolved_view_consistent);
+        assert_eq!(base.input_multi_record_subjects, 1, "node 30");
+        assert_eq!(base.input_type_divergent_subjects, 1);
+        assert_eq!(base.type_conflict_subjects, 1);
+        let _ = std::fs::remove_file(input.join("LOCK"));
+
+        // Drop every conflict/5 row and re-seal, so the store is internally
+        // consistent and merely SILENT about the conflict.
+        let man = RoflManifest::read(&output).expect("manifest");
+        let cid = man
+            .catalog
+            .iter()
+            .find(|d| d.name == "conflict")
+            .expect("conflict declared")
+            .id;
+        let mut stripped = man.clone();
+        let mut emptied = 0usize;
+        for s in stripped.segments.iter_mut() {
+            if s.predicate != cid || s.rows == 0 {
+                continue;
+            }
+            let path = output.join(&s.path);
+            let seg = read_segment(&path).expect("decode");
+            let (bytes, meta) =
+                encode_segment(seg.pred_id, seg.direction, seg.arity, &[], 0).expect("re-encode");
+            std::fs::write(&path, &bytes).expect("overwrite");
+            s.rows = 0;
+            s.sha256 = meta.sha256.clone();
+            s.bytes = bytes.len() as u64;
+            emptied += 1;
+        }
+        assert!(emptied > 0, "the fixture must have written a conflict segment");
+        stripped.write_atomic(&output).expect("rewrite manifest");
+
+        let after = verify_c1(&input, &output).expect("C1 still runs");
+        assert_eq!(after.exceptions.len(), 0, "no conflicts left to join");
+        assert_eq!(after.type_conflict_subjects, 0);
+        assert_eq!(
+            after.input_type_divergent_subjects, 1,
+            "the INPUT is unchanged — the divergence is still there"
+        );
+        assert!(
+            !after.resolved_view_consistent,
+            "C1 accepted a store that silently dropped a Functional conflict"
+        );
+        let _ = std::fs::remove_file(input.join("LOCK"));
     }
 }

@@ -16,6 +16,15 @@
 //! Stage 1 supersedes nothing: `tx_created` = 0, `tx_invalidated` = `TX_OPEN`,
 //! every tag is Bool — the columns exist so the format does not need to change
 //! when stage 2+ writes real values.
+//!
+//! BYTE ORDER, stated because Q2 makes this schema a format commitment while
+//! §9.1 pins none: EVERY fixed-width integer this codec writes — the header
+//! fields, the string-table index, and the perspective/author/tick/semiring/tx
+//! assertion columns — is LITTLE-ENDIAN. Varints are LEB128; canon-v1 payloads
+//! keep their own big-endian order, which is `canon_bytes`' contract and not
+//! this codec's. A converted store is therefore byte-reproducible on any
+//! little-endian target, and a big-endian writer must honour this line rather
+//! than its native order.
 
 use std::io::Write;
 
@@ -283,13 +292,57 @@ struct Cursor<'a> {
 }
 
 impl<'a> Cursor<'a> {
+    /// Bytes not yet consumed. Used to bound every length read out of the file
+    /// BEFORE it is turned into an allocation, so a corrupted length cannot make
+    /// the reader reserve gigabytes for a file that cannot possibly contain them.
+    fn remaining(&self) -> usize {
+        self.bytes.len().saturating_sub(self.pos)
+    }
+
     fn take(&mut self, n: usize) -> Result<&'a [u8], SegmentError> {
-        if self.pos + n > self.bytes.len() {
+        // `self.pos + n` must be a CHECKED add: `n` comes from an on-disk varint
+        // and can be near `usize::MAX`, which wraps (release) or panics with
+        // "attempt to add with overflow" (debug) — either way the plain add turns
+        // a corrupted file into a crash instead of a typed error.
+        let end = self
+            .pos
+            .checked_add(n)
+            .ok_or_else(|| SegmentError("segment length overflow".to_string()))?;
+        if end > self.bytes.len() {
             return Err(SegmentError("truncated segment".to_string()));
         }
-        let s = &self.bytes[self.pos..self.pos + n];
-        self.pos += n;
+        let s = &self.bytes[self.pos..end];
+        self.pos = end;
         Ok(s)
+    }
+
+    /// Read a length varint and reject it up front if the file does not hold that
+    /// many bytes. `what` names the section for the error message.
+    fn bounded_len(&mut self, what: &str) -> Result<usize, SegmentError> {
+        let n = self.varint()?;
+        let n = usize::try_from(n)
+            .map_err(|_| SegmentError(format!("{what} length {n} exceeds usize")))?;
+        if n > self.remaining() {
+            return Err(SegmentError(format!(
+                "{what} length {n} exceeds {} remaining bytes",
+                self.remaining()
+            )));
+        }
+        Ok(n)
+    }
+
+    /// Read a u32 count and reject it if the file cannot hold `min_bytes_each`
+    /// bytes per element. Guards `Vec::with_capacity` against corrupted counts.
+    fn bounded_count(&mut self, what: &str, min_bytes_each: usize) -> Result<usize, SegmentError> {
+        let n = self.u32()? as usize;
+        let need = n.saturating_mul(min_bytes_each.max(1));
+        if need > self.remaining() {
+            return Err(SegmentError(format!(
+                "{what} count {n} needs at least {need} bytes, {} remain",
+                self.remaining()
+            )));
+        }
+        Ok(n)
     }
 
     fn u8(&mut self) -> Result<u8, SegmentError> {
@@ -323,7 +376,14 @@ impl<'a> Cursor<'a> {
         let mut shift = 0u32;
         loop {
             let b = self.u8()?;
-            x |= u64::from(b & 0x7F) << shift;
+            let payload = u64::from(b & 0x7F);
+            // At shift 63 only bit 0 of the payload still fits in a u64; anything
+            // else would be silently truncated, which would let a corrupted file
+            // decode to a DIFFERENT value than it encodes. Reject instead.
+            if shift == 63 && payload > 1 {
+                return Err(SegmentError("varint overflow".to_string()));
+            }
+            x |= payload << shift;
             if b & 0x80 == 0 {
                 return Ok(x);
             }
@@ -342,7 +402,7 @@ impl<'a> Cursor<'a> {
                 self.take(16)?.try_into().unwrap(),
             ))),
             0x02 => {
-                let len = self.varint()? as usize;
+                let len = self.bounded_len("Str payload")?;
                 let s = std::str::from_utf8(self.take(len)?)
                     .map_err(|e| SegmentError(format!("non-UTF8 Str payload: {e}")))?;
                 Ok(Value::Str(s.to_string()))
@@ -354,15 +414,17 @@ impl<'a> Cursor<'a> {
                 self.take(8)?.try_into().unwrap(),
             )))),
             0x05 => {
-                let len = self.varint()? as usize;
+                let len = self.bounded_len("BigInt payload")?;
                 Ok(Value::BigInt(self.take(len)?.to_vec().into()))
             }
             0x06 => {
-                let flen = self.varint()? as usize;
+                let flen = self.bounded_len("Term functor")?;
                 let functor = std::str::from_utf8(self.take(flen)?)
                     .map_err(|e| SegmentError(format!("non-UTF8 functor: {e}")))?
                     .to_string();
-                let argc = self.varint()? as usize;
+                // Every argument costs at least its 1-byte canon tag, so `argc`
+                // cannot exceed the bytes left in the file.
+                let argc = self.bounded_len("Term arity")?;
                 let mut args = Vec::with_capacity(argc);
                 for _ in 0..argc {
                     args.push(self.canon_value()?);
@@ -393,12 +455,17 @@ pub struct DecodedSegment {
 pub fn read_segment(path: &std::path::Path) -> Result<DecodedSegment, SegmentError> {
     let bytes = std::fs::read(path)
         .map_err(|e| SegmentError(format!("read {}: {e}", path.display())))?;
-    let mut c = Cursor {
-        bytes: &bytes,
-        pos: 0,
-    };
+    decode_segment(&bytes, &path.display().to_string())
+}
+
+/// Decode a segment from BYTES already in hand. Split out of [`read_segment`]
+/// so a caller that must also digest the file (integrity verification) hashes
+/// and decodes the SAME buffer — re-reading the path would leave a window in
+/// which the bytes verified and the bytes decoded differ.
+pub fn decode_segment(bytes: &[u8], label: &str) -> Result<DecodedSegment, SegmentError> {
+    let mut c = Cursor { bytes, pos: 0 };
     if c.take(8)? != SEG_MAGIC {
-        return Err(SegmentError(format!("bad magic in {}", path.display())));
+        return Err(SegmentError(format!("bad magic in {label}")));
     }
     let version = c.u32()?;
     if version != 1 {
@@ -407,11 +474,16 @@ pub fn read_segment(path: &std::path::Path) -> Result<DecodedSegment, SegmentErr
     let pred_id = c.u32()?;
     let direction = c.u8()?;
     let arity = c.u8()?;
-    let row_count = c.u32()? as usize;
-    let string_count = c.u32()? as usize;
+    // Both counts are bounded against the bytes actually present BEFORE any
+    // allocation: every row always costs at least its assertion columns
+    // (persp 4 + author 4 + tick 8 + semiring 2 + tag len >=1 + tx_created 8 +
+    // tx_invalidated 8 = 35 bytes), and every table string costs at least its
+    // 1-byte length varint.
+    let row_count = c.bounded_count("row", 35)?;
+    let string_count = c.bounded_count("string table", 1)?;
     let mut strings = Vec::with_capacity(string_count);
     for _ in 0..string_count {
-        let len = c.varint()? as usize;
+        let len = c.bounded_len("table string")?;
         strings.push(
             std::str::from_utf8(c.take(len)?)
                 .map_err(|e| SegmentError(format!("non-UTF8 table string: {e}")))?
@@ -460,7 +532,7 @@ pub fn read_segment(path: &std::path::Path) -> Result<DecodedSegment, SegmentErr
     }
     let bool_tag = TagV2::bool_one();
     for _ in 0..row_count {
-        let len = c.varint()? as usize;
+        let len = c.bounded_len("tag")?;
         let tag_bytes = c.take(len)?;
         if tag_bytes != &bool_tag.bytes[..] {
             return Err(SegmentError("stage-1 segment carries non-Bool tag".to_string()));
@@ -685,6 +757,73 @@ mod tests {
         }
         std::fs::write(&path, &good).expect("write full");
         assert!(read_segment(&path).is_ok(), "the full segment still decodes");
+    }
+
+    /// Truncation is the EASY corruption: the file just ends. The hard one is a
+    /// file of normal length carrying a hostile LENGTH — a row count of 2^32-1, a
+    /// string-table length near `usize::MAX`. Those must also come back as typed
+    /// errors: an unchecked `pos + n` panics ("attempt to add with overflow") in
+    /// debug and wraps into an out-of-range slice index in release, and an
+    /// unbounded `Vec::with_capacity` aborts the process on a 4-byte edit.
+    #[test]
+    fn every_corrupted_length_is_a_typed_error_never_a_panic() {
+        let rows = shape_rows();
+        let (good, _) = encode_segment(5, DIR_FWD, 2, &rows, 0).expect("encode");
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("corrupt.bin");
+
+        // row_count lives at [18..22), string_count at [22..26) (magic 8 + version 4
+        // + pred_id 4 + direction 1 + arity 1).
+        for off in [18usize, 22] {
+            for pattern in [
+                u32::MAX.to_le_bytes(),
+                0x7FFF_FFFFu32.to_le_bytes(),
+                1_000_000u32.to_le_bytes(),
+            ] {
+                let mut bad = good.clone();
+                bad[off..off + 4].copy_from_slice(&pattern);
+                std::fs::write(&path, &bad).expect("write");
+                let err = read_segment(&path)
+                    .expect_err("a hostile count must not decode as a valid segment");
+                assert!(
+                    !err.0.is_empty(),
+                    "the count rejection must carry a message"
+                );
+            }
+        }
+
+        // A Str payload length of ~u64::MAX: 10-byte varint of 0xFFFF_FFFF_FFFF_FFFF.
+        // Reached through the string table, whose first entry length is the varint
+        // right after string_count at [26..].
+        let mut bad = good.clone();
+        let head = bad[..26].to_vec();
+        let mut hostile = head;
+        // zero rows (so the row bound passes) and one table string claiming
+        // u64::MAX bytes — this is the exact input that made `pos + n` wrap.
+        hostile[18..22].copy_from_slice(&0u32.to_le_bytes());
+        hostile[22..26].copy_from_slice(&1u32.to_le_bytes());
+        push_varint(&mut hostile, u64::MAX);
+        hostile.extend_from_slice(b"short");
+        std::fs::write(&path, &hostile).expect("write");
+        let err = read_segment(&path).expect_err("u64::MAX string length must be rejected");
+        assert!(
+            err.0.contains("exceeds") || err.0.contains("truncated"),
+            "expected a bounds rejection, got {}",
+            err.0
+        );
+
+        // Exhaustive single-byte corruption sweep: NOTHING may panic. Every byte
+        // position, every one of four hostile values.
+        for pos in 0..good.len() {
+            for v in [0x00u8, 0x01, 0x7F, 0xFF] {
+                bad = good.clone();
+                bad[pos] = v;
+                std::fs::write(&path, &bad).expect("write");
+                // The contract is "no panic", not "always an error": some byte
+                // edits land on payload and decode to a different-but-valid segment.
+                let _ = read_segment(&path);
+            }
+        }
     }
 
     #[test]

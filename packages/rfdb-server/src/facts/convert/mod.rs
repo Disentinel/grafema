@@ -52,6 +52,17 @@ pub const CONVERT_AUTHOR: &str = "$rofl-convert";
 pub const RETYPED_PREDS: [&str; 3] = ["anchorCall", "handler_function_id", "source_node"];
 /// The A″ span-collapse source keys, in span/5 column order (Q6).
 pub const SPAN_KEYS: [&str; 4] = ["line", "column", "endLine", "endColumn"];
+/// `span/5` column names, persisted in the manifest so five anonymous Ints stay
+/// readable without the converter source.
+pub const SPAN_COLUMNS: [&str; 5] = ["entity", "line", "column", "endLine", "endColumn"];
+/// `conflict/5` column names (OQ-1/OQ-2 shape), persisted for the same reason.
+pub const CONFLICT_COLUMNS: [&str; 5] = [
+    "subject",
+    "predicate",
+    "winner_fid",
+    "loser_fid",
+    "winner_tick",
+];
 /// Metadata keys that are assertion fields, never facts (§6.2).
 const RESERVED_META_KEYS: [&str; 2] = ["_source", "_generation"];
 /// Column-authoritative keys whose blob copies are skipped (facts/lsm.rs
@@ -685,6 +696,11 @@ pub struct Converted {
     pub catalog: PredicateCatalog,
     /// Reader-facing kind per predicate id.
     pub kinds: Vec<&'static str>,
+    /// Column NAMES per predicate id, in tuple order.
+    pub columns: Vec<Vec<String>>,
+    /// Subject universe per predicate id (`node` | `edge` | `node|edge` |
+    /// `pair` | `fact`).
+    pub universes: Vec<&'static str>,
     /// Facts keyed by (pred, persp, tuple canon bytes).
     pub facts: BTreeMap<(u32, u32, Vec<u8>), ConvFact>,
     /// Load counters.
@@ -697,6 +713,24 @@ pub struct Converted {
     pub legacy: LegacyCounters,
     /// Author pollution counters.
     pub pollution: PollutionCounters,
+    /// How many SUBJECTS the DEV-P6-1 base cross-check actually visited.
+    pub type_cross_checked_subjects: u64,
+    /// How many subjects the INPUT carries more than one record for — the
+    /// denominator the cross-check must cover.
+    pub base_multi_record_subjects: u64,
+}
+
+/// The converter's R-1a outcome for one `type` subject, as carried into the
+/// DEV-P6-1 base cross-check.
+struct TypeWinner {
+    /// Winning value, rendered as the reassembly renders it.
+    value: String,
+    /// Winning assertion's author NAME.
+    author: String,
+    /// Winning assertion's tick.
+    tick: u64,
+    /// Live facts for this subject that did NOT win.
+    losers: u64,
 }
 
 /// §10.1 `$legacy`/tick-0 counters (C7).
@@ -722,15 +756,24 @@ pub struct PollutionCounters {
 }
 
 /// Per-predicate conflict/5 summary (C7).
+///
+/// DENOMINATORS, explicitly, because two live here and mixing them silently
+/// mis-reads the report: `count`, `winner_values` and `loser_values` are per
+/// LOSER (one conflict/5 fact each), while `subjects` and `winner_authors` are
+/// per conflicted SUBJECT. They coincide only where every conflicted subject
+/// carries exactly two competing values; `subjects` is emitted so that
+/// coincidence is visible rather than assumed.
 #[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
 pub struct ConflictSummary {
     /// Number of conflict/5 facts (one per loser).
     pub count: u64,
-    /// Winner VALUE histogram (c1 of the winning fact, stringified).
+    /// Number of distinct SUBJECTS that had a multi-live resolution.
+    pub subjects: u64,
+    /// Winner VALUE histogram (c1 of the winning fact, stringified) — per LOSER.
     pub winner_values: BTreeMap<String, u64>,
-    /// Loser VALUE histogram.
+    /// Loser VALUE histogram — per LOSER.
     pub loser_values: BTreeMap<String, u64>,
-    /// Winner AUTHOR histogram (canonical names).
+    /// Winner AUTHOR histogram (canonical names) — per SUBJECT.
     pub winner_authors: BTreeMap<String, u64>,
 }
 
@@ -784,7 +827,12 @@ pub fn build_converted(
 
     // §6.2 decomposition into proto-facts.
     let mut protos: Vec<ProtoFact> = Vec::new();
+    // Which universe each metadata predicate's subject column ranges over —
+    // persisted per decl as `subject_universe`, because a metadata predicate
+    // whose subjects are edge EIDs is otherwise indistinguishable on disk from
+    // one whose subjects are node ids (both are opaque u128s).
     let mut node_meta_preds: HashSet<String> = HashSet::new();
+    let mut edge_meta_preds: HashSet<String> = HashSet::new();
     for n in nodes {
         if !n.had_source {
             legacy.legacy_author_nodes += 1;
@@ -858,6 +906,7 @@ pub fn build_converted(
             &[Value::Id(e.rec.src), Value::Id(e.rec.dst)],
         )
         .expect("edge tuples are canonical");
+        let before = protos.len();
         decompose_meta(
             eid,
             &e.meta,
@@ -868,6 +917,9 @@ pub fn build_converted(
             &mut protos,
             &mut dc,
         )?;
+        for p in &protos[before..] {
+            edge_meta_preds.insert(p.pred.clone());
+        }
     }
 
     // Vocabulary finalization (Q5): names collected fully, ids = shortlex rank.
@@ -905,15 +957,10 @@ pub fn build_converted(
         AuthorId(author_id_of[SEEDED_PRIORITY_HIGH]),
         AuthorId(author_id_of[SEEDED_PRIORITY_LOW]),
     ]);
-    // Value-shape profile: does a meta predicate ever carry a Term?
-    let mut has_term: HashSet<&str> = HashSet::new();
-    for p in &protos {
-        if p.tuple.iter().any(|v| matches!(v, Value::Term(_))) {
-            has_term.insert(p.pred.as_str());
-        }
-    }
     let mut catalog = PredicateCatalog::new();
     let mut kinds: Vec<&'static str> = Vec::with_capacity(pred_names.len());
+    let mut columns: Vec<Vec<String>> = Vec::with_capacity(pred_names.len());
+    let mut universes: Vec<&'static str> = Vec::with_capacity(pred_names.len());
     for name in &pred_names {
         let functional = FUNCTIONAL_PREDS.contains(&name.as_str());
         let (kind, arity, strategy, key_cols, reverse): (
@@ -949,16 +996,53 @@ pub fn build_converted(
         } else if name == "span" {
             ("span", 5, PhysStrategy::Composite, Box::new([0]), None)
         } else if name == "conflict" {
-            ("conflict", 5, PhysStrategy::Nary, Box::new([0]), None)
+            // Physics comes from the ONE canonical declaration of the reserved
+            // predicate (round-011-pre E4), never from a second copy of its
+            // shape here: stage 2's engine declares `conflict/5` from
+            // `conflict_decl()`, and a converted store whose conflict physics
+            // disagreed with the engine's would be unreadable by it.
+            let d = PredicateCatalog::conflict_decl();
+            assert_eq!(d.cardinality, Cardinality::MultiValued);
+            assert_eq!(d.temporal, TemporalScope::Timeless);
+            assert_eq!(d.semiring, BOOLTAG_SEMIRING_ID);
+            assert!(d.author_priority.is_empty());
+            assert_eq!(d.arity as usize, CONFLICT_COLUMNS.len());
+            ("conflict", d.arity, d.strategy, d.key_cols, d.reverse)
         } else {
-            let strategy = if has_term.contains(name.as_str()) {
-                PhysStrategy::Nary
-            } else {
-                PhysStrategy::Attribute
-            };
-            ("meta", 2, strategy, Box::new([0]), None) // §6.3: metadata NO reverse
+            // §6.3: metadata is a subject→value Attribute with NO reverse run.
+            // The strategy is a property of the DECLARED SHAPE (arity 2, keyed
+            // on column 0), not of which values this particular base happened
+            // to carry: deriving it from the data would let the same predicate
+            // name be declared Attribute in one store and Nary in another.
+            ("meta", 2, PhysStrategy::Attribute, Box::new([0]), None)
         };
         kinds.push(kind);
+        columns.push(match kind {
+            "core" => vec!["entity".to_string(), name.clone()],
+            "edge" | "retyped" => vec!["src".to_string(), "dst".to_string()],
+            "span" => SPAN_COLUMNS.iter().map(|s| s.to_string()).collect(),
+            "conflict" => CONFLICT_COLUMNS.iter().map(|s| s.to_string()).collect(),
+            _ => vec!["subject".to_string(), name.clone()],
+        });
+        universes.push(match kind {
+            "core" => "node",
+            "edge" | "retyped" => "pair",
+            "conflict" => "fact",
+            "span" | "meta" => {
+                match (
+                    node_meta_preds.contains(name.as_str()),
+                    edge_meta_preds.contains(name.as_str()),
+                ) {
+                    (true, true) => "node|edge",
+                    (false, true) => "edge",
+                    // A predicate seen only on nodes, and the degenerate
+                    // never-emitted case (conflict is handled above), are both
+                    // node-subject by construction.
+                    _ => "node",
+                }
+            }
+            other => unreachable!("unknown predicate kind {other}"),
+        });
         let decl = PredicateDecl {
             id: crate::derive::catalog::CatalogPredicateId(0), // assigned by declare()
             name: name.clone(),
@@ -1009,7 +1093,21 @@ pub fn build_converted(
     let convert_author = author_id_of[CONVERT_AUTHOR];
     let conflict_pred = pred_id_of["conflict"];
     let mut conflict_facts: Vec<ConvFact> = Vec::new();
-    let mut type_winners: BTreeMap<u128, (String, String, u64)> = BTreeMap::new();
+    // Subjects the INPUT carries more than one record for. The DEV-P6-1
+    // cross-check is driven by the UNION of these and the converter's own
+    // findings: driving it by the converter's findings alone would let a bug
+    // that MERGES two live facts delete its own subject from the check.
+    let mut base_record_count: HashMap<u128, u32> = HashMap::new();
+    for n in nodes {
+        *base_record_count.entry(n.rec.id).or_default() += 1;
+    }
+    let base_multi_subjects: BTreeSet<u128> = base_record_count
+        .iter()
+        .filter(|(_, &c)| c > 1)
+        .map(|(&id, _)| id)
+        .collect();
+    drop(base_record_count);
+    let mut type_winners: BTreeMap<u128, TypeWinner> = BTreeMap::new();
     for fname in FUNCTIONAL_PREDS {
         let Some(&pid) = pred_id_of.get(fname) else {
             continue; // predicate absent from this base (e.g. no __exported)
@@ -1032,7 +1130,12 @@ pub fn build_converted(
         }
         let summary = conflicts.entry(fname.to_string()).or_default();
         for (subject, group) in by_subject {
-            if group.len() < 2 {
+            // `type` resolutions are recorded for every base-multi-record
+            // subject even when the converter sees ONE fact — that single-fact
+            // case is exactly the "converter lost a conflict" shape the base
+            // cross-check must still catch.
+            let record_type_winner = fname == "type" && base_multi_subjects.contains(&subject);
+            if group.len() < 2 && !record_type_winner {
                 continue;
             }
             let fids: Vec<u128> = group
@@ -1044,20 +1147,25 @@ pub fn build_converted(
                 .collect();
             let r = resolve_r1a(&group, &fids, &priority);
             let winner_value = value_display(&group[r.winner_idx].tuple[1]);
+            if fname == "type" {
+                type_winners.insert(
+                    subject,
+                    TypeWinner {
+                        value: winner_value.clone(),
+                        author: author_names[r.winner_author as usize].clone(),
+                        tick: r.winner_tick,
+                        losers: group.len() as u64 - 1,
+                    },
+                );
+            }
+            if group.len() < 2 {
+                continue; // recorded for the cross-check; not a conflict
+            }
+            summary.subjects += 1;
             *summary
                 .winner_authors
                 .entry(author_names[r.winner_author as usize].clone())
                 .or_default() += 1;
-            if fname == "type" {
-                type_winners.insert(
-                    subject,
-                    (
-                        winner_value.clone(),
-                        author_names[r.winner_author as usize].clone(),
-                        r.winner_tick,
-                    ),
-                );
-            }
             let tick_int = i64::try_from(r.winner_tick)
                 .map_err(|_| cerr("E-CONV-ENVELOPE", "winner tick exceeds i64"))?;
             for (i, f) in group.iter().enumerate() {
@@ -1096,26 +1204,61 @@ pub fn build_converted(
     }
 
     // DEV-P6-1 cross-check: the base-five resolver (P5, R-1a) must agree with
-    // the converter's `type` winner on EVERY multi-live subject — the
-    // (winner, conflicts) return-channel consumption the spec intends.
-    if !type_winners.is_empty() {
+    // the converter's `type` resolution on the UNION of (a) the subjects the
+    // converter found a conflict on and (b) the subjects the INPUT carries more
+    // than one record for. (b) is what makes a MISSING conflict detectable: a
+    // converter that merged two live facts still has to answer for the subject.
+    //
+    // Four independent agreements are asserted, not one: the winning VALUE, the
+    // winning (author, tick) as a live assertion of the base's winning FACT, the
+    // winner tick being the maximum over that fact's live assertions (which is
+    // the global R-1a F1 maximum, because F1 keeps only global-max-tick
+    // candidates and the winner is one of them), and the LOSER COUNT.
+    let cross_checked_subjects: BTreeSet<u128> = type_winners
+        .keys()
+        .copied()
+        .chain(base_multi_subjects.iter().copied())
+        .collect();
+    let type_cross_checked = cross_checked_subjects.len() as u64;
+    if !cross_checked_subjects.is_empty() {
         let snap = fs.snapshot();
         let type_id = fs.catalog().get("type").expect("base type decl").id;
-        for (&subject, (our_value, our_author, our_tick)) in &type_winners {
+        for &subject in &cross_checked_subjects {
             let resolved = fs
                 .resolve_functional(&snap, type_id, PERSPECTIVE_MAIN, subject)
-                .map_err(|e| cerr("E-CONV-VERIFY", e))?
-                .ok_or_else(|| {
-                    cerr(
+                .map_err(|e| cerr("E-CONV-VERIFY", e))?;
+            let Some(ours) = type_winners.get(&subject) else {
+                // The converter emitted no `type` fact for a subject the base
+                // has records for. If the base can still resolve one, content
+                // was lost between the two code paths.
+                if resolved.is_some() {
+                    return Err(cerr(
                         "E-CONV-VERIFY",
-                        format!("base resolve_functional found no winner for {subject:x}"),
-                    )
-                })?;
-            let (row, _base_conflicts) = resolved;
+                        format!(
+                            "DEV-P6-1 cross-check failed for subject {subject:x}: the base \
+                             resolves a `type` winner but the converter holds no `type` fact \
+                             for it"
+                        ),
+                    ));
+                }
+                continue;
+            };
+            let (row, base_conflicts) = resolved.ok_or_else(|| {
+                cerr(
+                    "E-CONV-VERIFY",
+                    format!("base resolve_functional found no winner for {subject:x}"),
+                )
+            })?;
             let base_value = match &row.key.tuple[1] {
                 Value::Str(s) => s.clone(),
                 other => value_display(other),
             };
+            let TypeWinner {
+                value: our_value,
+                author: our_author,
+                tick: our_tick,
+                losers: our_losers,
+            } = ours;
             if &base_value != our_value {
                 return Err(cerr(
                     "E-CONV-VERIFY",
@@ -1123,6 +1266,64 @@ pub fn build_converted(
                         "DEV-P6-1 cross-check failed for subject {subject:x}: converter type \
                          winner '{our_value}' (author {our_author}, tick {our_tick}) vs base \
                          resolve_functional winner '{base_value}'"
+                    ),
+                ));
+            }
+            let base_max_tick = row
+                .assertions
+                .iter()
+                .map(|a| a.tick)
+                .max()
+                .ok_or_else(|| {
+                    cerr(
+                        "E-CONV-VERIFY",
+                        format!("base winner fact for {subject:x} carries no live assertion"),
+                    )
+                })?;
+            if base_max_tick != *our_tick {
+                return Err(cerr(
+                    "E-CONV-VERIFY",
+                    format!(
+                        "DEV-P6-1 cross-check failed for subject {subject:x}: converter winner \
+                         tick {our_tick} (author {our_author}) vs base winning fact's maximum \
+                         live tick {base_max_tick} — R-1a F1 disagreement"
+                    ),
+                ));
+            }
+            let author_match = row.assertions.iter().any(|a| {
+                a.tick == *our_tick
+                    && fs.author_name(a.author).as_deref() == Some(our_author.as_str())
+            });
+            if !author_match {
+                let base_authors: Vec<String> = row
+                    .assertions
+                    .iter()
+                    .map(|a| {
+                        format!(
+                            "{}@{}",
+                            fs.author_name(a.author).unwrap_or_else(|| "?".to_string()),
+                            a.tick
+                        )
+                    })
+                    .collect();
+                return Err(cerr(
+                    "E-CONV-VERIFY",
+                    format!(
+                        "DEV-P6-1 cross-check failed for subject {subject:x}: converter winner \
+                         author '{our_author}' at tick {our_tick} is not a live assertion of the \
+                         base's winning fact (base assertions: {})",
+                        base_authors.join(", ")
+                    ),
+                ));
+            }
+            if base_conflicts.len() as u64 != *our_losers {
+                return Err(cerr(
+                    "E-CONV-VERIFY",
+                    format!(
+                        "DEV-P6-1 cross-check failed for subject {subject:x}: converter recorded \
+                         {our_losers} `type` loser fact(s), base resolve_functional reported {} \
+                         — a conflict is missing or invented",
+                        base_conflicts.len()
                     ),
                 ));
             }
@@ -1134,12 +1335,16 @@ pub fn build_converted(
         author_names,
         catalog,
         kinds,
+        columns,
+        universes,
         facts,
         load,
         decompose: dc,
         conflicts,
         legacy,
         pollution,
+        type_cross_checked_subjects: type_cross_checked,
+        base_multi_record_subjects: base_multi_subjects.len() as u64,
     })
 }
 
@@ -1359,6 +1564,8 @@ pub fn build_manifest(
                 name: name.clone(),
                 kind: conv.kinds[i].to_string(),
                 arity: decl.arity,
+                columns: conv.columns[i].clone(),
+                subject_universe: conv.universes[i].to_string(),
                 strategy: strategy_name(decl.strategy).to_string(),
                 cardinality: match decl.cardinality {
                     Cardinality::Functional => "Functional".to_string(),
@@ -1386,6 +1593,7 @@ pub fn build_manifest(
         shard_count,
         perspectives: PERSP_NAMES.iter().map(|s| s.to_string()).collect(),
         authors: conv.author_names.clone(),
+        schemes: manifest::SchemesJson::v1(),
         catalog,
         segments,
         provenance,
@@ -1438,8 +1646,13 @@ pub struct OutputJson {
 /// §9.4 metrics (computed by the READER over the written store).
 #[derive(Debug, Clone, Serialize)]
 pub struct MetricsJson {
-    /// Live `sid` facts.
+    /// Distinct SUBJECTS carrying at least one live `sid` fact. Equal to the
+    /// live `sid` fact count only when `sid` is single-valued per subject —
+    /// which the converter no longer assumes: it counts subjects.
     pub entities: u64,
+    /// Live `sid` FACTS. Differs from `entities` exactly when some subject has
+    /// more than one live `sid` (an R-1a conflict).
+    pub sid_facts: u64,
     /// Live facts, all perspectives.
     pub facts: u64,
     /// Live assertions.
@@ -1484,9 +1697,14 @@ pub struct ConflictsJson {
     pub total: u64,
     /// Per-predicate summaries.
     pub per_predicate: BTreeMap<String, ConflictSummary>,
-    /// Multi-live `type` subjects cross-checked against the base-five
-    /// resolver (DEV-P6-1) — equals the type conflict count.
+    /// SUBJECTS the DEV-P6-1 base cross-check visited: the union of the
+    /// subjects the converter found a `type` conflict on and the subjects the
+    /// INPUT carries more than one record for. This is a SUBJECT count and is
+    /// not in general equal to `total` or to any conflict count.
     pub type_cross_checked_subjects: u64,
+    /// Subjects the INPUT carries more than one record for. Every one of them
+    /// is inside `type_cross_checked_subjects` (asserted by `run`).
+    pub base_multi_record_subjects: u64,
 }
 
 /// The full conversion report (C7: every number, no «успешно» without them).
@@ -1536,6 +1754,68 @@ pub struct RunOptions {
     pub verify_c1: bool,
 }
 
+/// Fail the conversion if any code path DISCARDED content.
+///
+/// Five out-of-envelope input shapes already hard-abort (v3 derived columns,
+/// `$supersedes`, a nonzero `content_hash`, non-object metadata, a reserved
+/// edge_type name). These five counted instead — so on a base that triggered
+/// them the converter would drop bytes, still report `full_multiset_equal:
+/// true` (C1's left side is the converter's OWN post-dedup record list, so a
+/// dropped record is absent from both multisets) and still exit 0. They are
+/// now aborts too: the no-loss property is mechanical, not measured-zero.
+///
+/// Exact duplicates are NOT in this list: collapsing two byte-identical records
+/// at the same (author, tick) destroys nothing.
+fn gate_silent_drops(load: &LoadCounters, dec: &DecomposeCounters) -> Result<(), ConvertError> {
+    let drops: [(&str, u64, &str); 5] = [
+        (
+            "node_shadowed_dropped",
+            load.node_shadowed_dropped,
+            "two DIFFERING node records share (id, author, tick); §10.1 cannot tell them apart, \
+             so one would be discarded",
+        ),
+        (
+            "edge_shadowed_dropped",
+            load.edge_shadowed_dropped,
+            "two DIFFERING edge records share (src, dst, edge_type, author, tick)",
+        ),
+        (
+            "non_string_source",
+            load.non_string_source,
+            "a record carries a non-string `_source`; its real author would be replaced by \
+             `$legacy`",
+        ),
+        (
+            "unparseable_generation",
+            load.unparseable_generation,
+            "a record carries a present but non-u64 `_generation`; its real tick would be \
+             replaced by 0",
+        ),
+        (
+            "blob_copies_differing",
+            dec.blob_copies_differing,
+            "a metadata blob copy of a column-authoritative key DISAGREES with the column; S5 \
+             would silently prefer the column and drop the blob value",
+        ),
+    ];
+    let hits: Vec<String> = drops
+        .iter()
+        .filter(|(_, n, _)| *n > 0)
+        .map(|(name, n, why)| format!("{name}={n} ({why})"))
+        .collect();
+    if hits.is_empty() {
+        return Ok(());
+    }
+    Err(cerr(
+        "E-CONV-ENVELOPE",
+        format!(
+            "the conversion would DISCARD content and C1 cannot see it: {}. Stage 1 converts \
+             only bases where every one of these is 0.",
+            hits.join("; ")
+        ),
+    ))
+}
+
 /// The full §10.3 conversion, duties 1-6 in order.
 pub fn run(opts: &RunOptions) -> Result<Report, ConvertError> {
     let t0 = std::time::Instant::now();
@@ -1559,6 +1839,7 @@ pub fn run(opts: &RunOptions) -> Result<Report, ConvertError> {
     let (nodes, edges, load) = load_input_from(&fs)?;
     let input_records = nodes.len() as u64 + edges.len() as u64;
     let conv = build_converted(&nodes, &edges, load, &fs)?;
+    gate_silent_drops(&conv.load, &conv.decompose)?;
     drop(nodes);
     drop(edges);
     drop(fs);
@@ -1566,15 +1847,31 @@ pub fn run(opts: &RunOptions) -> Result<Report, ConvertError> {
     // Physical write (F1/F2).
     let (segments, rows_total) = write_store(&conv, &opts.output, pf.shard_count)?;
     let segment_files = segments.len() as u64;
+    // The provenance path is CANONICALIZED: `--input /base/./graph.rfdb` and
+    // `--input /base/graph.rfdb` name the same store and must not produce two
+    // different manifests. (Byte-identity across machines is still not claimed:
+    // a different mount point IS a different string. What IS machine-invariant
+    // is every .seg file and `canonical_state_sha` — the fact data never sees
+    // this string.)
+    let canonical_input = std::fs::canonicalize(&opts.input)
+        .map_err(|e| cerr("E-CONV-INPUT", format!("canonicalize {}: {e}", opts.input.display())))?;
     let provenance = ProvenanceJson {
-        input_path: opts.input.display().to_string(),
+        input_path: canonical_input.display().to_string(),
         input_recursive_sha256: sha_before.clone(),
         input_size_bytes: input_size,
         input_manifest_version: pf.manifest_version,
+        // `ROFL_CONVERT_GIT_SHA` is read at COMPILE time and there is
+        // deliberately no `build.rs` baking it (that file is outside the
+        // round-012-pre E10 change envelope, and it would put git state into
+        // every build of the whole crate). So the honest default says exactly
+        // what happened rather than naming a commit that was never captured:
+        // the source identity of a store built this way is the reproducibility
+        // pair (`input_recursive_sha256`, this store's own bytes), not a SHA.
         converter: format!(
             "rfdb-{} git:{}",
             env!("CARGO_PKG_VERSION"),
-            option_env!("ROFL_CONVERT_GIT_SHA").unwrap_or("unbaked")
+            option_env!("ROFL_CONVERT_GIT_SHA")
+                .unwrap_or("not-baked(ROFL_CONVERT_GIT_SHA unset at compile time)")
         ),
     };
     let mut man = build_manifest(&conv, segments, pf.shard_count, provenance);
@@ -1603,16 +1900,30 @@ pub fn run(opts: &RunOptions) -> Result<Report, ConvertError> {
     man.canonical_state_sha = sha.iter().map(|b| format!("{b:02x}")).collect();
     man.write_atomic(&opts.output)
         .map_err(|e| cerr("E-CONV-OUTPUT", format!("manifest write: {e}")))?;
-    drop(store);
-    drop(read_facts);
 
-    // Metrics (reader-side numbers; entities = live sid facts).
+    // Metrics (reader-side numbers, off the WRITTEN store).
     let sid_facts = man
         .catalog
         .iter()
         .find(|d| d.name == "sid")
         .map(|d| d.live_facts)
         .unwrap_or(0);
+    // «Entities» is a SUBJECT count, so count subjects — a subject with two
+    // live `sid` facts (an R-1a conflict) must not inflate it.
+    let sid_entities = match man.catalog.iter().find(|d| d.name == "sid") {
+        Some(sid_decl) => read_facts
+            .iter()
+            .filter(|((pred, _, _), _)| *pred == sid_decl.id)
+            .filter_map(|(_, (tuple, _))| match tuple.first() {
+                Some(Value::Id(s)) => Some(*s),
+                _ => None,
+            })
+            .collect::<BTreeSet<u128>>()
+            .len() as u64,
+        None => 0,
+    };
+    drop(store);
+    drop(read_facts);
     let conflicts_total: u64 = conv.conflicts.values().map(|c| c.count).sum();
     let facts_main: u64 = man
         .catalog
@@ -1620,6 +1931,37 @@ pub fn run(opts: &RunOptions) -> Result<Report, ConvertError> {
         .filter(|d| d.name != "conflict")
         .map(|d| d.live_facts)
         .sum();
+    // The PERSISTED conflict count, not the in-memory counter — the number the
+    // report publishes is the number a reader will find on disk.
+    let conflicts_persisted: u64 = man
+        .catalog
+        .iter()
+        .find(|d| d.name == "conflict")
+        .map(|d| d.live_facts)
+        .unwrap_or(0);
+    if conflicts_persisted != conflicts_total {
+        return Err(cerr(
+            "E-CONV-VERIFY",
+            format!(
+                "conflict drift: {conflicts_total} conflicts resolved in memory but \
+                 {conflicts_persisted} conflict/5 facts are live on disk"
+            ),
+        ));
+    }
+    // D5's coverage gate, mechanical: EVERY subject the input carries more than
+    // one record for must have been visited by the DEV-P6-1 base cross-check.
+    // Without this, a converter that emitted zero conflicts would pass every
+    // remaining check vacuously.
+    if conv.type_cross_checked_subjects < conv.base_multi_record_subjects {
+        return Err(cerr(
+            "E-CONV-VERIFY",
+            format!(
+                "DEV-P6-1 coverage gate: the input has {} multi-record subjects but only {} \
+                 were cross-checked against the base resolver",
+                conv.base_multi_record_subjects, conv.type_cross_checked_subjects
+            ),
+        ));
+    }
     let retyped_total: u64 = conv.decompose.retyped.values().sum();
 
     // C1 (optional): fully disk-driven — reloads BOTH sides from disk.
@@ -1656,15 +1998,10 @@ pub fn run(opts: &RunOptions) -> Result<Report, ConvertError> {
     }
     let (out_sha, out_bytes) = dir_recursive_sha256(&opts.output)?;
 
-    let type_conflicts = conv
-        .conflicts
-        .get("type")
-        .map(|c| c.count)
-        .unwrap_or(0);
     Ok(Report {
         schema: "rofl-p6-stage1-report-v1".to_string(),
         input: InputJson {
-            path: opts.input.display().to_string(),
+            path: canonical_input.display().to_string(),
             recursive_sha256: sha_before,
             recursive_sha256_after: sha_after,
             size_bytes: input_size,
@@ -1685,13 +2022,15 @@ pub fn run(opts: &RunOptions) -> Result<Report, ConvertError> {
         decompose: conv.decompose.clone(),
         retyped_total,
         conflicts: ConflictsJson {
-            total: conflicts_total,
+            total: conflicts_persisted,
             per_predicate: conv.conflicts.clone(),
-            type_cross_checked_subjects: type_conflicts,
+            type_cross_checked_subjects: conv.type_cross_checked_subjects,
+            base_multi_record_subjects: conv.base_multi_record_subjects,
         },
         metrics: MetricsJson {
-            entities: sid_facts,
-            facts: facts_main + conflicts_total,
+            entities: sid_entities,
+            sid_facts,
+            facts: facts_main + conflicts_persisted,
             assertions: mem_asserts,
             rows: rows_total,
         },
@@ -2534,5 +2873,196 @@ mod tests {
         let (a, _, hs, _) = provenance_of(&meta_of(&[("_source", serde_json::json!(""))]), &mut c);
         assert_eq!((a.as_str(), hs), ("", true));
         assert_eq!(c.non_string_source, non_string);
+    }
+
+    // ── R-1a F3: the id-vs-name equivalence F3 silently depends on ──
+
+    /// F3 breaks the remaining tie by author CANON ORDER. The base
+    /// (`facts::lsm`) does that with a `min` over the author NAME under shortlex
+    /// `canon_str_cmp`; the converter does it with a `min` over the interned
+    /// numeric AuthorId. Those are the same relation ONLY while id == shortlex
+    /// rank — an equivalence produced by the table construction at mod.rs:940
+    /// and, until now, asserted nowhere. This test pins BOTH halves: the table
+    /// really is shortlex-ranked, and numeric-min really does select the same
+    /// author as name-min on a table whose numeric and lexicographic orders
+    /// disagree (`Z` < `aa` in shortlex, but "Z" > "aa" byte-wise).
+    #[test]
+    fn r1a_f3_numeric_author_min_agrees_with_shortlex_name_min() {
+        // A vocabulary where plain byte order and shortlex order DIFFER, so a
+        // wrong choice of comparator is visible.
+        let mut names = vec![
+            "aa".to_string(),
+            "Z".to_string(),
+            "$legacy".to_string(),
+            "b".to_string(),
+        ];
+        names.sort_by(|a, b| canon_str_cmp(a, b));
+        assert_eq!(
+            names,
+            vec!["Z", "b", "aa", "$legacy"],
+            "shortlex: shorter first, then bytes — NOT plain lexicographic"
+        );
+        let mut plain = names.clone();
+        plain.sort();
+        assert_ne!(plain, names, "the fixture must actually separate the two orders");
+
+        // Two facts, same tick, authors NOT in the priority table → F3 decides.
+        let id_of = |n: &str| names.iter().position(|x| x == n).expect("interned") as u32;
+        for (left, right) in [("aa", "b"), ("Z", "aa"), ("b", "$legacy")] {
+            let a = cfact("A_TYPE", &[(id_of(left), 4)]);
+            let b = cfact("B_TYPE", &[(id_of(right), 4)]);
+            let group = vec![&a, &b];
+            let fids = fids_of(&group);
+            let r = resolve_r1a(&group, &fids, &[]);
+            // What the BASE would pick: min over the NAME under shortlex.
+            let name_min = if canon_str_cmp(left, right) == std::cmp::Ordering::Less {
+                left
+            } else {
+                right
+            };
+            assert_eq!(
+                names[r.winner_author as usize], name_min,
+                "F3 over interned ids must select the shortlex-least NAME ({left} vs {right})"
+            );
+        }
+
+        // The real converter's table has the property this relies on.
+        let fs = LsmFactStore::ephemeral(2);
+        fs.commit_legacy(
+            vec![
+                node_rec_at(1, "T", "a", "a.js", "a.js->a", &prov("zzzz", 1)),
+                node_rec_at(2, "T", "b", "b.js", "b.js->b", &prov("aa", 1)),
+                node_rec_at(3, "T", "c", "c.js", "c.js->c", &prov("Z", 1)),
+            ],
+            vec![],
+            &[],
+        );
+        let (nodes, edges, load) = load_input_from(&fs).expect("load");
+        let conv = build_converted(&nodes, &edges, load, &fs).expect("convert");
+        for w in conv.author_names.windows(2) {
+            assert_eq!(
+                canon_str_cmp(&w[0], &w[1]),
+                std::cmp::Ordering::Less,
+                "the converter's author table must be strict shortlex: {:?}",
+                conv.author_names
+            );
+        }
+    }
+
+    // ── The envelope gate: no silent content loss ──────────────────
+
+    /// F1/F11(a): the four silent-drop counters used to be reported and never
+    /// enforced, and C1 could not see any of them (both sides of the comparison
+    /// derive from the SAME already-dropped input). `gate_silent_drops` turns
+    /// each into a hard abort — which also removes the S2 keep-first path's
+    /// dependence on enumeration order, because a shadowing input can no longer
+    /// be converted at all.
+    #[test]
+    fn every_silent_drop_counter_aborts_the_conversion() {
+        let cases: [(&str, LoadCounters, DecomposeCounters); 5] = [
+            (
+                "node_shadowed_dropped",
+                LoadCounters {
+                    node_shadowed_dropped: 1,
+                    ..Default::default()
+                },
+                DecomposeCounters::default(),
+            ),
+            (
+                "edge_shadowed_dropped",
+                LoadCounters {
+                    edge_shadowed_dropped: 1,
+                    ..Default::default()
+                },
+                DecomposeCounters::default(),
+            ),
+            (
+                "non_string_source",
+                LoadCounters {
+                    non_string_source: 1,
+                    ..Default::default()
+                },
+                DecomposeCounters::default(),
+            ),
+            (
+                "unparseable_generation",
+                LoadCounters {
+                    unparseable_generation: 1,
+                    ..Default::default()
+                },
+                DecomposeCounters::default(),
+            ),
+            (
+                "blob_copies_differing",
+                LoadCounters::default(),
+                DecomposeCounters {
+                    blob_copies_differing: 1,
+                    ..Default::default()
+                },
+            ),
+        ];
+        for (name, load, dec) in cases {
+            let err = gate_silent_drops(&load, &dec)
+                .expect_err("a nonzero silent-drop counter must abort");
+            assert!(err.to_string().contains(name), "{name} must be named: {err}");
+            assert!(err.to_string().contains("E-CONV-ENVELOPE"), "{err}");
+        }
+        // Exact duplicates are deliberately NOT a drop: collapsing two
+        // byte-identical records at the same (author, tick) destroys nothing.
+        gate_silent_drops(
+            &LoadCounters {
+                node_exact_duplicates: 9,
+                edge_exact_duplicates: 9,
+                ..Default::default()
+            },
+            &DecomposeCounters::default(),
+        )
+        .expect("exact duplicates are lossless");
+    }
+
+    /// F2/F33: a blob copy that DISAGREES with its column is the one S5 case
+    /// C1 is structurally blind to (`normalize_node` drops the key on both
+    /// sides). Prove it is caught end-to-end by the envelope gate instead —
+    /// with a control showing an AGREEING copy converts fine.
+    #[test]
+    fn a_blob_copy_that_disagrees_with_its_column_aborts_the_run() {
+        let agreeing = LsmFactStore::ephemeral(2);
+        agreeing.commit_legacy(
+            vec![node_rec_at(
+                1,
+                "FUNCTION",
+                "fn1",
+                "a.js",
+                "a.js->fn1",
+                r#"{"_source":"analyzer","_generation":1,"name":"fn1","file":"a.js"}"#,
+            )],
+            vec![],
+            &[],
+        );
+        let (nodes, edges, load) = load_input_from(&agreeing).expect("load");
+        let conv = build_converted(&nodes, &edges, load.clone(), &agreeing).expect("convert");
+        assert_eq!(conv.decompose.blob_copies_skipped, 2);
+        assert_eq!(conv.decompose.blob_copies_differing, 0);
+        gate_silent_drops(&load, &conv.decompose).expect("an agreeing copy is lossless");
+
+        let differing = LsmFactStore::ephemeral(2);
+        differing.commit_legacy(
+            vec![node_rec_at(
+                1,
+                "FUNCTION",
+                "fn1",
+                "a.js",
+                "a.js->fn1",
+                r#"{"_source":"analyzer","_generation":1,"name":"SOMETHING-ELSE"}"#,
+            )],
+            vec![],
+            &[],
+        );
+        let (nodes, edges, load) = load_input_from(&differing).expect("load");
+        let conv = build_converted(&nodes, &edges, load.clone(), &differing).expect("convert");
+        assert_eq!(conv.decompose.blob_copies_differing, 1);
+        let err = gate_silent_drops(&load, &conv.decompose)
+            .expect_err("a differing blob copy must abort");
+        assert!(err.to_string().contains("blob_copies_differing=1"), "{err}");
     }
 }
