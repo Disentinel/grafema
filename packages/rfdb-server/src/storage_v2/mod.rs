@@ -31,7 +31,7 @@ pub use manifest::{
     SegmentDescriptor, SnapshotDiff, SnapshotInfo,
 };
 pub use write_buffer::WriteBuffer;
-pub use shard::{Shard, FlushResult, ShardDiagnostics, ShardL0Counts, TombstoneSet, exact_live_count_scans};
+pub use shard::{Shard, FlushResult, FullScanMeter, ShardDiagnostics, ShardL0Counts, TombstoneSet};
 pub use shard_planner::ShardPlanner;
 pub use multi_shard::{DatabaseConfig, MultiShardStore, ShardStats};
 pub use read_snapshot::{ReadSnapshot, SegmentCache};

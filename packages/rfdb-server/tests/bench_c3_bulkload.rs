@@ -135,17 +135,26 @@ struct Checkpoint {
 /// every commit — the true segment-count ceiling, since marks may land right
 /// after a compaction cleared L0). Auto-compaction (C3.a) fires inside
 /// `commit_batch` during bulk-load.
+///
+/// The window clock accumulates the duration of the `commit_batch` calls ONLY, so
+/// the per-commit segment-count sampling stays outside the measurement: the
+/// number reported is the cost of committing, never the cost of measuring.
+/// Because of that (and because the sampler itself used to call the full
+/// diagnostics snapshot, an O(database size) walk per commit), ms/commit figures
+/// from acceptance runs before that fix are NOT comparable with these.
 fn run_bulk(engine: &mut GraphEngineV2, total: usize, marks: &[usize]) -> (Vec<Checkpoint>, usize) {
     let window = 50usize;
     let mut checkpoints = Vec::new();
-    let mut window_start = Instant::now();
+    let mut window_commit_time = Duration::ZERO;
     let mut peak_l0 = 0usize;
     for i in 0..total {
         let file = format!("src/gen/file_{i:06}.rs");
         let (nodes, edges) = make_batch(&file, NODES_PER_COMMIT);
+        let commit_start = Instant::now();
         engine
             .commit_batch(nodes, edges, std::slice::from_ref(&file), HashMap::new())
             .expect("bulk commit");
+        window_commit_time += commit_start.elapsed();
 
         peak_l0 = peak_l0.max(live_l0_total(engine));
 
@@ -153,16 +162,16 @@ fn run_bulk(engine: &mut GraphEngineV2, total: usize, marks: &[usize]) -> (Vec<C
         if marks.contains(&n) {
             // Mean ms/commit over the preceding `window` commits (steady-state at
             // this DB size, not polluted by warm-up).
-            let elapsed = window_start.elapsed();
-            let ms_per_commit_window = elapsed.as_secs_f64() * 1000.0 / window as f64;
+            let ms_per_commit_window =
+                window_commit_time.as_secs_f64() * 1000.0 / window as f64;
             checkpoints.push(Checkpoint {
                 commit_count: n,
                 ms_per_commit_window,
                 live_l0: live_l0_total(engine),
             });
-            window_start = Instant::now();
+            window_commit_time = Duration::ZERO;
         } else if (n % window) == 0 {
-            window_start = Instant::now();
+            window_commit_time = Duration::ZERO;
         }
     }
     (checkpoints, peak_l0)
@@ -220,7 +229,10 @@ fn c3_flatness_bounded_segment_count() {
     println!("   @600:  {ms600:.3} ms");
     println!("   @2000: {ms2000:.3} ms");
     println!("   @4000: {ms4000:.3} ms");
-    println!("   Ratio (4000/600): {ratio:.2}x");
+    println!("   Ratio (4000/600): {ratio:.2}x   (printed observation, not an");
+    println!("    assertion: machine-dependent, and not comparable with acceptance");
+    println!("    runs recorded before the measurement stopped including the cost of");
+    println!("    the measurement itself — see run_bulk)");
     println!("\n2. Live L0 segment count (PEAK across run = the true ceiling):");
     println!("   @600 mark:  {l0_600}   @2000 mark: {l0_2000}   @4000 mark: {l0_4000}");
     println!("   PEAK live L0 across all 4000 commits: {peak_l0} segments");

@@ -11,20 +11,33 @@
 //! time.
 //!
 //! Measuring this by wall clock needs a big load and minutes of patience, and
-//! still only yields a soft "it felt slow". Instead the storage layer counts its
-//! own exact-count full scans (`rfdb::storage_v2::exact_live_count_scans`), so
-//! the property is checked exactly and in seconds: a bulk load that fires
-//! auto-compaction many times must add ZERO full scans.
+//! still only yields a soft "it felt slow". Instead the store counts its own
+//! whole-database walks (`rfdb::storage_v2::FullScanMeter`, read via
+//! `GraphEngineV2::full_database_scans`), so the property is checked exactly and
+//! in seconds: a bulk load that fires auto-compaction many times must add ZERO
+//! walks.
 //!
-//! The test carries its own positive control, so a broken meter cannot make the
-//! guard vacuously green.
+//! WHAT THE METER COVERS — every door whose contract is "visit every live record
+//! to answer one question", in both the live and the MVCC-snapshot view:
+//! `node_count`, `edge_count`, `count_by_type`, `all_node_ids`,
+//! `all_node_ids_with_file`, `iter_all_edges`, `node_count_at`,
+//! `count_by_type_at`, `count_nodes_by_type_at`, `iter_all_edges_at`,
+//! `iter_node_versions_at`, `iter_edge_versions_at`. Filtered / index-assisted
+//! doors are not counted (they prune through zone maps, bloom filters or the L1
+//! indexes and never walk L1 record by record), and neither is compaction's own
+//! L1 rewrite, which is amortized rewrite work rather than a question. So this
+//! guard's exact claim is: the write path never answers a question by walking
+//! the database. See `FullScanMeter` for the full reasoning.
+//!
+//! The test carries positive controls for BOTH sensor families (the exact-count
+//! doors and the list-everything doors), so a broken meter cannot make the guard
+//! vacuously green.
 //!
 //! Run: cargo test -p rfdb --test c3_hot_path_no_full_scan -- --nocapture
 
 use std::collections::HashMap;
 
 use rfdb::graph::GraphEngineV2;
-use rfdb::storage_v2::exact_live_count_scans;
 use rfdb::storage_v2::types::{EdgeRecordV2, NodeRecordV2};
 use rfdb::GraphStore;
 use tempfile::TempDir;
@@ -69,9 +82,8 @@ fn make_batch(file: &str, n: usize) -> (Vec<NodeRecordV2>, Vec<EdgeRecordV2>) {
     (nodes, edges)
 }
 
-/// All three phases live in ONE test on purpose: the scan meter is process-wide,
-/// so two tests in this binary would run in parallel and pollute each other's
-/// measurement window.
+/// The meter belongs to the store under test, not to the process, so a second
+/// test in this binary cannot pollute this measurement window.
 #[test]
 fn write_path_never_scans_the_whole_database() {
     let tmp = TempDir::new().unwrap();
@@ -89,23 +101,51 @@ fn write_path_never_scans_the_whole_database() {
     let shard_count = engine.shard_l0_segment_counts().len();
     assert!(shard_count > 0, "engine must report at least one shard");
 
-    // ── Phase 1. POSITIVE CONTROL: the meter does see the expensive path ──
-    // One on-demand diagnostics snapshot = one node scan + one edge scan per
-    // shard. If this were 0, the guard in phase 2 would prove nothing.
-    let before_control = exact_live_count_scans();
+    // ── Phase 1. POSITIVE CONTROLS: the meter does see the expensive paths ──
+    // 1a. Exact-count doors: one on-demand diagnostics snapshot = one node count
+    // + one edge count per shard. If this were 0, the guard in phase 2 would
+    // prove nothing.
+    let before_control = engine.full_database_scans();
     let diags = engine.shard_diagnostics();
-    let control_scans = exact_live_count_scans() - before_control;
+    let control_scans = engine.full_database_scans() - before_control;
     assert_eq!(
         control_scans,
         2 * shard_count as u64,
         "positive control: one shard_diagnostics() call must perform exactly one \
-         node scan + one edge scan per shard ({shard_count} shards); the meter is \
-         not observing the expensive path"
+         node count + one edge count per shard ({shard_count} shards); the meter \
+         is not observing the exact-count doors"
     );
+
+    // 1b. List-everything / snapshot doors: the defect can also walk in through
+    // a count-by-type or a list-all-edges call, which costs exactly the same and
+    // used to carry no sensor at all. Each of these is one store-wide walk over
+    // the pinned version.
+    let snapshot_doors: [(&str, &dyn Fn(&GraphEngineV2)); 3] = [
+        ("get_all_edges", &|e: &GraphEngineV2| {
+            e.get_all_edges();
+        }),
+        ("count_nodes_by_type", &|e: &GraphEngineV2| {
+            e.count_nodes_by_type(None);
+        }),
+        ("node_count", &|e: &GraphEngineV2| {
+            e.node_count();
+        }),
+    ];
+    for (door, call) in snapshot_doors {
+        let before = engine.full_database_scans();
+        call(&engine);
+        assert_eq!(
+            engine.full_database_scans() - before,
+            1,
+            "positive control: one {door}() call must charge exactly one \
+             whole-database walk; that door has no sensor, so the guard below \
+             would not see the defect coming back through it"
+        );
+    }
 
     // ── Phase 2. THE GUARD: a bulk load adds no full scan at all ──
     engine.begin_bulk_load().expect("begin_bulk_load");
-    let before_bulk = exact_live_count_scans();
+    let before_bulk = engine.full_database_scans();
     let compactions_before = engine.auto_compactions();
 
     for i in 0..COMMITS {
@@ -116,12 +156,12 @@ fn write_path_never_scans_the_whole_database() {
             .expect("bulk commit");
     }
 
-    let bulk_scans = exact_live_count_scans() - before_bulk;
+    let bulk_scans = engine.full_database_scans() - before_bulk;
     let compactions = engine.auto_compactions() - compactions_before;
 
     println!(
         "C3 hot path: {COMMITS} bulk commits, {shard_count} shards, threshold {THRESHOLD} \
-         => {compactions} auto-compactions, {bulk_scans} exact-count full scans"
+         => {compactions} auto-compactions, {bulk_scans} whole-database walks"
     );
 
     assert!(
@@ -131,11 +171,12 @@ fn write_path_never_scans_the_whole_database() {
     );
     assert_eq!(
         bulk_scans, 0,
-        "the per-commit write path performed {bulk_scans} exact-count full scans \
-         over {COMMITS} commits. Each scan walks every live record, so this is \
+        "the per-commit write path walked the whole database {bulk_scans} times \
+         over {COMMITS} commits. Each walk visits every live record, so this is \
          O(commits x database size) — a quadratic bulk load. The compaction \
          trigger needs only the L0 segment counts, which are constant time: use \
-         shard_l0_segment_counts(), not shard_diagnostics()"
+         shard_l0_segment_counts(), not shard_diagnostics() and not any of the \
+         count-everything / list-everything doors"
     );
 
     engine.end_bulk_load().expect("end_bulk_load");

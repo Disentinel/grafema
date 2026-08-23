@@ -2517,6 +2517,15 @@ impl GraphEngineV2 {
         self.auto_compactions
     }
 
+    /// Whole-database walks this engine's store has performed since it was
+    /// opened — see `storage_v2::FullScanMeter` for the exact metered set.
+    ///
+    /// The per-commit write path must leave this number untouched; the guard
+    /// `tests/c3_hot_path_no_full_scan.rs` asserts exactly that.
+    pub fn full_database_scans(&self) -> u64 {
+        self.store.full_database_scans()
+    }
+
     /// MVCC C3.a: set the per-shard live-L0 threshold that triggers auto-compaction
     /// during bulk-load. Larger ⇒ compaction fires less often (more amortization of
     /// the O(total) L1 rewrite, at the cost of a higher live-segment ceiling).

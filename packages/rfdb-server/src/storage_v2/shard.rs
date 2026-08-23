@@ -29,27 +29,58 @@ use crate::storage_v2::write_buffer::WriteBuffer;
 use crate::storage_v2::writer::{EdgeSegmentWriter, NodeSegmentWriter};
 use serde::Serialize;
 
-// ── Exact-count scan cost meter ──────────────────────────────────────
+// ── Whole-database scan meter ────────────────────────────────────────
 
-/// Process-wide counter of EXACT live-count full scans, i.e. calls to
-/// [`Shard::node_count`] / [`Shard::edge_count`].
+/// Counts WHOLE-DATABASE walks performed by one store.
 ///
-/// Each such call walks every live record of the shard and builds a dedup
-/// `HashSet` over it — O(live records). That is a fair price for an on-demand
-/// stats answer, and a defect on the per-commit write path: one scan per commit
-/// makes a bulk load cost O(commits x database size), i.e. quadratic in the
-/// amount loaded. Counting the scans makes that cost observable, so the write
-/// path can be guarded mechanically instead of by wall-clock feel — see
-/// `packages/rfdb-server/tests/c3_hot_path_no_full_scan.rs`.
-static EXACT_LIVE_COUNT_SCANS: AtomicU64 = AtomicU64::new(0);
+/// A walk belongs here when its contract is "visit every live record to answer
+/// one question": no filter, no index, no early exit — write buffer + every L0
+/// segment + the L1 segment. Cost is O(live records), which grows without bound
+/// as the database grows. That is a fair price for an on-demand answer and a
+/// defect on the per-commit write path: one such walk per commit makes a bulk
+/// load cost O(commits x database size), i.e. quadratic in the amount loaded.
+///
+/// Metered doors, live view (this file): [`Shard::node_count`],
+/// [`Shard::edge_count`], [`Shard::count_by_type`], [`Shard::all_node_ids`],
+/// [`Shard::all_node_ids_with_file`], [`Shard::iter_all_edges`]. Snapshot view
+/// (`multi_shard.rs`): `node_count_at`, `count_by_type_at`,
+/// `count_nodes_by_type_at`, `iter_all_edges_at`, `iter_node_versions_at`,
+/// `iter_edge_versions_at` (`edge_count_at` delegates to `iter_all_edges_at`).
+///
+/// Deliberately NOT metered, with reasons:
+/// - Filtered / index-assisted doors (`find_nodes*`, `find_node_ids_by_type*`,
+///   `get_edges_by_type*`, `find_edge_keys_by_*`): they prune through zone maps,
+///   bloom filters or the immutable L1 indexes and never walk L1 record by
+///   record, so their cost is bounded by L0 + matches, and L0 is bounded by the
+///   compaction threshold.
+/// - Compaction itself (`compaction/coordinator.rs`, the L1 rewrite and the
+///   global-index rebuild): it also walks everything, but as amortized rewrite
+///   work rather than to answer a question, so a nonzero count there is normal
+///   and would drown the signal this meter carries.
+///
+/// The counter is per store, not per process: two databases (or two tests in one
+/// binary) cannot pollute each other's measurement window. Shared with every
+/// shard of the store, so a walk on any thread is charged to the store that owns
+/// the data. Guard: `packages/rfdb-server/tests/c3_hot_path_no_full_scan.rs`.
+#[derive(Debug, Clone, Default)]
+pub struct FullScanMeter {
+    count: Arc<AtomicU64>,
+}
 
-/// Number of exact live-count full scans performed by this process so far.
-///
-/// Monotonic; read it before and after a workload and take the difference. The
-/// write path (`commit_batch`, including its auto-compaction trigger) must leave
-/// this difference at zero.
-pub fn exact_live_count_scans() -> u64 {
-    EXACT_LIVE_COUNT_SCANS.load(AtomicOrdering::Relaxed)
+impl FullScanMeter {
+    /// Charge one whole-database walk. Called at the entry of every metered door.
+    pub(crate) fn record(&self) {
+        self.count.fetch_add(1, AtomicOrdering::Relaxed);
+    }
+
+    /// Walks charged to this meter so far.
+    ///
+    /// Monotonic for the lifetime of the store instance; read it before and
+    /// after a workload and take the difference. The write path (`commit_batch`,
+    /// including its auto-compaction trigger) must leave that difference at zero.
+    pub fn scans(&self) -> u64 {
+        self.count.load(AtomicOrdering::Relaxed)
+    }
 }
 
 // ── Shard L0 segment counts ──────────────────────────────────────────
@@ -300,6 +331,10 @@ pub struct Shard {
     /// Built once when L1 segments are set (compaction or shard open).
     /// Never invalidated — L1 is immutable.
     l1_edge_type_index: Option<HashMap<String, Vec<(u128, u128)>>>,
+
+    /// Whole-database walk meter, shared with the owning store (see
+    /// [`FullScanMeter`]). A standalone shard keeps its own.
+    full_scan_meter: FullScanMeter,
 }
 
 // -- Constructors -------------------------------------------------------------
@@ -328,6 +363,7 @@ impl Shard {
             l1_by_name_index: None,
             l1_token_index: None,
             l1_edge_type_index: None,
+            full_scan_meter: FullScanMeter::default(),
         })
     }
 
@@ -377,6 +413,7 @@ impl Shard {
             l1_by_name_index: None,
             l1_token_index: None,
             l1_edge_type_index: None,
+            full_scan_meter: FullScanMeter::default(),
         })
     }
 
@@ -401,6 +438,7 @@ impl Shard {
             l1_by_name_index: None,
             l1_token_index: None,
             l1_edge_type_index: None,
+            full_scan_meter: FullScanMeter::default(),
         }
     }
 
@@ -428,6 +466,7 @@ impl Shard {
             l1_by_name_index: None,
             l1_token_index: None,
             l1_edge_type_index: None,
+            full_scan_meter: FullScanMeter::default(),
         })
     }
 
@@ -478,7 +517,16 @@ impl Shard {
             l1_by_name_index: None,
             l1_token_index: None,
             l1_edge_type_index: None,
+            full_scan_meter: FullScanMeter::default(),
         })
+    }
+
+    /// Charge this shard's whole-database walks to the store's meter.
+    ///
+    /// Called by `MultiShardStore` right after it builds a shard, so one store
+    /// reports one number across all of its shards (see [`FullScanMeter`]).
+    pub fn set_full_scan_meter(&mut self, meter: FullScanMeter) {
+        self.full_scan_meter = meter;
     }
 }
 
@@ -2138,6 +2186,7 @@ impl Shard {
     /// Deduplicates by (src, dst, edge_type) key — newest version wins.
     /// Skips tombstoned edges.
     pub fn iter_all_edges(&self) -> Vec<EdgeRecordV2> {
+        self.full_scan_meter.record();
         let mut seen_edge_keys: HashSet<(u128, u128, String)> = HashSet::new();
         let mut results: Vec<EdgeRecordV2> = Vec::new();
 
@@ -2312,7 +2361,7 @@ impl Shard {
     /// segment model — the same cost as `count_by_type`, which is the
     /// authoritative count path.
     pub fn node_count(&self) -> usize {
-        EXACT_LIVE_COUNT_SCANS.fetch_add(1, AtomicOrdering::Relaxed);
+        self.full_scan_meter.record();
         let mut seen_ids: HashSet<u128> = HashSet::new();
         let mut count = 0usize;
 
@@ -2364,7 +2413,7 @@ impl Shard {
     /// Counts each `(src, dst, edge_type)` key exactly once and excludes
     /// tombstoned keys — same liveness semantics as `get_all_edges`.
     pub fn edge_count(&self) -> usize {
-        EXACT_LIVE_COUNT_SCANS.fetch_add(1, AtomicOrdering::Relaxed);
+        self.full_scan_meter.record();
         let mut seen_keys: HashSet<(u128, u128, Arc<str>)> = HashSet::new();
         let mut count = 0usize;
 
@@ -2489,6 +2538,7 @@ impl Shard {
     /// Returns only IDs (16 bytes each), NOT full NodeRecordV2 records
     /// (~200 bytes each).
     pub fn all_node_ids(&self) -> Vec<u128> {
+        self.full_scan_meter.record();
         let mut ids = Vec::new();
         let mut seen = HashSet::new();
 
@@ -2539,6 +2589,7 @@ impl Shard {
     /// Same scan as `all_node_ids()` but also reads the file column
     /// for building the `file_to_node_ids` index in MultiShardStore.
     pub fn all_node_ids_with_file(&self) -> Vec<(u128, String)> {
+        self.full_scan_meter.record();
         let mut results = Vec::new();
         let mut seen = HashSet::new();
 
@@ -2591,6 +2642,7 @@ impl Shard {
     /// Deduplicates by node ID (write buffer wins, newest segment wins).
     /// Skips tombstoned nodes.
     pub fn count_by_type(&self) -> HashMap<String, usize> {
+        self.full_scan_meter.record();
         let mut seen_ids: HashSet<u128> = HashSet::new();
         let mut counts: HashMap<String, usize> = HashMap::new();
 
@@ -3879,5 +3931,83 @@ mod tests {
 
         assert!(!completed, "Should have stopped early");
         assert_eq!(collected.len(), 2, "Should have collected exactly 2 IDs");
+    }
+
+    /// The sensor set behind the C3 write-path guard
+    /// (`tests/c3_hot_path_no_full_scan.rs`): EVERY door that answers a question
+    /// by visiting every live record must charge exactly one walk, and the
+    /// index-assisted doors must charge none. Without this, a new
+    /// count-everything door could be added with no sensor and the guard would
+    /// stay green while the quadratic write path came back through it.
+    #[test]
+    fn every_whole_database_door_charges_the_scan_meter() {
+        let mut shard = Shard::ephemeral();
+        shard.add_nodes(vec![
+            make_node("fn1", "FUNCTION", "a", "f.js"),
+            make_node("fn2", "FUNCTION", "b", "f.js"),
+        ]);
+        shard.upsert_edges(vec![make_edge("fn1", "fn2", "CALLS")]);
+
+        let metered: Vec<(&str, Box<dyn Fn(&Shard)>)> = vec![
+            ("node_count", Box::new(|s: &Shard| { s.node_count(); })),
+            ("edge_count", Box::new(|s: &Shard| { s.edge_count(); })),
+            ("count_by_type", Box::new(|s: &Shard| { s.count_by_type(); })),
+            ("all_node_ids", Box::new(|s: &Shard| { s.all_node_ids(); })),
+            ("all_node_ids_with_file", Box::new(|s: &Shard| { s.all_node_ids_with_file(); })),
+            ("iter_all_edges", Box::new(|s: &Shard| { s.iter_all_edges(); })),
+            ("diagnostics", Box::new(|s: &Shard| { s.diagnostics(0); })),
+        ];
+        // diagnostics() is node_count + edge_count, hence two walks.
+        let expected = |door: &str| if door == "diagnostics" { 2 } else { 1 };
+        for (door, call) in metered {
+            let before = shard.full_scan_meter.scans();
+            call(&shard);
+            assert_eq!(
+                shard.full_scan_meter.scans() - before,
+                expected(door),
+                "{door}() must charge {} whole-database walk(s) to the meter; \
+                 an unmetered door lets the quadratic write path back in",
+                expected(door)
+            );
+        }
+
+        // Negative control: the pruning doors are NOT full walks and must stay
+        // off the meter, otherwise the guard turns red on legitimate work.
+        let cheap: Vec<(&str, Box<dyn Fn(&Shard)>)> = vec![
+            ("get_node", Box::new(|s: &Shard| { s.get_node(node_id("fn1")); })),
+            ("get_edges_by_type", Box::new(|s: &Shard| { s.get_edges_by_type("CALLS"); })),
+            ("find_node_ids_by_type", Box::new(|s: &Shard| { s.find_node_ids_by_type("FUNCTION"); })),
+            ("l0_counts", Box::new(|s: &Shard| { s.l0_counts(0); })),
+        ];
+        for (door, call) in cheap {
+            let before = shard.full_scan_meter.scans();
+            call(&shard);
+            assert_eq!(
+                shard.full_scan_meter.scans() - before,
+                0,
+                "{door}() prunes through an index or a length read and must not \
+                 be counted as a whole-database walk"
+            );
+        }
+    }
+
+    /// The meter belongs to the store that owns the data: a shard handed the
+    /// store's meter reports into it, and an unattached shard keeps its own.
+    #[test]
+    fn scan_meter_is_per_store_not_per_process() {
+        let meter = FullScanMeter::default();
+        let mut attached = Shard::ephemeral();
+        attached.set_full_scan_meter(meter.clone());
+        let other = Shard::ephemeral();
+
+        attached.node_count();
+        assert_eq!(meter.scans(), 1, "the attached shard reports into the store meter");
+
+        other.node_count();
+        assert_eq!(
+            meter.scans(),
+            1,
+            "a shard of another store must not pollute this store's measurement window"
+        );
     }
 }

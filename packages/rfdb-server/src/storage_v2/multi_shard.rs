@@ -38,7 +38,7 @@ use crate::storage_v2::index::token::{TokenIndex, TokenMatch, tokenize_name};
 use crate::storage_v2::manifest::{ManifestEdit, ManifestStore, SegmentDescriptor};
 use crate::storage_v2::read_snapshot::{ReadSnapshot, SegmentCache};
 use crate::storage_v2::segment::{self, EdgeSegmentV2, NodeSegmentV2};
-use crate::storage_v2::shard::{Shard, ShardDiagnostics, ShardL0Counts, TombstoneSet};
+use crate::storage_v2::shard::{FullScanMeter, Shard, ShardDiagnostics, ShardL0Counts, TombstoneSet};
 use crate::storage_v2::shard_planner::ShardPlanner;
 use crate::storage_v2::types::{CommitDelta, DerivedFields, EdgeRecordV2, NodeRecordV2, SegmentType, extract_file_context};
 
@@ -305,6 +305,12 @@ pub struct MultiShardStore {
     /// conflict-free for any snapshot, the correct conservative default).
     file_last_committed_version: std::sync::Mutex<HashMap<String, u64>>,
 
+    /// Whole-database walk meter for this store, shared with every shard (see
+    /// [`FullScanMeter`]). Read via [`Self::full_database_scans`]; the guard
+    /// `tests/c3_hot_path_no_full_scan.rs` requires the per-commit write path to
+    /// leave it untouched.
+    full_scan_meter: FullScanMeter,
+
     /// MVCC B4: monotonic count of conflict-driven commit retries (every abort
     /// at the commit point increments this). Exposed for diagnostics / the B4
     /// acceptance test; a rising value is a work-distribution alarm.
@@ -449,10 +455,12 @@ impl MultiShardStore {
         };
         config.write_to(db_path)?;
 
+        let full_scan_meter = FullScanMeter::default();
         let mut shards = Vec::with_capacity(shard_count as usize);
         for i in 0..shard_count {
             let shard_path = shard_dir(db_path, i);
-            let shard = Shard::create_for_shard(&shard_path, i)?;
+            let mut shard = Shard::create_for_shard(&shard_path, i)?;
+            shard.set_full_scan_meter(full_scan_meter.clone());
             shards.push(shard);
         }
 
@@ -466,6 +474,7 @@ impl MultiShardStore {
             file_to_node_ids: HashMap::new(),
             edge_type_intern: HashMap::new(),
             segment_cache: SegmentCache::new(),
+            full_scan_meter,
             file_last_committed_version: std::sync::Mutex::new(HashMap::new()),
             commit_conflict_retries: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             commit_build_in_flight: Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -521,7 +530,9 @@ impl MultiShardStore {
             l1_edge_descs_by_shard.insert(shard_id, desc.clone());
         }
 
-        // Open each shard
+        // Open each shard. The meter is attached BEFORE the index rebuild below,
+        // so the full walks that rebuild costs are charged honestly.
+        let full_scan_meter = FullScanMeter::default();
         let mut shards = Vec::with_capacity(config.shard_count as usize);
         for i in 0..config.shard_count {
             let shard_path = shard_dir(db_path, i);
@@ -566,6 +577,7 @@ impl MultiShardStore {
                 );
             }
 
+            shard.set_full_scan_meter(full_scan_meter.clone());
             shards.push(shard);
         }
 
@@ -600,6 +612,7 @@ impl MultiShardStore {
             file_to_node_ids,
             edge_type_intern: HashMap::new(),
             segment_cache: SegmentCache::new(),
+            full_scan_meter,
             file_last_committed_version: std::sync::Mutex::new(HashMap::new()),
             commit_conflict_retries: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             commit_build_in_flight: Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -617,7 +630,14 @@ impl MultiShardStore {
     pub fn ephemeral(shard_count: u16) -> Self {
         assert!(shard_count > 0, "shard_count must be > 0");
 
-        let shards = (0..shard_count).map(|_| Shard::ephemeral()).collect();
+        let full_scan_meter = FullScanMeter::default();
+        let shards = (0..shard_count)
+            .map(|_| {
+                let mut shard = Shard::ephemeral();
+                shard.set_full_scan_meter(full_scan_meter.clone());
+                shard
+            })
+            .collect();
 
         Self {
             db_path: None,
@@ -629,6 +649,7 @@ impl MultiShardStore {
             file_to_node_ids: HashMap::new(),
             edge_type_intern: HashMap::new(),
             segment_cache: SegmentCache::new(),
+            full_scan_meter,
             file_last_committed_version: std::sync::Mutex::new(HashMap::new()),
             commit_conflict_retries: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             commit_build_in_flight: Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -1226,6 +1247,7 @@ impl MultiShardStore {
         &self,
         snap: &ReadSnapshot,
     ) -> std::collections::HashMap<String, u64> {
+        self.full_scan_meter.record();
         let mut seen: HashSet<u128> = HashSet::new();
         let mut counts: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
 
@@ -1252,6 +1274,7 @@ impl MultiShardStore {
     /// `Shard::node_count` dedup + tombstone semantics across all shards, minus
     /// the write buffer (full O(records) scan).
     pub fn node_count_at(&self, snap: &ReadSnapshot) -> usize {
+        self.full_scan_meter.record();
         let mut seen: HashSet<u128> = HashSet::new();
         let mut count = 0usize;
 
@@ -1289,6 +1312,7 @@ impl MultiShardStore {
     /// Per-type live node counts resolved through `snap`. Reproduces
     /// `Shard::count_by_type` minus the write buffer.
     pub fn count_by_type_at(&self, snap: &ReadSnapshot) -> HashMap<String, usize> {
+        self.full_scan_meter.record();
         let mut seen: HashSet<u128> = HashSet::new();
         let mut counts: HashMap<String, usize> = HashMap::new();
 
@@ -1563,6 +1587,7 @@ impl MultiShardStore {
     /// (L0 newest→oldest, then L1; dedup by key; tombstone filter) across all
     /// shards, minus the write buffer.
     pub fn iter_all_edges_at(&self, snap: &ReadSnapshot) -> Vec<EdgeRecordV2> {
+        self.full_scan_meter.record();
         let mut results: Vec<EdgeRecordV2> = Vec::new();
         let mut seen: HashSet<(u128, u128, String)> = HashSet::new();
 
@@ -2964,6 +2989,7 @@ impl MultiShardStore {
         &self,
         snap: &ReadSnapshot,
     ) -> Result<Vec<(NodeRecordV2, Option<DerivedFields>)>> {
+        self.full_scan_meter.record();
         let mut results: Vec<(NodeRecordV2, Option<DerivedFields>)> = Vec::new();
         for desc in snap
             .node_segments
@@ -3061,6 +3087,7 @@ impl MultiShardStore {
         &self,
         snap: &ReadSnapshot,
     ) -> Result<Vec<(EdgeRecordV2, Option<DerivedFields>)>> {
+        self.full_scan_meter.record();
         let mut results: Vec<(EdgeRecordV2, Option<DerivedFields>)> = Vec::new();
         for desc in snap
             .edge_segments
@@ -4434,8 +4461,21 @@ impl MultiShardStore {
     }
 
     /// Backward-compatible alias for `shard_diagnostics()`.
+    ///
+    /// Cost: identical to `shard_diagnostics()`, i.e. O(database size) — the
+    /// cheap-sounding name buys nothing. On-demand paths only, never per commit;
+    /// for a compaction decision use `shard_l0_segment_counts()`.
     pub fn shard_stats(&self) -> Vec<ShardStats> {
         self.shard_diagnostics()
+    }
+
+    /// Whole-database walks this store has performed since it was opened.
+    ///
+    /// See [`FullScanMeter`] for exactly which doors are counted and which are
+    /// deliberately not. Read before and after a workload and take the
+    /// difference; the per-commit write path must leave it at zero.
+    pub fn full_database_scans(&self) -> u64 {
+        self.full_scan_meter.scans()
     }
 }
 
@@ -8198,6 +8238,82 @@ mod tests {
         drop(snap2);
         // All readers gone ⇒ nothing pinned.
         assert_eq!(manifest.lock().unwrap().min_pinned_version(), None);
+    }
+
+    /// Snapshot half of the C3 sensor set (`tests/c3_hot_path_no_full_scan.rs`):
+    /// every MVCC-view door that visits every live record must charge exactly one
+    /// whole-database walk to the store meter, and the pruning doors must charge
+    /// none. The live half is covered by
+    /// `shard::tests::every_whole_database_door_charges_the_scan_meter`.
+    #[test]
+    fn every_snapshot_whole_database_door_charges_the_scan_meter() {
+        use std::sync::Mutex;
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("scan_meter.rfdb");
+        std::fs::create_dir_all(&db_path).unwrap();
+
+        let store = MultiShardStore::create(&db_path, 4).unwrap();
+        let manifest = Mutex::new(ManifestStore::create(&db_path).unwrap());
+        store
+            .commit_batch_private(
+                vec![make_node("FUNCTION:a@x.js", "FUNCTION", "a", "x.js")],
+                vec![],
+                &["x.js".to_string()],
+                HashMap::new(),
+                &manifest,
+                &[],
+            )
+            .unwrap();
+        let snap = store.snapshot(&manifest.lock().unwrap());
+
+        let metered: Vec<(&str, Box<dyn Fn(&MultiShardStore)>)> = vec![
+            ("node_count_at", Box::new(|st: &MultiShardStore| { st.node_count_at(&snap); })),
+            ("count_by_type_at", Box::new(|st: &MultiShardStore| { st.count_by_type_at(&snap); })),
+            ("count_nodes_by_type_at", Box::new(|st: &MultiShardStore| { st.count_nodes_by_type_at(&snap); })),
+            ("iter_all_edges_at", Box::new(|st: &MultiShardStore| { st.iter_all_edges_at(&snap); })),
+            ("edge_count_at", Box::new(|st: &MultiShardStore| { st.edge_count_at(&snap); })),
+            ("iter_node_versions_at", Box::new(|st: &MultiShardStore| { st.iter_node_versions_at(&snap).unwrap(); })),
+            ("iter_edge_versions_at", Box::new(|st: &MultiShardStore| { st.iter_edge_versions_at(&snap).unwrap(); })),
+        ];
+        for (door, call) in metered {
+            let before = store.full_database_scans();
+            call(&store);
+            assert_eq!(
+                store.full_database_scans() - before,
+                1,
+                "{door}() must charge exactly one whole-database walk to the meter; \
+                 an unmetered door lets the quadratic write path back in"
+            );
+        }
+
+        // Negative control: version-pinned point and pruned lookups are not walks.
+        let id = node_id("FUNCTION:a@x.js");
+        let cheap: Vec<(&str, Box<dyn Fn(&MultiShardStore)>)> = vec![
+            ("get_node_at", Box::new(|st: &MultiShardStore| { st.get_node_at(&snap, id); })),
+            ("node_exists_at", Box::new(|st: &MultiShardStore| { st.node_exists_at(&snap, id); })),
+            ("get_edges_by_type_at", Box::new(|st: &MultiShardStore| { st.get_edges_by_type_at(&snap, "CALLS"); })),
+            ("shard_l0_segment_counts", Box::new(|st: &MultiShardStore| { st.shard_l0_segment_counts(); })),
+        ];
+        for (door, call) in cheap {
+            let before = store.full_database_scans();
+            call(&store);
+            assert_eq!(
+                store.full_database_scans() - before,
+                0,
+                "{door}() prunes through an index or a length read and must not be \
+                 counted as a whole-database walk"
+            );
+        }
+
+        // Aggregating live doors charge once per shard (4 shards here).
+        let before = store.full_database_scans();
+        store.node_count();
+        assert_eq!(
+            store.full_database_scans() - before,
+            store.shard_count() as u64,
+            "MultiShardStore::node_count() walks every shard and must charge one \
+             walk per shard"
+        );
     }
 
     /// B5 acceptance #1 — long reader vs churn (the core B5 property).
