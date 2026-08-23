@@ -207,6 +207,16 @@ pub struct GraphEngineV2 {
     /// [`GraphEngineV2::set_rule_source`]. Cached here because every derive entry
     /// consults it and re-reading the file per query would be a syscall on the hot path.
     rule_source: crate::derive::RuleSource,
+
+    /// Whether this database runs under ROFL rules
+    /// ([`crate::storage_v2::multi_shard::DatabaseConfig::rofl_mode`]).
+    ///
+    /// Loaded from `db_config.json` at open and at create, `false` for an ephemeral engine.
+    /// The engine only READS it here; no behavior branches on it yet — wiring the ROFL
+    /// checks is separate work. What this field buys now is that the marker has a durable
+    /// home that survives a restart and a `clear_durable`, so that later work has something
+    /// trustworthy to branch on.
+    rofl_mode: bool,
     /// MVCC B4: the manifest is the single commit-point serialization handle.
     /// Behind a `Mutex` so concurrent `commit_batch` calls (running under the
     /// server's shared `read()` lock) can take the short commit-point lock while
@@ -332,6 +342,7 @@ impl GraphEngineV2 {
         Ok(Self {
             store,
             rule_source: config.rule_source,
+            rofl_mode: config.rofl_mode,
             manifest: std::sync::Mutex::new(manifest),
             path: Some(path.to_path_buf()),
             ephemeral: false,
@@ -362,6 +373,7 @@ impl GraphEngineV2 {
         Self {
             store: MultiShardStore::ephemeral(DEFAULT_SHARD_COUNT),
             rule_source: crate::derive::RuleSource::default(),
+            rofl_mode: false,
             manifest: std::sync::Mutex::new(ManifestStore::ephemeral()),
             path: None,
             ephemeral: true,
@@ -419,6 +431,7 @@ impl GraphEngineV2 {
         Ok(Self {
             store,
             rule_source: config.rule_source,
+            rofl_mode: config.rofl_mode,
             manifest: std::sync::Mutex::new(manifest),
             path: Some(path.to_path_buf()),
             ephemeral: false,
@@ -1402,36 +1415,6 @@ impl GraphEngineV2 {
         self.derive_shared_indexes = crate::derive::exec::SharedIndexCaches::new();
     }
 
-    /// W8 Part 2: REAL durable clear — atomically truncate the on-disk database so a
-    /// subsequent reload (or a cold restart) sees an EMPTY graph. This is what the wire
-    /// `Clear` command runs; `analyze --clear`'s clear → shutdown → reload sequence is no
-    /// longer a placebo.
-    ///
-    /// Procedure (disk-backed engine):
-    /// 1. Swap the live store + manifest to ephemeral placeholders — drops every open
-    ///    segment handle and manifest Arc the engine holds.
-    /// 2. Delete the manifest authority (`current.json`, `manifests/`,
-    ///    `manifest_index.json`) and immediately recreate a fresh empty manifest
-    ///    (`ManifestStore::create`, durable). After this point a crash leaves a VALID
-    ///    empty database: orphaned segment files are unreferenced by the empty manifest
-    ///    and invisible to any reader.
-    /// 3. Delete the data trees (`segments/`, `gc/`, the derive pin sidecar dir) and
-    ///    recreate the shard skeleton (`MultiShardStore::create`).
-    /// 4. Reset all in-memory engine state: pending tombstones, declared fields, and the
-    ///    derive caches ([`Self::reset_derive_caches`] — the D2 entries pin pre-clear
-    ///    manifest versions and MUST be dropped).
-    ///
-    /// The `LOCK` sentinel is intentionally preserved: it carries the DatabaseManager's
-    /// advisory flock for the server process lifetime.
-    ///
-    /// MVCC semantics (decided, tested): clear runs under the engine's exclusive write
-    /// access (`&mut self` — the server wire handler holds the engine write lock), so no
-    /// request-scoped reader can span it. The only cross-request pinned snapshots are the
-    /// engine-owned D2 materialize cache entries, which are dropped here. Post-clear
-    /// readers see an empty graph; nothing observes a torn state. A crash in the tiny
-    /// window inside step 2 (authority deleted, fresh manifest not yet written) leaves a
-    /// database that fails to open with an explicit error — the documented manual
-    /// fallback (`rm -rf <db>.rfdb`) recovers; clear never silently resurrects data.
     /// Reflect a program's rules INTO this database (Projection T) and return the number
     /// of facts written.
     ///
@@ -1496,23 +1479,92 @@ impl GraphEngineV2 {
         // durable pin keyed to the old program is stale by construction.
         self.reset_derive_caches();
         if let Some(path) = self.path.clone() {
-            self.persist_rule_source(&path)?;
+            self.persist_durable_flags(&path)?;
         }
         Ok(())
     }
 
-    /// Read-modify-write the rule source into `db_config.json`, preserving the shard count
-    /// the file already carries (never re-deriving it from the runtime profile, which can
-    /// differ from the value this database was created with).
-    fn persist_rule_source(&self, path: &Path) -> Result<()> {
+    /// Whether this database runs under ROFL rules.
+    ///
+    /// Read-only by design in this iteration: nothing in the engine branches on it yet.
+    pub fn rofl_mode(&self) -> bool {
+        self.rofl_mode
+    }
+
+    /// Mark this database as running under ROFL rules, and PERSIST the marker to
+    /// `db_config.json`.
+    ///
+    /// One-way on purpose — there is no disabling counterpart. That asymmetry mirrors the
+    /// ROFL spec: revision is assert-only, with supersession instead of retraction, so a
+    /// database that has entered the mode has no defined exit. Allowing it back off would
+    /// mean the state at a tick stopped being a pure function of the rules, the base facts
+    /// and the tick log. A database that must leave the mode is rebuilt from sources, not
+    /// downgraded in place.
+    ///
+    /// Idempotent: marking an already-ROFL database rewrites the same content. An ephemeral
+    /// engine has no config file, so the marker is in-memory only — exactly that engine's
+    /// lifetime.
+    pub fn enable_rofl_mode(&mut self) -> Result<()> {
+        self.rofl_mode = true;
+        if let Some(path) = self.path.clone() {
+            self.persist_durable_flags(&path)?;
+        }
+        Ok(())
+    }
+
+    /// Read-modify-write this database's durable flags into `db_config.json`, preserving
+    /// the shard count the file already carries (never re-deriving it from the runtime
+    /// profile, which can differ from the value this database was created with).
+    ///
+    /// Writes EVERY durable flag the engine caches, not only the one a caller just changed.
+    /// That is what makes it safe to call after `MultiShardStore::create` has overwritten
+    /// the file with a fresh default config: a helper that restored the rule source alone
+    /// would let [`Self::clear_durable`] silently drop the ROFL marker.
+    fn persist_durable_flags(&self, path: &Path) -> Result<()> {
         let mut config = crate::storage_v2::multi_shard::DatabaseConfig::read_from(path)?
             .ok_or_else(|| {
                 crate::error::GraphError::InvalidFormat("Missing db_config.json".to_string())
             })?;
         config.rule_source = self.rule_source;
+        config.rofl_mode = self.rofl_mode;
         config.write_to(path)
     }
 
+    /// W8 Part 2: REAL durable clear — atomically truncate the on-disk database so a
+    /// subsequent reload (or a cold restart) sees an EMPTY graph. This is what the wire
+    /// `Clear` command runs; `analyze --clear`'s clear → shutdown → reload sequence is no
+    /// longer a placebo.
+    ///
+    /// Procedure (disk-backed engine):
+    /// 1. Swap the live store + manifest to ephemeral placeholders — drops every open
+    ///    segment handle and manifest Arc the engine holds.
+    /// 2. Delete the manifest authority (`current.json`, `manifests/`,
+    ///    `manifest_index.json`) and immediately recreate a fresh empty manifest
+    ///    (`ManifestStore::create`, durable). After this point a crash leaves a VALID
+    ///    empty database: orphaned segment files are unreferenced by the empty manifest
+    ///    and invisible to any reader.
+    /// 3. Delete the data trees (`segments/`, `gc/`, the derive pin sidecar dir) and
+    ///    recreate the shard skeleton (`MultiShardStore::create`).
+    /// 4. Reset all in-memory engine state: pending tombstones, declared fields, and the
+    ///    derive caches ([`Self::reset_derive_caches`] — the D2 entries pin pre-clear
+    ///    manifest versions and MUST be dropped).
+    ///
+    /// The `LOCK` sentinel is intentionally preserved: it carries the DatabaseManager's
+    /// advisory flock for the server process lifetime.
+    ///
+    /// MVCC semantics (decided, tested): clear runs under the engine's exclusive write
+    /// access (`&mut self` — the server wire handler holds the engine write lock), so no
+    /// request-scoped reader can span it. The only cross-request pinned snapshots are the
+    /// engine-owned D2 materialize cache entries, which are dropped here. Post-clear
+    /// readers see an empty graph; nothing observes a torn state. A crash in the tiny
+    /// window inside step 2 (authority deleted, fresh manifest not yet written) leaves a
+    /// database that fails to open with an explicit error — the documented manual
+    /// fallback (`rm -rf <db>.rfdb`) recovers; clear never silently resurrects data.
+    ///
+    /// Every DURABLE FLAG survives: step 3's `MultiShardStore::create` rewrites
+    /// `db_config.json` from scratch, so the rule source and the ROFL marker are
+    /// re-persisted afterwards ([`Self::persist_durable_flags`]). Clearing the DATA must
+    /// never change what the database IS.
     pub fn clear_durable(&mut self) -> Result<()> {
         let Some(path) = self.path.clone() else {
             // Ephemeral engine: the in-memory swap IS the durable clear.
@@ -1549,9 +1601,10 @@ impl GraphEngineV2 {
         self.store = fresh_store;
         self.manifest = std::sync::Mutex::new(fresh_manifest);
         // `MultiShardStore::create` just OVERWROTE `db_config.json` with a default config —
-        // which would silently demote a reflexive database to text mode, i.e. clearing the
-        // DATA would change the PROGRAM. Re-persist the flag we were opened with.
-        self.persist_rule_source(&path)?;
+        // which would silently demote a reflexive database to text mode and strip its ROFL
+        // marker, i.e. clearing the DATA would change the PROGRAM and the MODE. Re-persist
+        // every durable flag we were opened with.
+        self.persist_durable_flags(&path)?;
         Ok(())
     }
 }
@@ -6553,6 +6606,110 @@ mod tests {
             crate::derive::RuleSource::Store,
             "…and the cleared database must still reopen reflexive"
         );
+    }
+
+    /// The ROFL marker is a DURABLE property of the database: it survives a reopen, and it
+    /// survives `clear_durable`.
+    ///
+    /// The clear is the trap this test exists for. `clear_durable` rebuilds the shard
+    /// skeleton through `MultiShardStore::create`, which writes a FRESH DEFAULT
+    /// `db_config.json` over the live one — so without the re-persist of every durable flag
+    /// afterwards, wiping the DATA would silently demote a ROFL database to an ordinary
+    /// one. Verified to fail before the fix: with the clear restoring only the rule source,
+    /// this test panics with `db_config.json lost the marker during clear_durable`.
+    ///
+    /// Note which assertion catches it. The IN-MEMORY `rofl_mode()` still reads `true`
+    /// right after the clear even when the bug is present — the engine field was never
+    /// touched. Only the on-disk check sees the loss, and only the next process to open the
+    /// database would have suffered it. A test that asserted on the getter alone would pass
+    /// against the broken code.
+    #[test]
+    fn the_rofl_marker_is_a_durable_database_property() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let mut engine = GraphEngineV2::create(dir.path()).expect("create");
+            assert!(
+                !engine.rofl_mode(),
+                "a fresh database is not a ROFL database"
+            );
+            engine.enable_rofl_mode().expect("enable");
+            assert!(engine.rofl_mode());
+        }
+        {
+            let mut engine = GraphEngineV2::open(dir.path()).expect("reopen");
+            assert!(engine.rofl_mode(), "the marker must survive a reopen");
+
+            engine.clear_durable().expect("clear");
+            assert!(
+                engine.rofl_mode(),
+                "the marker must survive clearing the data"
+            );
+
+            // …and not just in memory: the file on disk must carry it too, or the next
+            // process to open this database would see an ordinary database.
+            let on_disk = crate::storage_v2::multi_shard::DatabaseConfig::read_from(dir.path())
+                .expect("read config")
+                .expect("config present");
+            assert!(
+                on_disk.rofl_mode,
+                "db_config.json lost the marker during clear_durable"
+            );
+        }
+        let engine = GraphEngineV2::open(dir.path()).expect("reopen after clear");
+        assert!(
+            engine.rofl_mode(),
+            "…and the cleared database must still reopen as a ROFL database"
+        );
+    }
+
+    /// Clearing must not trade one flag for the other: a database that is BOTH reflexive
+    /// and ROFL keeps both.
+    #[test]
+    fn clear_durable_keeps_every_durable_flag_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = GraphEngineV2::create(dir.path()).expect("create");
+        engine
+            .set_rule_source(crate::derive::RuleSource::Store)
+            .expect("set rule source");
+        engine.enable_rofl_mode().expect("enable rofl");
+
+        engine.clear_durable().expect("clear");
+
+        assert_eq!(engine.rule_source(), crate::derive::RuleSource::Store);
+        assert!(engine.rofl_mode());
+        let on_disk = crate::storage_v2::multi_shard::DatabaseConfig::read_from(dir.path())
+            .expect("read config")
+            .expect("config present");
+        assert_eq!(on_disk.rule_source, crate::derive::RuleSource::Store);
+        assert!(on_disk.rofl_mode);
+    }
+
+    /// A REAL old config file — the exact JSON the previous build wrote, with no ROFL
+    /// field — must open exactly as before: an ordinary, non-ROFL database.
+    #[test]
+    fn a_db_config_written_before_the_rofl_marker_opens_as_an_ordinary_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let shard_count = {
+            let _ = GraphEngineV2::create(dir.path()).expect("create");
+            crate::storage_v2::multi_shard::DatabaseConfig::read_from(dir.path())
+                .expect("read config")
+                .expect("config present")
+                .shard_count
+        };
+
+        // Byte-for-byte the two-field file the previous build produced: no `rofl_mode` key.
+        std::fs::write(
+            dir.path().join("db_config.json"),
+            format!("{{\n  \"shard_count\": {shard_count},\n  \"rule_source\": \"text\"\n}}"),
+        )
+        .expect("write legacy config");
+
+        let engine = GraphEngineV2::open(dir.path()).expect("open legacy database");
+        assert!(
+            !engine.rofl_mode(),
+            "an absent field must mean the historical behavior, not a ROFL database"
+        );
+        assert_eq!(engine.rule_source(), crate::derive::RuleSource::Text);
     }
 
     /// A `db_config.json` written before the flag existed must still open, as text mode.
