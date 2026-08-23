@@ -4,8 +4,8 @@
       "rev": "052a4c5"
     },
     "rfdb": {
-      "gitSha": "bc3db6c16ce3be254a2faaf11983dcc88ebb9100",
-      "binary": "/home/dev/grafema-rofl/packages/rfdb-server/target/debug/rfdb-server",
+      "gitSha": "09dbe1cfe460677513fecf8f8348de0ac06fb7c1",
+      "binary": "/home/dev/grafema-rofl/packages/rfdb-server/target/release/rfdb-server",
       "serverVersion": "0.4.1",
       "protocolVersion": 3
     }
