@@ -1,796 +1,1041 @@
-# ROFL rules-as-data on RFDB — design of record
+# Правила как данные: устройство рефлексивного слоя ROFL в RFDB
 
-Status: design of record for the rules-as-data lane. Synthesis round, read-only on `packages/`.
-Tree: `rofl-v1`, HEAD `aeac10e0` at the time of writing.
-Supersedes: the two premise-designs and the three critiques that fed this round (none of which
-were committed as files; their surviving claims are restated here with fresh evidence and their
-refuted claims are named as refuted).
-
-Every claim below is either (a) a `file:line` read at HEAD `aeac10e0`, (b) a shell command with
-its output inlined, (c) a named test/scenario, or (d) marked NOT VERIFIED in §10.
+Редакция R15, переписано целиком 2026-08-23. Предыдущая редакция (коммит `fad06052`) была разобрана
+тремя независимыми враждебными взглядами, и все три вынесли вердикт «ненадёжно». Этот документ —
+не правка прежнего, а его замена: приговоры по всем двенадцати блокирующим замечаниям,
+распределение шести остаточных пробелов и исправленное устройство.
 
 ---
 
-## 1. Verdict and chosen spine
+## Как читать этот документ
 
-**Neither premise won. The design of record is a third shape.**
+В тексте встречаются короткие обозначения. Все они расшифровываются на месте, потому что владелец
+документа не обязан держать их в голове.
 
-Premise A ("port the v0 reflection vocabulary wholesale into RFDB as a new fact family, gated
-behind the fact-store read path") is right about the *representation* and wrong about the *size*
-and the *gate*. Premise B was never written to disk; there is no artifact of it in the tree, so
-this document asserts **no comparison against it** and claims no ideas grafted from it. Recording
-that plainly is the point — the previous rounds of this migration retracted claims made from
-remembered rather than read artifacts.
+* **v0** — эталонная реализация ROFL на TypeScript, лежит только для чтения в
+  `packages/rofl-conformance/vendor/rofl-v0/` (ревизия `052a4c5`). Это единственный источник истины
+  о том, «как должно быть».
+* **RFDB** — наш движок на Rust, `packages/rfdb-server/`. Его вычислительная часть (вывод фактов по
+  правилам) живёт в `packages/rfdb-server/src/derive/`.
+* **boot.rofl** — файл `run-migration/boot.rofl`, 41 строка, 21 правило. Это мета-ядро ROFL,
+  написанное на самом ROFL: оно само вычисляет стратификацию и само себя аудирует.
+* **Проекция F** и **Проекция T** — два способа записать правило в виде фактов. Различие объяснено
+  в разделе 4.2, и оно оказалось смыслонесущим, а не косметическим.
+* **Пробы** — мои собственные прогоны, а не цитаты из чужих отчётов. Все они лежат в `/tmp/v0lab2/`
+  и запускаются одинаково: `node --experimental-strip-types /tmp/v0lab2/p1.ts` — пробы эталона v0,
+  имена от `p1` до `p10`; `node --experimental-strip-types /tmp/v0lab2/eng2.ts` — пробы живого
+  сервера RFDB, имена `eng2`, `eng3`, `eng4`, `eng5`. Ниже приведён реальный вывод, а не пересказ.
 
-What the evidence forced:
+**Состояние, на котором всё проверено:** дерево `/home/dev/grafema-rofl`, ветка `rofl-v1`, коммит
+`e9035364`. Сервер собран из `packages/rfdb-server/target/release/rfdb-server`, версия 0.4.1,
+протокол 3. Сами прогоны я снимал на предыдущем коммите `6b51dbec`; между `6b51dbec` и `e9035364`
+соседний участок работ правил только пакет сравнения (`packages/rofl-conformance/src/translate.ts`,
+`adapter.ts`, `canonical.ts`, тест перевода) и документы. Исходники сервера и вложенный эталон v0 не
+менялись — проверено командой `git diff --stat 6b51dbec..HEAD`: в её выводе нет ни одного файла из
+`packages/rfdb-server/` и ни одного из `packages/rofl-conformance/vendor/rofl-v0/`. Поэтому все
+прогоны ниже действительны и на `e9035364`; сдвинулись только номера строк в адаптере, и здесь они
+обновлены.
 
-**(i) The vocabulary splits cleanly into two projections, and only one of them is hard.**
-`packages/rofl-conformance/vendor/rofl-v0/src/reflect.ts:148-181` (`encodeRule`) emits exactly
-these relations for a clause: `rule/1`, `has_conclusion/2`, `conclusion_lit/3`, `concludes/2`,
-`writes_to/2`, `has_premise/2`, `premise_lit/3`, `premise_pos/2`, `premise_neg/2`,
-`uses_builtin/2`, `reads_from/2`, `bridge_decl/3`. Of these, **only `conclusion_lit/3` and
-`premise_lit/3` carry a reified term** (`reifyLit` / `reifyBodyElem`). Every other relation's
-arguments are atoms and small integers. RFDB's `Term` today is
-`packages/rfdb-server/src/datalog/types.rs:7-18` — `Var | Const | Lit(Value) | Wildcard`, no
-compound form — so the flat projection is expressible in the existing dialect *unchanged*, and
-only the term-carrying projection needs new representation. Premise A treated the vocabulary as
-one indivisible block; it is not.
+**Правило доказательства, которому подчинён этот текст.** Ни одно утверждение о поведении v0 или
+RFDB здесь не опирается на чтение исходника «по смыслу». Либо приведён прогон с выводом, либо
+указано место в коде, которое я прочитал на текущем коммите и чей номер строки проверил. Там, где я
+чего-то не проверил, это написано прямо в разделе 9.
 
-**(ii) The gate Premise A proposed does not exist and is not on the critical path.** The critique
-that the derive↔fact-store read path is absent is CONFIRMED: `StorageView`
-(`packages/rfdb-server/src/derive/storage_glue.rs:305`, `pub(crate) trait StorageView: Sync`) has
-eleven methods and every one of them is node/edge-shaped — `generation`, `sorted_run`,
-`scan_nodes_by_type`, `scan_edges_by_type`, `edges_from`, `edges_to`, `get_node`,
-`nodes_by_attr`, `edge_metadata`, `node_metadata`, `scan_edge_metadata_by_type`. There is no
-generic arity-n relation read. `SegmentType` is a closed two-variant enum
-(`packages/rfdb-server/src/storage_v2/types.rs:84-87`, `Nodes = 0, Edges = 1`). And `derive/`
-imports `crate::facts` in exactly four places, all of them `SortOrder`:
+---
+
+## 1. Приговоры по двенадцати блокирующим замечаниям
+
+Три взгляда дали двенадцать блокирующих замечаний. Считая по существу, за ними стоит **восемь
+разных корней**: три взгляда независимо нашли одну и ту же ошибку про «хранилище против текстового
+буфера» и одну и ту же ошибку про запрет на служебные отношения.
+
+Итог: **одиннадцать замечаний приняты** (одно из них — с поправкой, потому что его побочное
+утверждение опровергается моим прогоном), **одно отклонено как блокирующее** и переведено в список
+зафиксированных расхождений.
+
+### 1.1 Корень первый: источник правды — хранилище, а не накопленный текст программы
+
+*Замечания: взгляд «надёжность» № 1 (в отчёте `L0F0`), взгляд «реализуемость» № 2 (`L1F1`), взгляд
+«верность эталону» № 3 (`L2F2`). Приняты, все три.*
+
+Прежняя редакция говорила: адаптер хранит накопленный текст программы, каждое `assert` дописывает
+строку в буфер, а следующее вычисление разбирает весь буфер заново; рефлексивные факты при этом
+порождаются разборщиком. То есть рефлексивные факты объявлялись чистой функцией от текста.
+
+В v0 это не так, и разница наблюдаема. Проба `p2.ts`:
 
 ```
-$ grep -rn "crate::facts" packages/rfdb-server/src/derive/
-src/derive/catalog.rs:28:use crate::facts::SortOrder;
-src/derive/plan.rs:2006:        use crate::facts::SortOrder;
-src/derive/exec.rs:82:    use crate::facts::SortOrder;
-src/derive/exec.rs:6573:        use crate::facts::SortOrder;
+1) path: ["X = a, Y = b","X = a, Y = c","X = b, Y = c"]
+2) concludes(R,path): ["R = r7e93750a","R = rd2f1f53d"]
+3) recursive rule id: rd2f1f53d
+4) retract rule(rd2f1f53d): {"ok":true,"diagnostics":[]}
+5) path AFTER retract: ["X = a, Y = b","X = b, Y = c"]
+6) holds path(a,c): false
+7) rule(rd2f1f53d) still holds: false
+8) conclusion_lit rows for it: 1
+9) after another assert+eval, path: ["X = a, Y = b","X = b, Y = c"]
+10) rule(rd2f1f53d) regenerated? false
 ```
 
-But the rules-as-data lane does **not** need that read path. Reflection facts are *ground facts
-of the program under evaluation*, and ground facts in program text are already first-class EDB in
-the derive dialect. The lane can be built entirely inside `derive/` with zero `facts/` coupling,
-and *should* be, so that the fact-store read path stays an independent, separately-sequenced
-piece of work.
+Текст правила не менялся ни на символ. Отозван один-единственный факт `rule(rd2f1f53d)` — и
+транзитивное правило перестало работать: `path(a,c)` больше не выводится и не возвращается после
+повторного вычисления. Значит, исполняемый набор правил читается из хранилища, а не из текста.
 
-**(iii) The closure arithmetic Premise A rested on is wrong, and provably so.** The translator's
-phase order is fixed and documented at `packages/rofl-conformance/src/translate.ts:148-200`:
-phase 1 reflection vocabulary → phase 2 perspectives → phase 3 temporal → phase 4 compound terms
-→ phase 5 bignum → phase 6 builtins → phase 7 int/string constants. **First blocker wins.** So a
-`missing:rules-as-data` verdict means only "phase 1 fired first", never "phase 1 is the only
-blocker". Profiling the actual fixture programs with the vendored parser (script
-`/tmp/synth/profile.ts`, output inlined in §6) shows `counter.rofl`, `tm.rofl` and
-`tm_diverge.rofl` contain **no reflection vocabulary at all** — their `missing:rules-as-data`
-verdicts come from the scenario preloading `boot.rofl`, and their real blockers are temporal ticks
-and compound terms. Closing rules-as-data flips **two** of the eighteen, not eighteen. §6 gives
-the per-case derivation.
-
-**(iv) Rule identity is a two-site invariant, and both sites are live.** `parse_ext_program` has
-six production call sites (all others are `#[cfg(test)]`; `plan_golden` is gated at
-`packages/rfdb-server/src/derive/mod.rs:60-61`):
-
-| # | site | function |
-|---|------|----------|
-| 1 | `derive/mod.rs:235` | `evaluate_with_materialize_shared` — THE eval entry (I8) |
-| 2 | `graph/engine_v2.rs:785` | `maintain_derive` |
-| 3 | `graph/engine_v2.rs:830` | `explain_datalog_fact` |
-| 4 | `graph/engine_v2.rs:861` | `explain_datalog_gap` |
-| 5 | `graph/engine_v2.rs:936` | `eval_derive_maintain_writeback` |
-| 6 | `graph/engine_v2.rs:967` | `eval_derive_materialize_cached` |
-
-Any seam that lets the *store* contribute rules must be installed at all six, or
-`explain_datalog_fact` / `explain_datalog_gap` (#3, #4) will explain under a rule set the
-evaluator at #1 never used — a silently wrong `why`. And the program key is mirrored: it is
-computed at `graph/engine_v2.rs:960-963` (`DefaultHasher` over `source`) and again in
-`w8_program_key` at `graph/engine_v2.rs:6064-6069`, whose own doc comment says "must mirror
-`eval_derive_materialize_cached` exactly". The W9 unchanged-graph short-circuit at
-`graph/engine_v2.rs:1161-1167` (`prev_snapshot.version == cur_snapshot.version &&
-Arc::ptr_eq(&prev_snapshot.tombstones, &cur_snapshot.tombstones)`) keys off the same cache entry.
-Rule-set identity must enter all three or a store-side rule change will be laundered by the cache.
-
-### Grafted from Premise A (kept, with its reasoning intact)
-
-- The reflection vocabulary is **carried as ordinary ground facts of the program**, not as a
-  side-channel Rust structure. This is what makes `concludes(R, path)` queryable at all, and it is
-  the only shape that satisfies p3-runtime-rule.
-- **Decode is a second producer, not a fork of the evaluator.** Rules reach the fixpoint through
-  one path (a program), whether they were written as text or asserted as facts. A. was right that
-  forking `Executor::evaluate` into a "rules from store" variant is how you get `why` to disagree
-  with the answers.
-- Rule identity is content-addressed over a canonical clause rendering, mirroring v0's
-  `ruleIdOf` = `'r' + fnv1a(canonClause(c))` (`reflect.ts:134-136`). RFDB already has a
-  variable-rename-invariant rule hash it stamps on materialized edges
-  (`derive/exec.rs:280-282`, `rule_ast_hash`), so the identity notion exists and does not need
-  inventing — only a stable 8-hex surface rendering (see §5).
-
-### Refuted, and removed
-
-- ~~"18 of 25 REDs are behind this lane"~~ — refuted by the phase order at `translate.ts:148-200`
-  plus the fixture profile in §6. The correct number for this lane alone is **2**.
-- ~~"the lane is gated on the derive↔fact-store read path"~~ — refuted by (ii). It is not, and
-  coupling them would serialize two independent pieces of work.
-- ~~"`is` arithmetic is a separate, later concern"~~ — refuted: `boot.rofl:20` is
-  `stratum(Rel, N) :- dep_neg(Rel, Q), stratum(Q, M), N is M + 1.` The boot program *itself*
-  needs `is`. Every scenario that loads boot needs it. It is a co-requisite, not a follow-on.
-- ~~"`parse_ext_program` has one seam"~~ — refuted by the six-site table in (iv).
-
----
-
-## 2. The encoding: rules as facts, in two projections
-
-### 2.1 Projection F (flat) — expressible in today's dialect
-
-Ten relations, all arguments atoms or small integers, all derivable from a parsed `ExtProgram`
-with no new `Term` variant:
+Обратное направление тоже настоящее. Проба `p9.ts`, часть A: я собрал факты кодировщика для правила
+`pwned(X) :- base(X).`, подменил идентификатор на выдуманный `rforge` и утвердил их как обычные
+факты, ни разу не разобрав текст этого правила:
 
 ```
-rule(R)                    has_conclusion(R, 1)       concludes(R, Rel)
-writes_to(R, P)            has_premise(R, K)          premise_pos(R, Rel)
-premise_neg(R, Rel)        uses_builtin(R, Op)        reads_from(R, P)
-bridge_decl(R, P, Q)
+A1) assertClauses(reflection facts only): {"ok":true,"diagnostics":[]}
+A2) pwned(X): ["X = a","X = b"]
+A3) why pwned(a):
+      pwned[main](a)  <= rforge @tick 0
+        base[main](a) [axiom]
 ```
 
-`R` is the content-addressed rule id (§5). `K` is the 1-based premise ordinal. `P`/`Q` are
-perspective atoms — in a perspective-less RFDB they are all the constant `main`, which is exactly
-what `perspAudit` degenerates to when a literal carries no explicit perspective
-(`reflect.ts:143-145`: non-atom perspective → `$any`; the atom case passes through).
+Правило, существующее только как данные, исполняется и попадает в дерево объяснения под своим
+идентификатором.
 
-Projection F is what `boot.rofl`'s stratum-0 block actually consumes:
-`rule_known/1`, `dep/2`, `dep_neg/2`, `reach/2`, `unstratified/1`, `stratum/2` are all defined
-purely over `has_conclusion`, `concludes`, `premise_pos`, `premise_neg`, `edb`
-(`run-migration/boot.rofl:4-21`). No reified term appears above the negation line.
-
-### 2.2 Projection T (term-carrying) — needs a representation decision
-
-Two relations: `conclusion_lit(R, 1, Term)` and `premise_lit(R, K, Term)`, where `Term` is the
-v0 reification: `$lit(rel, persp, $cons(...))`, `$not(...)`, `$builtin(op, $cons(...))`
-(`reflect.ts:81-114`).
-
-**This is already supported at the value level, and both premise-designs missed it.** RFDB
-distinguishes two different things that the conformance report's single code
-`missing:compound-terms` collapses:
-
-- **Syntactic** compound terms — writing `app(cons(H,T), Ys, cons(H,Zs))` in a rule and unifying
-  *into* it. `Term` at `packages/rfdb-server/src/datalog/types.rs:7-18` is
-  `Var | Const | Lit(Value) | Wildcard`; there is no functor form and no text parser for one
-  (`derive/canon.rs:348-358` constructs `Value::Term` but that is the property-test generator
-  `random_canonical`, not a parser). **Genuinely missing.**
-- **Value-level** compound terms — a *ground* structured value carried as data. This exists:
-  `packages/rfdb-server/src/datalog/eval.rs:59-61` is
-  `Term(Arc<TermBlob>)`, whose own doc comment reads "ROFL term (§2.7): functor + args,
-  recursive. **Rules-as-data and reified structures live here as values**; canonical when every
-  nested arg is canonical (V4)." It is constructed through the validating
-  `TermBlob::new` (`derive/canon.rs:242-260`), has injective canonical bytes
-  (`derive/canon.rs:69-72`), and renders on the wire as its canonical text `functor(a1,…,an)`
-  (`packages/rfdb-server/src/bin/rfdb_server.rs:3212-3219`).
-
-**Decision: Projection T is carried as `Value::Term`, not as an opaque string.** Grounds:
-(a) it is the representation the codebase already declares for exactly this purpose, in those
-words, so choosing anything else creates a second identity for the same concept — the drift class
-this migration keeps finding; (b) it is canonical and hashable, so it participates in
-`canonical_state_sha` (§9.1 of the fact model) without a special case; (c) the wire rendering
-`$fact(path,main,…)` is what p2-derived-by's `bindings['F'].includes('path')` and p4-forged's
-`/\$fact\(reading,s1/` actually assert against.
-
-**The cost, stated:** the *parser* still cannot produce a `Value::Term`, so the encoder must build
-these blobs programmatically from the parsed `ExtProgram` (which it can — it has the clause in
-hand). And a query cannot pattern-match inside a `Value::Term`, because that needs the syntactic
-form. So `premise_lit(R, K, X)` binds `X` to a whole reified literal and you can compare it or
-render it, but you cannot join through its arguments. Nothing in `boot.rofl` or in any tier-1
-assertion does join through them — the only corpus reads of `premise_lit`/`conclusion_lit` are the
-round-trip decode `unreifyLit` (`reflect.ts:81-98`) — so this discharges every measured demand and
-leaves the syntactic-term lane (p1-functor-append, p4-tm, p4-tm-diverge) honestly separate.
-
-### 2.3 What is NOT encoded here
-
-`derived_by/3`, `in_perspective/2`, `asserted_by/2`, `hole/2`, `authority/2`, `reserved/1`,
-`mode/2`, `edb/1` are **provenance and policy**, not rule structure. `derived_by`'s subject is a
-whole ground fact reified as `$fact(rel, persp, $cons(...))` (`reflect.ts:112-114`), so it lands
-in Projection T's representation class and inherits its limitation. `hole/2` is R-2 territory
-(budget semantics) and is out of scope for this lane by construction. `authority`/`reserved`/
-`mode`/`edb` are *asserted* by the boot layer, not produced by `encodeRule`, so they need only
-the ordinary EDB path.
-
----
-
-## 3. The read path: one seam, six sites, by construction
-
-### 3.1 The seam is inside `parse_ext_program`, not at its call sites
-
-§1(iv) established that a rule-source seam installed at call sites must be installed at all six or
-`explain_datalog_fact` and `explain_datalog_gap` explain under rules the evaluator never used.
-The design of record avoids that class of bug entirely by putting the seam **one level down**:
-the reflection encoder runs inside `parse_ext_program`
-(`packages/rfdb-server/src/derive/parser_ext.rs:863`), so every one of the six production
-consumers inherits it with no change at any of them. The invariant is then structural, not a
-convention six sites have to keep.
-
-Shape: `parse_ext_program` produces the `ExtProgram` as it does today, then — if and only if the
-program opted in (§3.2) — appends the Projection-F and Projection-T ground facts for each of its
-own clauses to the program's fact set. From that point on nothing downstream can tell them from
-facts the author typed. Stratification (`stratify`), planning (`plan_program_with_catalog`) and
-the fixpoint (`Executor::evaluate`) are untouched.
-
-### 3.2 Opt-in, because the blast radius of always-on is unacceptable
-
-Always-on encoding would add ~10 facts per clause to **every** bundled rule-pack evaluation. Two
-consequences, both measurable and both bad:
-
-- `derive/plan_golden.rs` fingerprints one plan per (program, stats-profile, rule) over every
-  bundled stdlib pack and compares against a golden generated at pre-P3 HEAD
-  (`plan_golden.rs:1-26`; the golden is `src/derive/golden/p3_plan_fingerprints.txt`, recorded at
-  40,816 lines in `run-migration/rounds/round-012.rofl`). New EDB relations change `FactStats`,
-  which changes estimates, which moves plans. The gate would go red across the board and the only
-  "fix" would be regenerating it — i.e. destroying the instrument.
-- The pack-phase perf ceiling (round-012 records depends 4.912s / method_calls 8.765s /
-  axum_routes 5.448s against a 1.10x ceiling) has no room for a per-clause fact multiplier.
-
-So: **a program-level directive, `@reflect`, parsed by `parser_ext` into a flag on `ExtProgram`.**
-Absent the directive the encoder does not run and not one byte of bundled-pack behaviour moves —
-`plan_golden` stays bit-identical, which is the gate that proves it. The ROFL adapter emits
-`@reflect` at the head of every program it loads; nothing else in the tree does.
-
-This also solves cache identity for the text path for free: the directive is part of `source`, and
-the program key at `graph/engine_v2.rs:960-963` is `DefaultHasher` over `source`, mirrored in
-`w8_program_key` (`graph/engine_v2.rs:6064-6069`). A reflective and a non-reflective spelling of
-the same rules are already different keys. No cache change is required *for programs whose rules
-come only from text*. The runtime-assertion path is where identity genuinely moves — §5.
-
-### 3.3 Stratification as data, and the `strataPlan()` contract
-
-v0's engine does not contain a stratification checker: it READS `stratum/2` and `unstratified/1`
-facts that `boot.rofl:17-21` derives (`vendor/rofl-v0/src/engine.ts:2-4`, and the reads at
-`engine.ts:203` and `engine.ts:213`). RFDB stratifies internally in `derive/stratify.rs` and
-exposes nothing.
-
-The contract that matters is p2-noboot-null-plan (`src/scenarios.ts`, sourceRef
-`test/phase2.test.ts:150`): with **no** boot loaded, `strataPlan()` must report
-`level === null` for `isolated`. An adapter that surfaced RFDB's internal stratum would answer
-`1` and fail. Therefore:
-
-> `strataPlan()` reads levels from `stratum/2` FACTS in the evaluated fact set, and reports
-> `level: null` for any relation with no such fact. It must NOT consult `stratify.rs`.
-
-That is the whole of p2-noboot-null-plan, and it is why that case is genuinely in this lane
-(§6): it is a statement about stratification being *data*, and it is falsifiable precisely
-because the no-boot case has to come back null.
-
-The converse — RFDB's internal stratification and `boot.rofl`'s derived `stratum/2` agreeing when
-boot IS loaded — is p2-stratum-order, which additionally asserts
-`iso.level === Math.max(...levels)`. That one needs boot to load at all, so it is blocked (§6).
-
-### 3.4 The rejected alternative: adapter-side injection
-
-The encoder is a pure function of a parsed program, so it could equally well run in the
-TypeScript adapter, which would emit `concludes(r1a2b3c4d, path).` and friends as ordinary ground
-facts into the program text it sends to `rfdb-server`. That variant needs **zero**
-`packages/rfdb-server/` change, cannot perturb `plan_golden`, and closes the same cases. It was
-seriously considered and is rejected as the design of record, for three stated reasons:
-
-1. **It re-hashes the whole program on every assertion.** The program key is `DefaultHasher` over
-   `source` (`graph/engine_v2.rs:960-963`). Injected reflection facts make `source` grow with the
-   rule count, and every `assert` changes it, so the W8 durable pin and the W9 short-circuit never
-   hit. In-engine encoding keeps `source` at the size the author wrote.
-2. **It two-sources the vocabulary.** Write protection (§4.3) has to reject reserved heads
-   somewhere; if the vocabulary also lives in the adapter, the same twenty names exist in two
-   languages. That is precisely what the v0 kernel-grep contract exists to forbid
-   (`vendor/rofl-v0/scripts/kernel_grep.ts:1-16`: "no relation name outside the documented kernel
-   vocabulary may appear … The whitelist mirrors the vocabulary table in README.md").
-3. **It puts rule truth outside the store.** The stop condition of this migration is ROFL
-   invariants holding *on RFDB as the store*. p3-snapshot-roundtrip already requires
-   `canonicalState()` to be bit-identical across two processes; state that lives in an adapter
-   buffer is not state the store determines.
-
-Recorded here rather than dropped, because if the in-engine seam turns out to cost a round, this
-is the fallback and its three costs are already priced.
-
----
-
-## 4. The write path: runtime rules, load atomicity, write protection
-
-### 4.1 Runtime rule assertion lives in the adapter, not the engine
-
-p3-runtime-rule (`test/phase3.test.ts:19`) asserts a *clause* at runtime —
-`await r.assert('path(X, Y) :- edge(X, Y).')` — and then requires `path(a, c)` to hold and
-`concludes(R, path)` to name two rule ids.
-
-The design of record keeps the engine's "a program is a source string" invariant intact: **the
-adapter owns the accumulated program text.** `assert` of a clause appends it to the adapter's
-source buffer; the next evaluation re-parses the whole buffer. With `@reflect` on, the reflection
-facts for the new clause appear automatically, so `concludes/2`, `rule/1` and `has_premise/2`
-answer correctly without any engine-side notion of "a rule that arrived later".
-
-This is deliberately not the more elegant "rules read from the store" architecture. Grounds:
-(a) it needs no change at any of the six `parse_ext_program` sites and cannot desynchronise
-`explain_*` from `evaluate`; (b) it needs no derive↔fact-store read path (§1(ii)); (c) the cache
-key is `hash(source)` and the source changed, so W8/W9 invalidation is correct by construction
-rather than by a new rule-set-identity component. The honest cost — a full re-derive per asserted
-clause — is stated in §6 and is not on any measured tier-1 assertion's critical path.
-
-### 4.2 Load atomicity
-
-p2-unstrat-reject (`test/phase2.test.ts:161`) requires that after a rejected load,
-`await r.holds('e(1)')` is `false` — the rejected program's ground facts must not leak. With the
-adapter-owned buffer this is a two-line property: parse-and-validate the *candidate* buffer
-(existing text + new text) first, and only replace the buffer on success. RFDB's own
-abort-no-commit discipline at the eval entry (`graph/engine_v2.rs:681-684` documents
-"A mid-run failure … returns the error BEFORE step 3, so nothing is committed") is the same
-discipline one level down, so nothing conflicts.
-
-### 4.3 Write protection
-
-p3-write-protected (`test/phase3.test.ts:38`) requires `derived_by(X, r0, 0) :- anything(X).` to
-be rejected with a diagnostic matching `/write-protected/`.
-
-Engine-side and small: under `@reflect`, a clause whose head relation is in the reserved
-vocabulary (the twenty names of `reflect.ts:11-33`, i.e. `V`, minus the two `IFACE` names
-`stratum`/`unstratified`, which boot legitimately concludes into — `reflect.ts:37-39` says so
-explicitly) is a parse-stage rejection with a stable code. Stable-code discipline is already the
-house rule (I5, "every variant carrying a stable code", `derive/mod.rs:172-190` doc block), so
-this is `E-REFL-001` alongside the existing `E-CAT-*` / `E-PLAN-*` / `E-BIND-*` families.
-
-Note the ordering requirement: the check must fire at parse stage, *before* the binding gate
-`BindingTable::from_program` (`derive/mod.rs:241-242`) and before stratification, because
-p2-unstrat-reject's sibling assertion requires the load to fail with nothing committed.
-
----
-
-## 5. Identity: rule ids, `why` surfaces, and the three cache sites
-
-### 5.1 Rule id
-
-v0: `ruleIdOf(c) = 'r' + fnv1a(canonClause(c))` — `reflect.ts:134-136`, over the canonical
-rendering at `reflect.ts:120-133` which includes head relation, perspective, args, temporal, and
-each body element with `not` / builtin spelled out. The observable surface is pinned by
-p2-why-tree, which requires the first `why` line to match
-`/^path\[main\]\(a,c\)\s+<= r[0-9a-f]{8} @tick 0$/` — so the id must render as `r` + **exactly 8
-lowercase hex digits**.
-
-RFDB already has a rule identity: `DerivationWitness.rule_ast_hash`
-(`packages/rfdb-server/src/derive/exec.rs:279-287`), documented there as "the stable
-whitespace/variable-rename-invariant hash (the same `_source` stamp a materialized edge carries)".
-
-**Decision: keep RFDB's hash as the identity and define the ROFL surface id as its first 8 hex
-digits, prefixed `r`.** Do NOT port FNV-1a. Grounds: the identity already exists and is already
-load-bearing for materialized-edge provenance; introducing a second identity would create exactly
-the drift class this migration keeps finding. The 8-hex truncation is a *rendering*, applied at
-the adapter boundary, so nothing stored changes.
-
-Collision honesty: 8 hex digits = 32 bits. Across a boot program of 21 clauses
-(`/tmp/synth/profile.ts` output, §6) the birthday probability is negligible, but the truncation is
-a rendering with a real collision domain and that is a fact about the surface, not about the
-engine. It is recorded, not hidden. p3-malformed-sibling depends on two distinct rule ids for the
-two `malformed` clauses and would be the first case to notice a collision.
-
-### 5.2 `@tick 0`
-
-RFDB has no temporal dimension (the translator's phase 3 rejects `@init`/`@next` as
-`missing:temporal`, `translate.ts:129-131`). The `why` surface must still print `@tick 0`. That
-is consistent — a timeless store is a store where every fact is at tick 0 — and it is what the
-converter already asserts: every `Timeless` predicate in the converted store
-(`/tmp/rofl-out-f1/rofl_manifest.json`, `"temporal": "Timeless"`). Printing `@tick 0` is honest
-here and becomes a real value only when the temporal lane lands.
-
-### 5.3 The three cache sites
-
-Text-only rule sources need no cache change (§3.2). For completeness, the three sites that a
-future store-sourced-rules design would have to touch together, so the next round does not have to
-rediscover them:
-
-1. `graph/engine_v2.rs:960-963` — the program key, `DefaultHasher` over `source`.
-2. `graph/engine_v2.rs:6064-6069` — `w8_program_key`, whose doc comment states it "must mirror
-   `eval_derive_materialize_cached` exactly"; it feeds the durable pin sidecar.
-3. `graph/engine_v2.rs:1161-1167` — the W9 unchanged-graph short-circuit,
-   `prev_snapshot.version == cur_snapshot.version && Arc::ptr_eq(&prev_snapshot.tombstones,
-   &cur_snapshot.tombstones)`, which returns the previous evaluation *without* re-deriving.
-
-Site 3 is the dangerous one: it keys on graph state only. If rules ever become store-resident,
-a rule change with no node/edge change would take that short-circuit and return a stale
-evaluation. The W8 lesson recorded in ruling R-2 (`run-migration/OWNER-RULINGS.md:55-63`,
-cancel-as-convergence, 1726 lost edges) is exactly this failure shape. The adapter-owned-buffer
-decision in §4.1 is chosen partly to keep that door shut.
-
----
-
-## 6. What this plan closes
-
-### 6.1 The baseline, measured
-
-Read from the committed report, not re-run (the harness regenerates three tracked files):
+И третье наблюдение, самое разрушительное для буферной модели. Проба `p8.ts`, часть A:
 
 ```
-$ python3 -c "import json,collections; d=json.load(open('packages/rofl-conformance/conformance-report.json')); \
-  t1=d['tier1']; c=collections.Counter(r['verdict'] for r in t1); print(len(t1), c); \
-  print(collections.Counter(r.get('reason_code') for r in t1 if r['verdict']=='RED'))"
-30 Counter({'RED': 25, 'GREEN': 5})
-Counter({'missing:rules-as-data': 18, 'dialect:untranslatable': 2, 'missing:compound-terms': 1,
-         'missing:whynot-shape': 1, 'missing:perspectives': 1, 'missing:excise': 1, 'missing:holes': 1})
+A1) e: ["X = 1","X = 2"]
+A2) retract e(2): {"ok":true,"diagnostics":[]}
+A3) v0 (store of record) -> p: ["X = 1"]
+A4) text-buffer replay   -> p: ["X = 1","X = 2"]
 ```
 
-Run id `rofl-conformance-1787361952086`, timestamp `2026-08-22T01:25:52.086Z`
-(`packages/rofl-conformance/conformance-run-meta.json`).
+В буфере нет способа записать отзыв факта. Поэтому переигрывание буфера воскрешает `e(2)` и выводит
+`p(2)`, которого в v0 нет. Это отдельное блокирующее замечание — взгляд «надёжность» № 6
+(`L0F5`), — и оно тоже принимается: дефект не ограничен рефлексивным словарём, он касается любых
+фактов.
 
-### 6.2 Why the "18" is not 18 — the phase order, and the fixture profile
+**Что меняется.** Буферная модель удалена из устройства целиком. Хранилище авторитетно: кодировщик
+пишет рефлексивные факты один раз при загрузке, дальше `assert` и `retract` меняют их напрямую, а
+исполняемый набор правил собирается из хранилища в начале каждого вычисления. Подробности — в
+разделах 4 и 5.
 
-`packages/rofl-conformance/src/translate.ts:148-200` runs its checks program-wide in a **fixed
-phase order** and returns on the first hit: (1) reflection vocabulary → (2) perspectives →
-(3) temporal → (4) compound terms → (5) bignum → (6) builtins → (7) int/string constants. Its own
-header says so at `translate.ts:4-7`: "the reported code is deterministic … e.g. boot.rofl fails
-at phase 1 with missing:rules-as-data even though it also contains [audit] perspectives."
+### 1.2 Корень второй: правило, существующее только как данные, меняет стратификацию
 
-So `missing:rules-as-data` means *"phase 1 fired first"*, never *"phase 1 is the only blocker"*.
-Profiling the five fixture programs with the vendored parser (`/tmp/synth/profile.ts`, which
-imports `parseProgram` from `src/neutral.ts` and `RESERVED`/`IFACE` from
-`vendor/rofl-v0/src/reflect.ts`, and reports **all** phases rather than the first):
+*Замечание: взгляд «надёжность» № 2 (`L0F1`). Принято.*
+
+Прежняя редакция утверждала, что стратификация, планирование и неподвижная точка остаются
+нетронутыми, потому что рефлексивные факты неотличимы от обычных. Это неверно: в v0 решение
+«принять или отвергнуть программу» принимается по данным.
+
+Проба `p3.ts` — загружен boot.rofl, затем безобидная программа, затем четыре факта и больше ничего
+(ни строчки текста правила):
 
 ```
-$ node --experimental-strip-types /tmp/synth/profile.ts
-=== boot.rofl (21 clauses) ===
-  P1 reflection-vocab : asserted_by, authority, bridge_decl, concludes, edb, has_conclusion,
-                        has_premise, in_perspective, mode, premise_neg, premise_pos, reads_from,
-                        reserved, stratum, unstratified, uses_builtin, writes_to
-  P2 perspectives     : [audit]
-  P3 temporal         : —
-  P4 compound terms   : —
-  P6 builtins         : is
-  P7 int consts       : 0
-=== examples/sensors.rofl (10 clauses) ===
-  P1 reflection-vocab : authority
-  P2 perspectives     : VAR, [s1], [s2], [s3], [trust], [verified]
-  P3 temporal         : init
-  P6 builtins         : !=, <=, >=, is
-  P7 int consts       : 20, 21, 95
-=== examples/counter.rofl (3 clauses) ===
-  P1 reflection-vocab : —
-  P2 perspectives     : —
-  P3 temporal         : init, next
-  P6 builtins         : <, is
-  P7 int consts       : 1
-=== examples/tm.rofl (15 clauses) ===
-  P1 reflection-vocab : —
-  P2 perspectives     : —
-  P3 temporal         : init, next
-  P4 compound terms   : cons/2, tape/3
-  P6 builtins         : =
-  P7 int consts       : 0, 1
-=== examples/tm_diverge.rofl (10 clauses) ===
-  (identical profile to tm.rofl)
+load e(1). qq(X) :- e(X). -> {"ok":true,"diagnostics":[]}
+1) qq: ["X = 1"] unstratified: []
+2) assert concludes(rghost, qq): {"ok":true,"diagnostics":[]}
+3) assert premise_neg(rghost, e): {"ok":true,"diagnostics":[]}
+4) assert concludes(rghost2, e): {"ok":true,"diagnostics":[]}
+5) assert premise_pos(rghost2, qq): {"ok":true,"diagnostics":[]}
+6) qq after ghost rules: ["ERR: program rejected: unstratified[main](qq)
+unstratified[main](qq)  <= r25ecbd01 @tick 0
+  dep_neg[main](qq,e)  <= rb619e45c @tick 0
+    concludes[main](rghost,qq) [axiom]
+    premise_neg[main](rghost,e) [axiom]
+  reach[main](e,qq)  <= r6a8b1314 @tick 0
+    dep[main](e,qq)  <= r22962dbb @tick 0
+      concludes[main](rghost2,e) [axiom]
+      premise_pos[main](rghost2,qq) [axiom]"]
+7) holds qq(1): false
 ```
 
-Three consequences, none of which either premise-design accounted for:
+Четыре факта — и `qq(1)`, который только что выводился, перестал выводиться, а вся программа
+отвергнута. Ни одного нового правила в тексте не появилось.
 
-- **`counter.rofl`, `tm.rofl` and `tm_diverge.rofl` contain no reflection vocabulary whatsoever.**
-  Their `missing:rules-as-data` verdicts come entirely from the scenario preloading `BOOT`
-  (`src/scenarios.ts`, e.g. p4-counter: `await r.load(BOOT)` then `await r.load(COUNTER)`).
-  Their own blockers are temporal ticks and syntactic compound terms.
-- **`boot.rofl` itself needs `[audit]` perspectives and `is` arithmetic.**
-  `run-migration/boot.rofl:20` is `stratum(Rel, N) :- dep_neg(Rel, Q), stratum(Q, M), N is M + 1.`
-  and lines 25-36 conclude into `malformed[audit]`, `breach[audit]`, `leak[audit]`,
-  `forged[audit]`, `unmoded[audit]`. Fourteen of the eighteen cases load boot, so for those
-  fourteen this lane is **necessary and not sufficient**.
-- **The `is`/arith gap is bigger than the report's `dialect:untranslatable` label suggests.** The
-  registered derive builtins (`packages/rfdb-server/src/derive/builtin.rs:1361-1561`) are
-  `node, type, edge, incoming, attr, neq, gt, lt, gte, lte, starts_with, not_starts_with,
-  string_contains, method_suffix, ends_with, concat, str_lower, basename, strip_quotes,
-  strip_prefix, strip_suffix, last_segment, first_segment, replace_all, path_resolve, split,
-  relative_import_resolve, edge_attr, node_attr`. There is no `is` and no `+ - * / mod`. v0's
-  `evalArith` (`vendor/rofl-v0/src/unify.ts:96-113`) evaluates over **functor terms**
-  (`t.k === 'f'`), so `is` is not independent of the syntactic-compound-term lane — it needs an
-  arithmetic *expression* form in `Term`. The comparison half (`>=`, `<=`, `!=`) maps onto
-  existing `gte`/`lte`/`neq` and is cheap; the `is` half is not.
+Механизм именно такой, каким его описал взгляд: у v0 нет собственного проверяльщика стратификации.
+`engine.ts:201-209` (функция `checkUnstratified`) читает **факты** отношения `unstratified/1`, а
+сами эти факты выводит правило `boot.rofl:17`:
+`unstratified(Rel) :- dep_neg(Rel, Q), reach(Q, Rel).`
 
-Note on integer constants: `translate.ts` phase 7 rejects them as `dialect:untranslatable`, but
-that is a **wire** limitation, not an engine one. The derive parser produces typed numeric
-literals — `parser_ext.rs:1041-1054` asserts `Term::Lit(Value::Int(0))` for a bare `0` and
-`Term::Lit(Value::Float(0.5))` for `0.5`, with the comment "NOT a string round-trip, NOT a node
-id". The ambiguity is at `packages/rfdb-server/src/bin/rfdb_server.rs:3205-3210`
-(`wire_string_to_value`: any string parsing as `u128` becomes `Value::Id`). So the fix is a wire
-type tag, not an engine feature — and it is a prerequisite for anything that queries
-`has_premise(R, 1)` (p3-runtime-rule) or compares `V = 20` (p4-sensors).
+**Что меняется.** Приёмка программы должна опираться на выведенное отношение `unstratified/1`, а не
+на синтаксическую проверку. Раздел 5.2.
 
-### 6.3 Closed by this lane
+### 1.3 Корень третий: две конкурирующие инстанции стратификации
 
-**One case, on the evidence.**
+*Замечание: взгляд «верность эталону» № 4 (`L2F3`). Принято.*
 
-| id | why this lane closes it |
-|----|------------------------|
-| `p2-noboot-null-plan` | `test/phase2.test.ts:150`. Loads a plain program with **no boot**; asserts `strataPlan().find(p => p.rel === 'isolated').level === null`. Contains no reflection vocabulary, no perspective, no temporal, no compound term, no builtin, no int/string constant (all args are atoms). It is RED purely because RFDB's stratification is internal. §3.3's contract — `strataPlan()` reads `stratum/2` **facts** and returns `null` when there is none — closes it exactly, and the no-boot case is what makes the contract falsifiable. |
+У RFDB своя проверка стратификации, и она отвергает программу до всякого вычисления. Проба `eng2.ts`
+на живом сервере:
 
-### 6.4 Ride-alongs: three more, adapter-only, zero `packages/rfdb-server/` change
+```
+E2 self-negation  p :- e, not p -> ERR derive engine error [E-STRAT-001]: stratify: E-STRAT-001
+   (cycle: u_p): negated dependency 'u_p' -> 'u_p' lies inside a recursive cycle;
+   stratified negation requires the negated predicate in a strictly lower stratum
+E3 mutual negation a/b -> ERR derive engine error [E-STRAT-001]: stratify: E-STRAT-001
+   (cycle: u_a -> u_b): negated dependency 'u_a' -> 'u_b' lies inside a recursive cycle; …
+```
 
-These are not in the rules-as-data lane; they are independent and cheap, and they are listed here
-so the round that builds the lane can take them without a second setup. Each touches only
-`packages/rofl-conformance/src/adapter.ts` and its scenario is unchanged.
+Проблема не в самом факте отказа, а в порядке. Если рефлексивные правила и boot.rofl приходят
+движку одной программой, синтаксическая проверка сработает раньше, чем вычислится хоть один факт
+`unstratified/1`, — и требуемая диагностика (та, что называет `unstratified[main](p)` и цепочку
+`dep_neg`) не сможет быть построена в принципе. Сценарий `p2-unstrat-reject`
+(`packages/rofl-conformance/src/scenarios.ts:275-289`) требует именно такого текста:
 
-| id | current code | what closes it |
-|----|--------------|----------------|
-| `p1-tc-naive` | `dialect:untranslatable` | The program is the same `TC` transitive closure that `p1-tc-seminaive` already passes GREEN. The only blocker is the `mk({naive: true})` option. v0's two evaluation modes agree on fact sets (`vendor/rofl-v0/LIMITS.md:46-48`), and the identical re-point was already sanctioned for `p2-diff-positive` / `p2-diff-negation`, which are GREEN with the note "re-pointed per design: naive≡seminaive → v0≡RFDB". Same precedent, same justification, recorded in the scenario's `sourceRef`. |
-| `p2-why-tree` | `missing:whynot-shape` | RFDB's witness **exists** — `DerivationWitness { rule_ast_hash: String, body: Vec<(String, Box<[Value]>)> }`, `derive/exec.rs:279-287`, reachable via `explain_datalog_fact` (`graph/engine_v2.rs:820`). The assertion wants `/^path\[main\]\(a,c\)\s+<= r[0-9a-f]{8} @tick 0$/` and `[axiom]` leaves. That is a **recursive client-side expansion** of the flat witness: render the head, `r` + first 8 hex of `rule_ast_hash` (§5.1), `@tick 0` (§5.2); for each body fact recurse; a body fact with no witness is an EDB axiom and prints `[axiom]`. No engine change. |
-| `p4-excise-multi` | `missing:excise` | `sim_derive` (`graph/engine_v2.rs:592-645`) is overlay-**ADD** only: it builds a `FixtureStorageView` of hypothetical nodes/edges, wraps it in `OverlayStorageView::new(&base, delta)`, and answers `sim ∖ base`. There is no minus-one-fact counterpart. But the adapter owns the program text and its asserted EDB (§4.1), so `excise(f)` = evaluate the buffer, evaluate the buffer with `f` deleted, and diff the canonicalised fact sets — which is v0's own definition ("clean re-evaluation on EDB \\ {fact}; the diff IS the blast radius", `vendor/rofl-v0/src/api.ts:347-348`). The scenario's program is plain (`e1(a). e2(a). p:-e1. p:-e2. q:-p.`) and expects `removed: ['e1[main](a)']`, `added: []`. Adapter-side, sound, O(2) evaluations. |
+```ts
+assert.match(res.diagnostics.join('\n'), /unstratified\[main\]\(p\)/);
+assert.match(res.diagnostics.join('\n'), /dep_neg/);
+```
 
-**Projected tier-1 after this plan: GREEN 9 / 30** (5 today + `p2-noboot-null-plan` + the three
-ride-alongs). Not 18. Stating the smaller number is the point of this section.
+**Что меняется.** В рефлексивном режиме синтаксическая проверка перестаёт быть решающей инстанцией
+и понижается до внутреннего средства упорядочивания. Решает `unstratified/1`. Раздел 5.2.
+
+### 1.4 Корень четвёртый: бюджет срабатываний несёт нагрузку — принято, но с поправкой
+
+*Замечание: взгляд «надёжность» № 3 (`L0F2`). Принято по сути, одно побочное утверждение
+опровергнуто моим прогоном.*
+
+Прежняя редакция объявляла бюджет чужой территорией («это участок про дыры, не наш»). Это неверно:
+без бюджета отказ вообще не наступает. Правило `boot.rofl:20`
+(`stratum(Rel, N) :- dep_neg(Rel, Q), stratum(Q, M), N is M + 1.`) на отрицательной петле порождает
+всё новые целые числа, неподвижной точки не существует, и единственный путь к отказу — исчерпание
+бюджета, после которого срабатывает проверка `unstratified/1`.
+
+Проба `p6.ts`:
+
+```
+budget=5000 ok=false ms=403
+  diag[0]: "program rejected: unstratified[main](p)"
+  AFTER rejected load: holds e(1)= false  stratum(p,N) rows= 0  unstratified rows= 0
+                       rule(R) count= 21  concludes(R,p)= 0
+budget=20000 ok=false ms=982
+  diag[0]: "program rejected: unstratified[main](p)"
+  AFTER rejected load: holds e(1)= false  stratum(p,N) rows= 0  unstratified rows= 0
+                       rule(R) count= 21  concludes(R,p)= 0
+PURE BUDGET ok= true []
+  partial= true  rows= 302  hole= ["I = $load(1), R = budget_exhausted"]
+```
+
+**Поправка.** Взгляд утверждал, что раз RFDB считает раунды, а v0 считает срабатывания, то
+«выведенные множества `stratum(p,N)` различаются, и это прямо наблюдаемо в каноническом состоянии».
+Мой прогон это опровергает: при обоих бюджетах после отказа в хранилище **ноль** строк
+`stratum(p,N)`, ноль строк `unstratified` и ноль строк `concludes(R,p)`, а диагностика совпадает
+побайтово. Причина — откат: `api.ts:56` делает копию хранилища перед загрузкой, `api.ts:69-71`
+возвращает копию на место при отказе. Точка остановки не наблюдаема снаружи; наблюдаема только
+диагностика.
+
+Второе утверждение взгляда — что при отказе не будет факта `hole/2` — тоже требует уточнения.
+Строка `hole` появляется на **другом** пути: при обычном исчерпании бюджета без неудачной
+стратификации загрузка успешна, ответ помечается частичным и добавляется факт
+`hole($load(1), budget_exhausted)` — это видно в третьем блоке прогона выше. На пути отказа этого
+не происходит.
+
+**Что остаётся в силе.** Нагрузку несёт **бюджет срабатываний** — не бюджет раундов и не дыры, — и
+диагностика обязана строиться по **частичному** набору фактов до отката. Раздел 5.3.
+
+### 1.5 Корень пятый: запрет на служебные отношения был сформулирован шире, чем в v0
+
+*Замечания: взгляд «надёжность» № 5 (`L0F4`), взгляд «реализуемость» № 1 (`L1F0`), взгляд
+«верность эталону» № 2 (`L2F1`). Приняты, все три.*
+
+Прежняя редакция вводила отказ `E-REFL-001` для «предложения, у которого отношение в голове входит
+в служебный словарь». В v0 запрет узкий: он относится только к **правилам** и только к двадцати
+именам служебного словаря, но не к двум именам интерфейса стратификации. Проба `p1.ts`:
+
+```
+A) assert FACT concludes(rbad, derived_by). -> {"ok":true,"diagnostics":[]}
+A2) breach[audit](R) -> ["R = rbad"]
+A3) assert FACT rule(rzz). -> {"ok":true,"diagnostics":[]}
+A4) assert FACT derived_by(zzz, r0, 0). -> {"ok":true,"diagnostics":[]}
+B) load RULE derived_by(X,r0,0) :- anything(X). -> {"ok":false,"diagnostics":["rule rejected:
+   'derived_by' is a kernel relation (write-protected): derived_by[main](?X,r0,0)@now :-
+   anything[main](?X)@now"]}
+C) load RULE stratum(zz, 7) :- anything(zz). -> {"ok":true,"diagnostics":[]}
+D) load RULE unstratified(zz) :- anything(zz). -> {"ok":true,"diagnostics":[]}
+E) load RULE rule(R) :- anything(R). -> {"ok":false,"diagnostics":["rule rejected: 'rule' is a
+   kernel relation (write-protected): rule[main](?R)@now :- anything[main](?R)@now"]}
+```
+
+Граница проходит ровно по строке `api.ts:105`: ветка «у предложения пустое тело» возвращается
+раньше всякой проверки, а сама проверка стоит в ветке правил на `api.ts:128-130`. Два имени
+интерфейса стратификации (`stratum`, `unstratified`) не входят в служебный словарь вовсе:
+`reflect.ts:35` строит множество защищённых имён из объекта `V` (`reflect.ts:11-33`, двадцать имён),
+а `reflect.ts:39` объявляет интерфейс отдельной константой.
+
+Строка `A2) breach[audit](R) -> ["R = rbad"]` — это и есть сценарий `p3-breach`
+(`scenarios.ts:349-358`): он **требует**, чтобы утверждение факта в защищённое отношение прошло, и
+чтобы аудит после этого доложил о нарушении.
+
+Есть и второй слой защиты, о котором прежняя редакция не знала вовсе. Проба `p9.ts`, часть B: я
+утвердил правило с защищённой головой **в виде фактов**, обойдя текстовую проверку:
+
+```
+B1) assert the reserved-head rule AS FACTS: {"ok":true,"diagnostics":[]}
+B2) derived_by rows with F=a: []
+```
+
+Факты приняты, правило не исполнилось. Это `engine.ts:73-76`: декодированное правило, чья голова в
+служебном словаре, помечается «не исполняемым» с диагностикой, а не отвергается. Два слоя с разной
+строгостью: текстовое правило отвергается, декодированное — не исполняется, факт — принимается
+всегда.
+
+**Что меняется.** Отказ `E-REFL-001` сужается до предложений с непустым телом; интерфейс
+стратификации выведен из-под запрета явно; добавлен второй слой. Раздел 5.4.
+
+### 1.6 Корень шестой: у бутстрап-множества ядра не было производителя
+
+*Замечание: взгляд «верность эталону» № 1 (`L2F0`). Принято.*
+
+Прежняя редакция писала, что отношения `authority`, `reserved`, `mode`, `edb` «утверждаются слоем
+загрузки и идут обычным путём фактов». Оба утверждения неверны. Проба `p5.ts` на совершенно свежем
+объекте, в который ничего не загружали:
+
+```
+FRESH ? reserved(X) -> 20 rows [ 'X = asserted_by', 'X = authority', 'X = bridge_decl', 'X = concludes' ]
+FRESH ? edb(X) -> 20 rows [ … ]
+FRESH ? mode(B, M) -> 7 rows [ 'B = "!=", M = $cons(in,$cons(in,$nil))', … ]
+FRESH ? authority(P, W) -> 1 rows [ 'P = main, W = $kernel' ]
+FRESH ? rule(R) -> 0 rows []
+FRESH ? in_perspective(F,P) -> 0 rows []
+--- after ONE ordinary fact, still no boot ---
+edb: 21  in_perspective: ["F = $fact(qz,main,$cons(a,$nil)), P = main"]
+--- boot.rofl ground facts (head-position) count ---
+ground-fact lines in boot.rofl: 0
+```
+
+Три вывода сразу. Во-первых, эти факты порождает **ядро** при создании объекта (функция
+`bootstrapKernel`, вызывается из конструктора, `api.ts:30`), а не boot.rofl: в boot.rofl нет ни
+одной строки-факта. Во-вторых, `edb/1` — **динамическое** отношение: после одного обычного факта
+строк стало 21 (`api.ts:118-119` добавляет `edb(rel)` на каждый незащищённый факт). В-третьих,
+второй аргумент `mode/2` — список (`$cons(in,$cons(in,$nil))`), то есть составной терм, который в
+текстовом диалекте RFDB не выражается вовсе.
+
+Последствия следования прежней редакции измеримы. После загрузки boot.rofl в v0 все аудиты пусты:
+
+```
+--- after boot ---
+stratum rows: 38  reserved: 20
+breach[audit]: [] leak[audit]: []
+unmoded[audit]: [] forged[audit]: []
+malformed[audit]: []
+uses_builtin: ["B = \"is\", R = r21bdb8e9"]
+```
+
+Без бутстрап-множества `stratum` схлопнулся бы в ноль строк (правило `boot.rofl:19` читает `edb`),
+а аудиты `leak` и `unmoded` дали бы **ложные срабатывания**: `leak` читает `sees`, который стоит на
+`authority`, а `unmoded` ищет применённые встроенные операции, у которых нет записи `mode`. Для
+аудирующего ядра это худший из возможных отказов — отчёт о нарушениях, которых нет.
+
+**Что меняется.** Бутстрап-множество ядра становится явной частью устройства с названным
+производителем, разделённым на две половины: единожды при инициализации и по одному факту на каждое
+утверждение. Раздел 4.3.
+
+### 1.7 Отклонено как блокирующее: «без boot.rofl RFDB отвергает то, что v0 принимает»
+
+*Замечание: взгляд «надёжность» № 4 (`L0F3`). Отклонено в качестве блокирующего для этого участка,
+переведено в зафиксированные расхождения — раздел 8, пункт 1.*
+
+Замечание состояло из двух частей. Первая — общее наблюдение: без boot.rofl эталон v0 принимает и
+вычисляет программы с отрицанием в цикле, а RFDB отвергает их кодом `E-STRAT-001`. Эта часть верна,
+и я её подтвердил своими прогонами `E2` и `E3` (приведены в разделе 1.3).
+
+Вторая часть — конкретное обвинение: «сценарий `p2-noboot-null-plan` не может даже дойти до своей
+проверки», и он назван жертвой этого расхождения. **Вот это неверно, и вот контрпример.**
+
+Сценарий `p2-noboot-null-plan` (`scenarios.ts:260-273`) грузит такую программу:
+
+```
+node(a). edge(a, a).
+linked(X) :- edge(X, Y).
+isolated(X) :- node(X), not linked(X).
+```
+
+Здесь отрицание есть, но цикла нет: `isolated` отрицает `linked`, а `linked` не зависит от
+`isolated`. Это обычная расслаиваемая программа. Проба `eng2.ts` на живом сервере сегодня:
+
+```
+E1 p2-noboot-null-plan program -> OK 0 rows []
+```
+
+Программа принимается движком без единой жалобы. Для полноты — проба `eng5.ts` показывает, что и
+общий случай расслаиваемого отрицания работает, и что отрицание по предикату вообще без фактов тоже
+работает:
+
+```
+E9 negation over a predicate that has NO facts at all -> OK 1 rows [{"X":"1"}]
+E10 two rules, one head, one negated leg (stratified, legal) -> OK 1 rows [{"X":"b"}]
+```
+
+Настоящая причина, по которой `p2-noboot-null-plan` сегодня красный, — не движок, а отказ адаптера.
+`packages/rofl-conformance/src/adapter.ts:298-301` на коммите `e9035364` (на `6b51dbec`, где снят
+прогон, это были строки 294-297 — соседний участок работ добавил выше по файлу четыре строки, текст
+отказа не тронув):
+
+```ts
+strataPlan(): { rule: string; rel: string; level: number | null }[] {
+  throw new UnsupportedFeature('missing:rules-as-data',
+    'v0 strata come from boot-derived stratum/2 + unstratified/1 FACTS (engine.ts:2-4, boot.rofl:17-21); …');
+}
+```
+
+То есть сценарий падает на неподдержанной возможности `strataPlan` — ровно на той возможности,
+которую закрывает этот участок работ. Причина, названная взглядом, причиной не является.
+
+**Приговор.** Как блокирующее для этого участка — отклонено: за расхождением не стоит ни одного
+сценария первого уровня. Как расхождение — принято и записано (раздел 8, пункт 1): существует класс
+программ, которые v0 вычисляет, а RFDB отвергает, и в конформансе его сегодня не видно только
+потому, что ни один сценарий не грузит нерасслаиваемую программу без boot.rofl.
+
+### 1.8 Сводка приговоров
+
+| № | Замечание (взгляд, номер в отчёте) | Приговор | Куда ушло |
+|---|---|---|---|
+| 1 | надёжность № 1 (`L0F0`) — буфер против хранилища | принято | разделы 4, 5.1 |
+| 2 | надёжность № 2 (`L0F1`) — данные меняют стратификацию | принято | раздел 5.2 |
+| 3 | надёжность № 3 (`L0F2`) — бюджет несёт нагрузку | принято с поправкой | раздел 5.3 |
+| 4 | надёжность № 4 (`L0F3`) — без boot RFDB отвергает | отклонено как блокирующее | раздел 8, п. 1 |
+| 5 | надёжность № 5 (`L0F4`) — запрет шире, чем в v0 | принято | раздел 5.4 |
+| 6 | надёжность № 6 (`L0F5`) — буфер воскрешает отозванное | принято | раздел 4.1 |
+| 7 | реализуемость № 1 (`L1F0`) — то же про запрет | принято | раздел 5.4 |
+| 8 | реализуемость № 2 (`L1F1`) — то же про буфер | принято | разделы 4, 5.1 |
+| 9 | верность № 1 (`L2F0`) — нет производителя бутстрапа | принято | раздел 4.3 |
+| 10 | верность № 2 (`L2F1`) — то же про запрет | принято | раздел 5.4 |
+| 11 | верность № 3 (`L2F2`) — то же про буфер | принято | разделы 4, 5.1 |
+| 12 | верность № 4 (`L2F3`) — две инстанции стратификации | принято | раздел 5.2 |
+
+Одиннадцать принято, одно отклонено.
 
 ---
 
-## NOT CLOSED BY THIS PLAN
+## 2. Собственная находка: провод не доходит до расширенного разборщика
 
-Every remaining tier-1 RED, with the specific reason. None is dropped.
+Ни один из трёх взглядов этого не заметил, а это меняет оценку работ.
 
-### From the eighteen `missing:rules-as-data`
+Прежняя редакция строила весь путь чтения на утверждении «шов один: кодировщик встраивается внутрь
+`parse_ext_program`, и вызывающим сторонам менять ничего не надо». Для рефлексивного режима
+предполагалось ввести пометку `@reflect` в начале программы.
 
-| id | still needs (beyond this lane) |
-|----|--------------------------------|
-| `boot-load` | `[audit]` perspectives; `is` arithmetic (`boot.rofl:20`); typed integer on the wire (`0`). |
-| `p2-stratum-order` | Everything `boot-load` needs (it loads `BOOT` first), then `stratum(isolated, N)` and `iso.level === Math.max(...levels)`. |
-| `p2-unstrat-reject` | `boot-load`'s set, plus a diagnostic naming `unstratified[main](p)` and `dep_neg`, plus the §4.2 load-atomicity property. |
-| `p2-derived-by` | **Per-derivation provenance emission.** `derived_by/3` is not rule structure (§2.3) — it is one fact per (derived fact × supporting rule), which v0 writes during evaluation (`vendor/rofl-v0/src/engine.ts:304`, `:429`). RFDB's `Evaluation` (`derive/exec.rs:246-249`) is `predicate → ground tuples` with no provenance, and `DerivationWitness` is computed on demand for one fact. The scenario also asserts `supportCount('path[main](a,b)') === 2`, i.e. **all** supporting rules, not the first witness. That is a separate engine lane. |
-| `p3-kernel-grep` | **A scope ruling** (§8, R-req-1). The v0 contract forbids any appendix-program relation name from appearing as a code identifier in kernel source (`scripts/kernel_grep.ts:52-57` forbids `dep, reach, flow, step, move, temp, close, …`). Ported literally to `packages/rfdb-server/src/`, those eight names alone hit 828 times: `$ for n in delta reach flow step move dep temp close; do grep -rw "$n" src/ --include=*.rs \| wc -l; done` → `461 81 19 63 67 52 56 31`. The contract needs a defensible scope before it can be met. |
-| `p3-runtime-rule` | `boot-load`'s set, plus the typed-integer wire fix (`has_premise(${id}, 1)` is queried with a literal `1`). §4.1 supplies the runtime-assertion mechanics but not these. |
-| `p3-write-protected` | `boot-load`'s set. §4.3 supplies the rejection itself. |
-| `p3-breach` | `boot-load`'s set, plus querying a non-`main` perspective (`breach[audit](R)`). |
-| `p3-malformed-sibling` | `boot-load`'s set, plus **retract** of a specific fact, plus `[audit]` queries, plus the `why`-tree shape (the `p2-why-tree` ride-along renderer is a prerequisite, not a substitute — this one asserts the *sibling* rule id on the first line). |
-| `p3-snapshot-roundtrip` | `boot-load`'s set **and all of `sensors.rofl`**: five named perspectives, a perspective **variable**, `@init` temporal, `is`/`<=`/`>=`/`!=`, integer constants — plus `save()`/`canonicalState()` and cross-process bit identity. |
-| `p4-counter` | `boot-load`'s set, plus **temporal ticks** (`@init`/`@next`), `<` and `is`, and the `run({maxTicks, onBoundary})` tick loop with quiescence/partial reporting. |
-| `p4-replay` | `boot-load`'s set + `sensors.rofl`'s set, plus `assertClauses` order-independence and `canonicalState()` stability over 100 shuffles. |
-| `p4-tm` | `boot-load`'s set, plus **temporal ticks** and **syntactic compound terms** (`cons/2`, `tape/3` — unified into, not merely carried), plus `=`, plus the tick loop. |
-| `p4-tm-diverge` | Everything `p4-tm` needs, plus **holes** (ruling R-2: partial commit + `hole/2` on budget exhaustion, against today's abort-no-commit at `graph/engine_v2.rs:681-684`), plus a queryable `derived_by` trace of `$fact(cfg…)`. |
-| `p4-boot-audits` | `boot-load`'s set, plus `[audit]` queries and a **`whynot` tree** demonstration through `dep_neg`/`reach` under 20 lines. |
-| `p4-sensors` | `boot-load`'s set + `sensors.rofl`'s set, plus **excise with a non-trivial blast radius** (`added` is non-empty here, unlike the `p4-excise-multi` ride-along), plus `why`/`whynot` trees with finite-failure text. |
-| `p4-forged` | `boot-load`'s set + `sensors.rofl`'s set, plus **author-attributed assertion** (`assert(..., { who: 'mallory' })` → `asserted_by/2`) and the `$fact(reading,s1…)` rendering. |
+Адаптер конформанса разговаривает с сервером через команду `executeDatalog`. Этот путь **никогда не
+доходит** до расширенного разборщика. Выбор цели происходит в
+`packages/rfdb-server/src/bin/rfdb_server.rs:2949`:
 
-### From the seven other REDs
-
-| id | code | reason it stays open |
-|----|------|----------------------|
-| `p1-arith` | `dialect:untranslatable` | No `is` and no `+ - * / mod` in the builtin registry (`derive/builtin.rs:1361-1561`); v0's `evalArith` works over functor terms (`unify.ts:96-113`), so this needs an arithmetic expression form in `Term`, not just a builtin. Also needs `X >= 10` / `Y <= -7` with typed integers on the wire. |
-| `p1-functor-append` | `missing:compound-terms` | Needs the **syntactic** term form and unification into it (§2.2). `Value::Term` does not help: the assertion unifies `app(cons(H,T), Ys, cons(H,Zs))`. |
-| `p2-persp-isolation` | `missing:perspectives` | RFDB has no perspective dimension. Independent lane; the fact model's perspective column exists in the converted store (`/tmp/rofl-out-f1/rofl_manifest.json` `perspectives`), the *evaluator* has none. |
-| `p4-budget-hole` | `missing:holes` | Ruling R-2 says holes win; today's engine aborts without committing (`graph/engine_v2.rs:681-684`). Also needs `is` (`M is K + 1`) and `<`. |
-| `p1-tc-naive` | `dialect:untranslatable` | **Closed by ride-along §6.4.** |
-| `p2-why-tree` | `missing:whynot-shape` | **Closed by ride-along §6.4.** |
-| `p4-excise-multi` | `missing:excise` | **Closed by ride-along §6.4.** |
-
-### The dependency graph this exposes
-
-Ordered by how many of the 25 REDs sit behind each, from the tables above:
-
-1. **`[audit]`/named perspectives in the evaluator** — behind 14 (every boot-loading case) + `p2-persp-isolation`.
-2. **`is` arithmetic (with an expression term form)** — behind 14 (boot) + `p1-arith` + `p4-budget-hole`.
-3. **Typed numerics on the wire** — behind boot and every `sensors`/`counter`/`tm` case.
-4. **Temporal ticks** — behind 5 (`p4-counter`, `p4-tm`, `p4-tm-diverge`, `p3-snapshot-roundtrip`, `p4-replay`) + `p4-sensors`.
-5. **Syntactic compound terms** — behind 3 (`p1-functor-append`, `p4-tm`, `p4-tm-diverge`).
-6. **Rules-as-data (this lane)** — behind 18 as a *necessary* condition, sufficient for 1.
-
-Rules-as-data is the widest necessary condition and the narrowest sufficient one. That is a
-reason to build it early, not a reason to expect it to move the verdict count.
-
----
-
-## 7. Staging and order of work
-
-Each stage is one workflow, each has its own mechanical gate, and each is verifiable without the
-next. No stage is "diminishing returns" — they are bounded and pattern-mirroring, which is the
-standard this project applies.
-
-**S1 — the encoder (pure function, no wiring).**
-`encode_reflection(&ExtProgram) -> Vec<GroundFact>` producing Projection F (§2.1) and Projection T
-as `Value::Term` (§2.2). Rule id from `rule_ast_hash` (`derive/materialize.rs:578`; BLAKE3
-rendered as hex, variable-rename-invariant per its doc at `:571-577`).
-Gate: unit tests asserting the exact fact set for `boot.rofl`'s 21 clauses against v0's
-`encodeRule` output, name by name.
-
-**S2 — the `@reflect` directive and the `parse_ext_program` seam** (§3.1, §3.2).
-Gate, non-negotiable: `src/derive/golden/p3_plan_fingerprints.txt` must stay **bit-identical**
-(`git status --short` on `src/derive/golden/` EMPTY, the same check round-012 ran), proving the
-bundled packs did not move. Plus the six-call-site invariant is structural, so the test is that
-`explain_datalog_fact` on a `@reflect` program explains under the same rule set `evaluate` used.
-
-**S3 — write protection and load atomicity** (§4.2, §4.3): `E-REFL-001` at parse stage, before
-`BindingTable::from_program` (`derive/mod.rs:241-242`).
-Gate: `p3-write-protected`'s diagnostic shape, and a unit test that a rejected program leaves no
-facts visible.
-
-**S4 — the adapter: `strataPlan()` from `stratum/2` facts** (§3.3).
-Gate: `p2-noboot-null-plan` flips GREEN. This is the one verdict this lane moves, so it is the
-lane's honest acceptance criterion.
-
-**S5 — the three ride-alongs** (§6.4), independent of S1-S4 and parallelisable with them.
-Gate: `p1-tc-naive`, `p2-why-tree`, `p4-excise-multi` flip GREEN; tier-1 reaches 9/30.
-
-**Not in this plan, ordered by leverage** (from §6's dependency graph): perspectives (14) → `is`
-arithmetic with an expression term form (14) → typed numerics on the wire (14) → temporal ticks
-(6) → syntactic compound terms (3) → derivation provenance (1) → holes (2) → retract (1) →
-author-attributed assert (1).
-
----
-
-## 8. Rulings requested
-
-Three. Each is stated with a recommended answer so it can be ratified rather than re-derived, in
-the style of `run-migration/OWNER-RULINGS.md`. The delegation of 2026-08-22 ("shortest sound path
-to a working ROFL environment on RFDB") covers ordinary judgment calls; these three are requested
-because each changes a *contract*, not an implementation.
-
-**R-req-1 — the kernel-grep contract's scope for RFDB.**
-The v0 contract (`vendor/rofl-v0/scripts/kernel_grep.ts:1-16, 52-57`) forbids any appendix-program
-relation name from appearing as a code identifier anywhere in kernel source. Ported literally to
-`packages/rfdb-server/src/` it reports 828 hits for eight names alone (§6, NOT CLOSED table).
-*Recommended:* scope "the kernel" to the ROFL reflection vocabulary's **single defining module**
-plus the encoder, and restate the contract as "no ROFL relation name appears as a string literal
-outside that module" — dropping the identifier half, which was meaningful for a 2,000-line
-TypeScript kernel and is meaningless for a 100k-line polyglot engine. Record the weakening
-explicitly; do not quietly pass a weaker test under the old name.
-
-**R-req-2 — typed numerics on the wire.**
-`wire_string_to_value` (`packages/rfdb-server/src/bin/rfdb_server.rs:3205-3210`) types any string
-that parses as `u128` as `Value::Id`, so an integer constant cannot survive a round trip. The
-engine already has typed numeric literals (`parser_ext.rs:1041-1054`). This blocks `boot.rofl`,
-`counter.rofl`, `sensors.rofl`, `tm.rofl` and `p3-runtime-rule`, and it is the item MEMORY.md has
-carried as "numeric-literals ⚠ Value-representation decision" since the Datalog-v2 rounds.
-*Recommended:* add an explicit type tag to the wire representation rather than widen the
-heuristic. It is a protocol change with existing clients (MCP, orchestrator, JS analyzers), which
-is exactly why it wants a ruling and not a judgment call.
-
-**R-req-3 — where perspectives live.**
-Fourteen of the eighteen cases need `[audit]`. Two shapes: (a) a real perspective dimension in the
-evaluator, matching the converted store which already carries a perspective column
-(`/tmp/rofl-out-f1/rofl_manifest.json`, `perspectives` + `perspective_ruling`); or (b) adapter-side
-emulation by name-mangling `rel[p]` into `rel__p`. (b) is days and (a) is weeks, but (b) breaks
-`p2-persp-isolation`'s actual semantics — the point of that case is that `secret[vault]` must be
-*invisible* to a rule reading `secret[open]`, which mangling gives only by accident and loses the
-moment a perspective **variable** appears (`sensors.rofl` has one: profile line `P2: VAR`).
-*Recommended:* (a). Record (b) as rejected with this reason, so it is not rediscovered as a
-shortcut later.
-
----
-
-## 9. NM6 / divergence X1 — the id↔sid skew of 32 is NOT a converter defect
-
-Ruling R-11 (`run-migration/OWNER-RULINGS.md:202-210`) binds this round to produce the explicit
-subjects and a stated cause, and says plainly: "If the cause turns out to be a converter lossiness
-class rather than a property of the base, that is a stage-1 defect and comes back as a repair
-round."
-
-**It is not a converter defect. It is a property of the base, produced by an upstream
-id-minting / sid-synthesis mismatch that predates the converter by many months.**
-
-### 9.1 What the number actually is
-
-It is not a symmetric difference between two subject sets, despite being written as one in
-`round-012-pre.rofl:284` ("distinct sids 503,372 < distinct ids 503,404 proves id≠BLAKE3(sid)
-somewhere") and carried forward in R-11 as "503,372 id-metadata subjects vs 503,404 sid subjects".
-The subject symmetric difference is **0**. The 32 is a **value-multiplicity surplus on the sid
-side**: 503,404 distinct node ids carry sid values that collapse onto 503,372 distinct strings,
-because 21 sid strings are each shared by 2-4 entities — 53 ids in total, and Σ(k−1) over those
-21 groups is exactly 32.
-
-Live, from the converted store's own catalog:
-
-```
-$ python3 -c "import json; m=json.load(open('/tmp/rofl-out-f1/rofl_manifest.json')); \
-  [print(p['name'], p['columns'], p['cardinality'], 'live_facts', p['live_facts'], \
-   'live_asserts', p['live_asserts'], 'reverse', p['reverse']) \
-   for p in m['catalog'] if p['name'] in ('sid','type')]"
-sid  ['entity', 'sid']  Functional  live_facts 503404  live_asserts 503443  reverse [1, 0]
-type ['entity', 'type'] Functional  live_facts 503443  live_asserts 503443  reverse None
+```rust
+let target = if let Ok(program) = parse_program(source) {
 ```
 
-`sid` is `Functional` with `reverse: [1, 0]` — i.e. the store already materialises a
-sid → entity reverse run. That reverse run is where the collapse becomes observable, and it is
-why R-11 correctly refused to let `node_view` land before this was answered.
+Это базовый разборщик, а не расширенный. Если он не справился, на `:2961` пробуется
+`parse_query(source)`. Расширенный разборщик `parse_ext_program` в файле `bin/rfdb_server.rs` не
+встречается ни разу; он вызывается из `derive/mod.rs:235` и из `graph/engine_v2.rs` — то есть уже
+**после** того, как цель выбрана. Любая пометка в начале текста умирает раньше.
 
-(The 503,443 − 503,404 = 39 gap on `live_asserts` is a different, already-explained thing: the 39
-functional conflicts of ruling R-1a. It is not the 32.)
+Пробы `eng3.ts` и `eng4.ts` на живом сервере:
 
-### 9.2 The cause, from code at HEAD
+```
+bare @reflect    -> ERR Datalog parse error: Parse error at 0: expected identifier
+@reflect()       -> ERR Datalog parse error: Parse error at 0: expected identifier
+#reflect pragma  -> ERR Datalog parse error: Parse error at 0: expected identifier
+@tag annotation  -> ERR Datalog parse error: Parse error at 0: expected identifier
+#requires pragma -> ERR Datalog parse error: Parse error at 0: expected identifier
+@materialize     -> ERR Datalog parse error: Parse error at 0: expected identifier
+@unknown_ann     -> ERR Datalog parse error: Parse error at 0: expected identifier
+```
 
-Two sites, neither in `facts/convert/`:
+Отказывают даже заведомо поддерживаемые пометки `@tag`, `@materialize` и `#requires`. Значит, дело
+не в имени `@reflect`, а в самом пути: выбор цели не умеет пропускать заголовок.
 
-1. `packages/rfdb-server/src/graph/engine_v2.rs:102-104` — `node_v1_to_v2`:
-   ```rust
-   let semantic_id = v1.semantic_id.clone()
-       .unwrap_or_else(|| format!("{}:{}@{}", node_type, name, file));
-   ```
-   When a client does not supply a `semanticId`, the server synthesises one from
-   `(node_type, name, file)` **only**. Node metadata is not part of it.
+**Следствие для устройства.** Правок не четыре, а пять: к четырём местам, названным взглядом
+«реализуемость», добавляется выбор цели в `bin/rfdb_server.rs:2942-2972`. Пока он не поправлен,
+рефлексивный режим недостижим через тот единственный провод, которым пользуется конформанс.
 
-2. `plugins/type-inference.mjs:569-582` — the builtin-method minting path:
-   ```js
-   methodId = `builtin::${className}::${methodName}`;
-   await client.addNodes([{ id: methodId, type: 'METHOD', name: methodName,
-     file: '<builtin>', exported: true,
-     metadata: JSON.stringify({ _source: 'type-inference', builtin: true,
-                                kind: 'method', parentClass: className }) }]);
-   ```
-   The **id** carries `className`; the payload carries `parentClass` in metadata; and it sends no
-   `semanticId`.
-
-Compose the two and the collapse is forced: two builtin methods of the same name on different
-classes get **different ids** (the class is in the id string) and the **same synthesised sid**
-`METHOD:<name>@<builtin>` (the class is only in metadata, which the synthesis drops). Every
-same-named builtin method across two or more classes contributes one to the surplus.
-
-The premise-phase enumeration of this round matched that prediction exactly: all 53 ids in the 21
-collapsed groups are `type = METHOD`, `file = <builtin>`, `metadata._source = type-inference`,
-differing only in `metadata.parentClass`; `id == BLAKE3("builtin::<parentClass>::<name>")[0..16]`
-LE held for 53/53 and `id == BLAKE3(semantic_id)` for 0/53. That measurement is flagged in §10 as
-not re-run after this session's compaction, with its reproduction command.
-
-The converter reads `semantic_id` as it finds it. It neither creates nor merges these. Round-012's
-own X1 note already reached the boundary of this conclusion — "they agree on sid, so the skew
-lives elsewhere in the base. NOT MEASURED: where" (`run-migration/rounds/round-012.rofl:206-210`)
-— and this section supplies the "where". **No stage-1 repair round is owed.**
-
-### 9.3 What this binds for stage 2
-
-- **`node_view` keyed on the entity id `E` is safe and loses nothing.** The skew is entirely on
-  the sid side; every entity keeps its own id-keyed row.
-- **The sid reverse direction must be typed `sid -> Set<Id>`, never `Option<Id>`.** A
-  first-match-wins reverse probe would silently drop 32 entities and every edge incident on them.
-  This must be enforced by a mechanical uniformity gate at the point the reverse run is exposed —
-  in the same style as the existing `E-BIND-001/002` per-predicate uniformity gate
-  (`derive/mod.rs:236-242`), not by a comment.
-- **Any sid registry or sid-keyed probe promised for stage 2 inherits this.** `sid` being declared
-  `Functional` in the catalog is a statement about the *forward* direction (one sid per entity);
-  it says nothing about the reverse, and the manifest's own `reverse: [1, 0]` is not a uniqueness
-  claim.
-- The upstream fix — having `type-inference.mjs` send an explicit `semanticId` that includes
-  `parentClass` — is a real fix but it is a **base-data change** with a re-analysis cost, and it
-  is out of scope for this lane. Recorded so it is not lost.
+**Как это учтено.** Раздел 5.5 назначает включение режима не пометкой в тексте программы, а полем
+запроса протокола — это убирает зависимость от разбора заголовка целиком и заодно снимает вопрос
+«что делать, если пометка стоит не в первой строке».
 
 ---
 
-## 10. What I could not verify
+## 3. Приговоры по шести остаточным пробелам
 
-Non-negotiable section. Every earlier round of this migration that skipped it later had to retract
-something.
+План работ (`run-migration/R14-boot-rofl-plan.md`, поле `residual_gaps`) перечислял шесть пробелов,
+у каждого из которых не было хозяина. Все шесть помечены как ограниченные по объёму. Ниже — зона
+ответственности и конкретный шаг, который каждый из них закрывает. Ни один не остаётся бесхозным.
 
-1. **The 53 ids / 21 sid strings / Σ(k−1)=32 enumeration was measured in this round's premise
-   phase and NOT re-run after this session's context compaction.** §9.2's *mechanism* is verified
-   from code at HEAD (`graph/engine_v2.rs:102-104`, `plugins/type-inference.mjs:569-582`) and
-   §9.1's *totals* are verified live from `/tmp/rofl-out-f1/rofl_manifest.json`, but the
-   group-by-sid enumeration is carried forward from the premise phase. To reproduce: enumerate the
-   `sid` predicate's forward run over the converted store, group by sid value, keep groups with
-   |group| > 1, and assert Σ(|g|−1) == 32 and that every member has `type = METHOD`,
-   `file = <builtin>`.
-2. **I did not run the conformance harness.** Running it regenerates three tracked files
-   (`conformance-report.json`, `conformance-run-meta.json`,
-   `_ai/research/rofl-conformance-report.md`), and this round is read-only on the tree. Every
-   tier-1 number in §6 is read from the committed report, run id
-   `rofl-conformance-1787361952086`, `2026-08-22T01:25:52.086Z` — which is one day older than HEAD
-   `aeac10e0`. If any commit since then changed the harness or the adapter, §6's baseline is
-   stale. NOT CHECKED.
-3. **No Rust was built or run.** Every `packages/rfdb-server/` claim is a read of source at HEAD
-   `aeac10e0`. No claim here rests on a test I executed.
-4. **The `plan_golden` blast-radius argument in §3.2 is reasoned, not measured.** The chain
-   (new EDB relations → different `FactStats` → different estimates → different plans → moved
-   fingerprints) follows from `plan_golden.rs:16-23`, but I did not implement always-on encoding
-   and observe the golden move. It is stated as the reason for the opt-in design and as S2's gate;
-   if it turns out fingerprints do NOT move, the opt-in is still right for the perf reason but the
-   argument should be corrected.
-5. **`Value::Term` does not survive a wire round-trip, and I did not test what that breaks.**
-   The render side handles it (`bin/rfdb_server.rs:3212-3219`, "a `Term` as its canonical text
-   `functor(a1,…,an)`") but the parse side has exactly two arms —
-   `wire_string_to_value` at `:3205-3210` is `u128 → Id`, else `Str`. So a `Value::Term` sent to a
-   client and echoed back returns as `Value::Str`. The tier-1 assertions that touch reified facts
-   are string-containment checks (`bindings['F'].includes('path')`, `/\$fact\(reading,s1/`) so they
-   would pass, but the asymmetry is real and unmeasured.
-6. **I did not read `packages/rofl-conformance/src/adapter.ts` in full.** I established by grep
-   that `kernelVocabularyCheck` is absent from it; I did not enumerate which of `strataPlan`,
-   `supportCount`, `excise`, `canonicalState`, `save`, `retract`, `whynot` the adapter already
-   implements. §6.4's "adapter-only" claims are about where the *change* belongs, not a claim that
-   the surrounding method already exists.
-7. **No Grafema graph query was used.** The `.grafema` snapshot's freshness against HEAD
-   `aeac10e0` was not checked, so every structural claim here is grep/read-derived by design.
-8. **Premise B does not exist on disk.** `find` over the tree for markdown newer than
-   2026-08-22 12:00 returns only `run-migration/ROADMAP-RU.md`, `run-migration/OWNER-RULINGS.md`
-   and `_ai/research/rofl-conformance-report.md`. §1 therefore asserts nothing about it, and
-   `grafted_from_loser` for it is empty rather than guessed.
+Шаги называются по сквозному плану из того же файла (поле `ordered_plan`, десять шагов). Для
+удобства: шаг 1 — «молчаливый ноль в голове правила», шаг 2 — «арифметика во встроенных операциях»,
+шаг 5 — «рефлексивный EDB, авторитет — хранилище», шаг 6 — «интерфейс стратификации из данных»,
+шаг 7 — «`strataPlan` на поверхности API».
+
+### Пробел 1 — бутстрап-множество ядра
+
+**Хозяин: этот участок, «правила как данные». Закрывается шагом 5.**
+
+Это не смежная территория, а прямое упущение прежней редакции, признанное в разделе 1.6. Множество
+измерено: двадцать фактов `reserved/1`, двадцать `edb/1`, семь `mode/2`, один `authority/2`, причём
+`edb/1` растёт на каждом утверждении незащищённого факта. Устройство даёт ему названного
+производителя в разделе 4.3.
+
+Приёмка: после инициализации, до загрузки любой программы, живой запрос возвращает 20/20/7/1 строк;
+после утверждения одного обычного факта `edb` становится 21 строкой.
+
+### Пробел 2 — реифицированные факты в `in_perspective/2` и `asserted_by/2`
+
+**Хозяин: этот участок. Закрывается шагом 5 вместе с Проекцией T.**
+
+Первый аргумент этих отношений — целый факт, свёрнутый в терм. Проба `p5.ts` показывает его
+настоящую форму:
+
+```
+in_perspective: ["F = $fact(qz,main,$cons(a,$nil)), P = main"]
+```
+
+Это ровно тот же класс представления, что и `conclusion_lit`/`premise_lit` из Проекции T: значение
+непрозрачно для текстового диалекта и строится программно. Правило `boot.rofl:33-34` соединяет два
+таких отношения по этому целому терму, значит требуется только равенство термов, а не разбор их
+внутренностей. Отдельного участка работ не нужно — это четвёртое и пятое отношение Проекции T.
+
+Приёмка: аудит `forged[audit]` после загрузки boot.rofl пуст (проба `p5.ts` показывает
+`forged[audit]: []`), а при подделке автора даёт ровно одну строку.
+
+### Пробел 3 — порядок исполнения, вычитанный из данных
+
+**Хозяин: этот участок. Закрывается шагом 6.**
+
+Прежняя редакция фиксировала только контракт **чтения** уровней, но не говорила, что сам движок
+обязан планировать отрицательные правила по уровням из данных. Механизм в v0: `engine.ts:211-220`
+(функция `readStrata`) берёт по каждому отношению **максимум** значения из фактов `stratum/2`
+(строка `if (cur === undefined || n.v > cur) out.set(rel.name, n.v);`), а неизвестные уровни
+отправляются в последний проход.
+
+Что «максимум» — не украшение, видно из чисел: после boot.rofl 38 строк `stratum`, и одно и то же
+отношение встречается на разных уровнях. Проба `p8.ts`, часть C:
+
+```
+C1) stratum(isolated,N): ["N = 0","N = 1"]
+C2) strataPlan: [{"rule":"r66afcc0f","rel":"forged","level":1},{"rule":"re54533ea","rel":"isolated","level":1},
+    {"rule":"rd4b824ac","rel":"leak","level":1},{"rule":"r7665ee9a","rel":"malformed","level":1},
+    {"rule":"r7cbb8de5","rel":"malformed","level":1},{"rule":"rb2bbe8a8","rel":"unmoded","level":1}]
+```
+
+У `isolated` есть факты и на нулевом уровне, и на первом; в план попадает первый, то есть максимум.
+
+Приёмка: раздел 5.6 (контракт `strataPlan`), проверяется сценариями `p2-stratum-order` и
+`p2-noboot-null-plan`.
+
+### Пробел 4 — молчаливый ноль на незарегистрированной встроенной операции
+
+**Хозяин: участок движка (диалект), шаги 1 и 2. Не этот участок, но он его блокирует.**
+
+Сегодня обращение к несуществующей встроенной операции даёт пустой результат без ошибки. Для
+boot.rofl это прямая опасность: правило `boot.rofl:20` использует арифметику `N is M + 1`, и если
+она окажется зарегистрирована под другим именем или другой арностью, разница будет неотличима от
+пустого отношения — уровни стратификации молча испортятся, а все проверки останутся зелёными,
+потому что они проверяют пустоту аудитов.
+
+Что арифметика сегодня действительно не проходит по проводу, я проверил. Проба `eng2.ts`:
+
+```
+E8 is-arithmetic -> ERR Datalog parse error: Parse error at 7: unexpected input after query:
+   ':- u_e(K), M is K + 1. | u_e("1").'
+```
+
+Зависимость односторонняя: шаг 6 (интерфейс стратификации) не имеет смысла без шага 2
+(арифметика), потому что `stratum/2` без арифметики не выведется вовсе. Поэтому пробел 4 назван в
+разделе 7 как внешнее условие входа в четвёртый этап.
+
+Приёмка (не наша, но мы её потребители): обращение к незарегистрированному имени даёт отказ с
+устойчивым кодом, а не пустоту; форма `boot.rofl:20` даёт непустой результат.
+
+### Пробел 5 — соединение `uses_builtin` и `mode` через строковое кодирование
+
+**Хозяин: этот участок. Закрывается шагом 5, решение фиксируется здесь.**
+
+Имя операции в v0 хранится **строкой**, а не атомом, — единственное такое место во всём
+рефлексивном словаре (`reflect.ts:169`: `mks(b.op)`, тогда как всё остальное — `mka(...)`). Это
+видно в выводе пробы `p5.ts`, где кавычки сохранены:
+
+```
+uses_builtin: ["B = \"is\", R = r21bdb8e9"]
+mode sample: ["B = \"!=\", M = …","B = \"<\", M = …", … ,"B = \"is\", M = $cons(out,$cons(in,$nil))"]
+```
+
+Правило `boot.rofl:36` соединяет эти два отношения ровно по этому значению. Расхождение в один тег
+наполнит аудит `unmoded` ложными строками, и проверка на пустоту его не отличит от правильного
+случая — потому что в правильном случае он тоже пуст.
+
+Решение фиксируется одним предложением в разделе 4.2: имя операции кодируется одинаково в обоих
+отношениях, и это одно решение, а не два. Приёмка — тождество множеств: соединение
+`uses_builtin(R,B)` с `mode(B,_)` после boot.rofl даёт одну строку (единственная применённая
+операция — `is`), а `unmoded[audit]` пуст.
+
+### Пробел 6 — тождество правил
+
+**Хозяин: этот участок. Решение принимается здесь, реализуется на шаге 5. Прежнее решение
+отменяется.**
+
+Прежняя редакция постановила: «оставить хеш RFDB как тождество, а поверхностный идентификатор
+определить как первые восемь шестнадцатеричных цифр; способ v0 не переносить». Это решение
+**отменяется**. Основание — измерение.
+
+Идентификаторы v0 содержательно-адресные и наблюдаемы **в строках ответов**, а не только в
+объяснениях: проба `p5.ts` показывает `bridge_decl: ["A = main, B = audit, R = r66afcc0f", …]`.
+Свойства идентификатора я измерил напрямую, проба `p10.ts`:
+
+```
+9) boot clauses: 21  distinct ids: 21
+10) alpha-equivalent clauses, same id? r22962dbb r64c6665d false
+11) whitespace-only difference, same id? true (canon: dep[main](?A,?B)@now :- concludes[main](?R,?A)@now, premise_pos[main](?R,?B)@now)
+```
+
+То есть идентификатор v0 **чувствителен к именам переменных** и **нечувствителен к пробелам**. Хеш
+RFDB (`rule_ast_hash`) устроен иначе — он инвариантен к переименованию. Пример настоящего хеша,
+проба `eng3.ts`:
+
+```
+explainDatalogFact(u_path, ["a","b"]) -> {"ruleAstHash":"c6a83ed88f2af2fd2ddb7cf702a1bc4a6f01d6245ad3302cd8445173a6f7235c","body":[{"predicate":"u_edge","tuple":["a","b"]}]}
+explainDatalogFact(u_edge, ["a","b"]) -> {"ruleAstHash":"de618c4ebad3b0b2c14dd38276dea077b00895485ee18d53cf712294a428ecc2","body":[]}
+```
+
+Для boot.rofl разница между двумя схемами тождества ничего не склеивает: 21 предложение даёт 21
+различный идентификатор при обеих схемах. Но **строки** идентификаторов различаются, а сравнение
+эталона с подопытным идёт по строкам ответа. Ни один сценарий сегодня не закрепляет буквальный
+идентификатор (поиск по образцу «буква `r` плюс восемь шестнадцатеричных цифр» в `scenarios.ts` не
+даёт совпадений), поэтому решение ещё не опровергнуто фактически — но первое же построчное
+сравнение по рефлексивному отношению с колонкой идентификатора разойдётся.
+
+**Решение: перенести способ построения идентификатора v0 как поверхностный.** То есть каноническая
+запись предложения (`canonClause`, `reflect.ts:129-132`) плюс хеш FNV-1a (`reflect.ts:134-136`), с
+префиксом `r`. Внутренний хеш RFDB остаётся внутренним и используется для объяснений. Обоснование:
+это одна короткая чистая функция без состояния, её перенос дешевле, чем нормализация
+идентификаторов в эталоне при каждом сравнении, и она сохраняет свойство «одинаковый текст —
+одинаковый идентификатор», на котором стоит вся содержательная адресация.
+
+Приёмка: после загрузки boot.rofl множество из 21 идентификатора совпадает с множеством,
+напечатанным эталоном, как множество строк.
+
+### 3.1 Сводка распределения
+
+| Пробел | Хозяин | Шаг, который закрывает |
+|---|---|---|
+| 1. бутстрап-множество ядра | этот участок | шаг 5 |
+| 2. реифицированные факты в `in_perspective`/`asserted_by` | этот участок | шаг 5, Проекция T |
+| 3. порядок исполнения из данных | этот участок | шаг 6 |
+| 4. молчаливый ноль на встроенной операции | участок диалекта движка | шаги 1 и 2, наше входное условие |
+| 5. кодирование имени операции | этот участок | шаг 5, решение принято здесь |
+| 6. тождество правил | этот участок | шаг 5, решение принято здесь, прежнее отменено |
+
+---
+
+## 4. Устройство: что кодируется и кто это производит
+
+### 4.1 Основной принцип
+
+**Хранилище фактов авторитетно. Текста программы как источника правды не существует.**
+
+Кодировщик срабатывает один раз — в момент, когда предложение впервые попадает в систему, — и
+пишет рефлексивные факты в хранилище. Дальше:
+
+* исполняемый набор правил собирается **из хранилища** в начале каждого вычисления;
+* `assert` рефлексивного факта добавляет структуру правила;
+* `retract` рефлексивного факта убирает структуру правила, и это **не отменяется** последующими
+  вычислениями;
+* никакого повторного разбора накопленного текста не происходит, поэтому отозванный факт не
+  воскресает (проба `p8.ts`, часть A, раздел 1.1).
+
+Это ровно модель v0: `engine.ts:69` вызывает `decodeRules(this.store)`, а `decodeRules`
+(`reflect.ts:185-216`) перебирает факты хранилища.
+
+### 4.2 Две проекции, и почему они разные
+
+Правило записывается двумя разными наборами фактов, и **они не дублируют друг друга**.
+
+**Проекция F — плоская, для аудита.** Отношения: `rule/1`, `concludes/2`, `has_conclusion/2`,
+`has_premise/2`, `premise_pos/2`, `premise_neg/2`, `reads_from/2`, `writes_to/2`, `bridge_decl/3`,
+`uses_builtin/2`. Все аргументы — простые атомы, числа и строки. Именно эти отношения читает
+boot.rofl, когда считает зависимости, стратификацию и аудиты.
+
+**Проекция T — с термами, для исполнения.** Отношения: `conclusion_lit/3`, `premise_lit/3` и — по
+решению пробела 2 — `in_perspective/2`, `asserted_by/2`, `derived_by/3`. Третий аргумент у первых
+двух — свёрнутый в терм литерал; первый аргумент у следующих двух — свёрнутый в терм факт. Эти
+значения непрозрачны для текстового диалекта и строятся программно.
+
+Точный вывод кодировщика я снял с v0, проба `p8.ts`, часть D, на арифметическом правиле
+`boot.rofl:20`:
+
+```
+   D1 rule r21bdb8e9
+   D1 has_conclusion r21bdb8e9, 1
+   D1 conclusion_lit r21bdb8e9, 1, $lit(stratum,main,$cons($var("Rel"),$cons($var("N"),$nil)),$now)
+   D1 concludes r21bdb8e9, stratum
+   D1 writes_to r21bdb8e9, main
+   D1 has_premise r21bdb8e9, 1
+   D1 premise_lit r21bdb8e9, 1, $lit(dep_neg,main,$cons($var("Rel"),$cons($var("Q"),$nil)),$now)
+   D1 premise_pos r21bdb8e9, dep_neg
+   D1 has_premise r21bdb8e9, 2
+   D1 premise_lit r21bdb8e9, 2, $lit(stratum,main,$cons($var("Q"),$cons($var("M"),$nil)),$now)
+   D1 premise_pos r21bdb8e9, stratum
+   D1 has_premise r21bdb8e9, 3
+   D1 premise_lit r21bdb8e9, 3, $builtin("is",$cons($var("N"),$cons(+($var("M"),1),$nil)))
+   D1 uses_builtin r21bdb8e9, "is"
+   D1 reads_from r21bdb8e9, main
+```
+
+Отсюда читается алфавит термов: `$lit` с четырьмя аргументами (имя отношения, перспектива, список
+аргументов, временная метка), `$var` с именем переменной строкой, `$cons` и `$nil` для списков,
+`$builtin` с именем операции строкой, `$not` для отрицательной посылки, `$fact` для свёрнутого
+факта и голый функтор арифметики (здесь `+`). Обратите внимание: имя операции — в кавычках, то есть
+строка, и это то самое решение пробела 5.
+
+Для правила, читающего чужую перспективу, добавляются ещё две строки, проба `p8.ts`, часть D:
+
+```
+   D2 conclusion_lit rfb81e310, 1, $lit(anyp,audit,$cons($var("X"),$nil),$now)
+   D2 premise_lit rfb81e310, 1, $lit(src,$var("P"),$cons($var("X"),$nil),$now)
+   D2 reads_from rfb81e310, $any
+   D2 bridge_decl rfb81e310, $any, audit
+```
+
+Переменная в поле перспективы сворачивается в аудите к специальному атому `$any`
+(`reflect.ts:143-145`). Это не деталь: `boot.rofl:31` считает утечки именно по `reads_from` и
+`writes_to`, поэтому неверная свёртка испортит аудит.
+
+**Важное свойство, ради которого проекции разделены.** Они могут противоречить друг другу, и v0 на
+этом стоит. Проба `p9.ts`, часть C:
+
+```
+C0) id = r01dfa705  p: ["X = 1"]
+C1) retract rule(r01dfa705): {"ok":true,"diagnostics":[]} -> p: []
+C3) retract has_premise(r01dfa705, 1): {"ok":true,"diagnostics":[]} -> p: ["X = 1"]
+    (premise_lit survives: 1 rows)
+```
+
+Отзыв факта `rule/1` снимает правило с исполнения. Отзыв факта `has_premise/2` — **не снимает**,
+потому что исполнитель читает `premise_lit`, а не `has_premise`. Получается состояние, в котором
+правило работает, а аудит видит его как неполноценное. Именно на этом построен сценарий
+`p3-malformed-sibling`. Полное воспроизведение, проба `p10.ts`:
+
+```
+0) load boot ok: true  malformed[audit] before: []
+1) rules concluding malformed: ["r7665ee9a","r7cbb8de5"]
+2) m1 = r7cbb8de5  m2 = r7665ee9a
+3) retract has_premise(m2,1): {"ok":true,"diagnostics":[]}
+4) retract has_premise(m2,2): {"ok":true,"diagnostics":[]}
+5) malformed[audit] after : ["R = r7665ee9a"]
+6) premise_lit(m2,K,L) survives: 2 rows  -> m2 is STILL executable
+7) why:
+      malformed[audit](r7665ee9a)  <= r7cbb8de5 @tick 0
+        rule_known[main](r7665ee9a)  <= r550a9663 @tick 0
+          has_conclusion[main](r7665ee9a,1) [axiom]
+        not has_premise[main](r7665ee9a,?_$0) [finite failure]
+8) after an extra evaluate(), has_premise(m2,K): [] (not regenerated)
+```
+
+Правило `m2` объявляется неполноценным своим же братом `m1` — и продолжает работать. Если бы
+исполнитель читал `has_premise`, сценарий был бы неосуществим. **Поэтому исполнитель обязан читать
+Проекцию T, а аудит — Проекцию F, и никак иначе.**
+
+### 4.3 Бутстрап-множество ядра: названный производитель, две половины
+
+Это то, чего не было в прежней редакции (раздел 1.6). Производитель делится на две части.
+
+**Половина первая — единожды при инициализации контекста, до всякой программы.** Порождаются:
+
+* `reserved(Rel)` — по одному факту на каждое из двадцати служебных имён;
+* `edb(Rel)` — по одному факту на те же двадцать имён;
+* `mode(Op, Modes)` — семь фактов, по одному на встроенную операцию; второй аргумент — список
+  режимов в форме Проекции T (`$cons(...)`), потому что в текстовом диалекте он невыразим;
+* `authority(main, $kernel)` — один факт, как побочный эффект регистрации перспективы `main`.
+
+Числа проверены на пустом объекте: 20, 20, 7, 1 (проба `p5.ts`, раздел 1.6).
+
+**Половина вторая — на каждое утверждение обычного факта.** Порождаются:
+
+* `edb(Rel)`, если отношение не служебное, — поэтому множество `edb` растёт (после одного факта
+  стало 21);
+* `in_perspective($fact(...), P)` — всегда;
+* `asserted_by($fact(...), Who)` — если автор указан;
+* `authority(P, $kernel)` — при первом употреблении новой перспективы.
+
+Проверка на живом сервере: после инициализации, до загрузки программ, запросы дают 20/20/7/1; после
+загрузки boot.rofl `stratum` даёт 38 строк, а все пять аудитов пусты — числа, которые я снял с v0
+(проба `p5.ts`).
+
+### 4.4 Что не кодируется
+
+`hole/2` (частичность результата), `supersedes/2`, `conflict/5` — не относятся к этому участку. Но
+формулировка «бюджет — чужая территория по построению» из прежней редакции снята: бюджет сюда
+входит (раздел 5.3), а факт `hole/2` — нет.
+
+### 4.5 Попутное исправление в соседнем документе
+
+`_ai/research/rofl-fact-model.md:462` объявляет предикат `rule(RuleId, Term)` арности 2. Это
+неверно: у v0 это `rule/1`, что видно в выводе кодировщика (строка `D1 rule r21bdb8e9` — один
+аргумент, проба `p8.ts`). Ошибка унаследована комментарием
+`packages/rfdb-server/src/derive/catalog.rs:22` («§2.7's reflexive predicates (`rule/2`,
+`asserted_by/2`, …)»). Оба места надо поправить при работе над шагом 5; иначе арность будет
+закреплена неправильно, а движок к арности строг — проба `eng5.ts`:
+
+```
+E4 one name at two arities (rule/1 and rule/2) -> ERR derive engine error [E-BIND-002]: binding:
+   E-BIND-002: predicate 'u_rule' already bound at arity 1 but a clause binds it at arity 2
+```
+
+---
+
+## 5. Устройство: пути чтения, записи и приёмки
+
+### 5.1 Путь записи
+
+Никакого буфера текста. Операции:
+
+1. **Загрузка программы.** Текст разбирается один раз. Для каждого предложения с непустым телом
+   кодировщик пишет факты обеих проекций. Для каждого предложения с пустым телом (то есть факта)
+   пишется сам факт плюс вторая половина бутстрап-множества (раздел 4.3).
+2. **`assert` предложения.** То же самое для одного предложения. Разбора накопленного текста нет.
+3. **`retract` факта.** Факт удаляется из хранилища. Ограничений на служебные отношения нет: в v0
+   `retract` (`api.ts:146-165`) не имеет никакой проверки на защищённость, и без этого сценарий
+   `p3-malformed-sibling` неосуществим.
+4. **Вычисление.** Набор правил собирается из хранилища заново.
+
+Атомарность загрузки: перед загрузкой снимается копия хранилища (`api.ts:56`), и при любом отказе —
+диагностическом (`api.ts:62-64`) или стратификационном (`api.ts:69-71`) — копия возвращается на
+место. Это наблюдаемо: после отвергнутой загрузки `holds e(1)` равно `false` (проба `p6.ts`), чего и
+требует сценарий `p2-unstrat-reject` (`scenarios.ts:287`).
+
+### 5.2 Приёмка программы: решает `unstratified/1`, а не синтаксис
+
+Порядок в рефлексивном режиме:
+
+1. Правила собираются из хранилища.
+2. Монотонная часть (та, где нет отрицания) доводится до неподвижной точки. На этом шаге boot.rofl
+   выводит `dep`, `dep_neg`, `reach`, `unstratified`, `stratum`.
+3. Проверяется отношение `unstratified/1`. Если оно непусто — программа **отвергается**, а
+   диагностика строится как дерево вывода первого такого факта.
+4. Если пусто — читаются уровни из фактов `stratum/2` (максимум на отношение), и правила с
+   отрицанием исполняются по уровням; отношения без факта `stratum/2` уходят в последний проход.
+
+Синтаксическая проверка `derive/stratify.rs` в рефлексивном режиме **не решает** приёмку. Она
+понижается до внутреннего средства упорядочивания: её вердикт «отрицание внутри цикла» не должен
+превращаться в отказ `E-STRAT-001`, потому что в рефлексивном режиме отказом заведует
+`unstratified/1`. Формулировка прежней редакции «стратификация не тронута» вычеркнута.
+
+Требуемая форма диагностики измерена (проба `p3.ts`, раздел 1.2): первая строка называет
+`unstratified[main](p)`, дальше идёт дерево через `dep_neg` и `reach` до аксиом. Сценарий требует
+обеих подстрок.
+
+### 5.3 Бюджет срабатываний и момент построения диагностики
+
+Бюджет считает **срабатывания правил**, а не раунды. Значение по умолчанию в v0 — 100 000
+(`api.ts:16`), сценарий `p2-unstrat-reject` передаёт 5 000. У RFDB сегодня есть только предел
+раундов `DEFAULT_ITERATION_CAP` (`packages/rfdb-server/src/derive/exec.rs:107`, значение 10 000), и
+он документирован как «страховка от неисправности планировщика, а не нормальный выход». Это другая
+величина, и её недостаточно.
+
+Порядок при исчерпании бюджета в рефлексивном режиме:
+
+1. Вычисление останавливается.
+2. **По частичному набору фактов** проверяется `unstratified/1` и строится диагностика.
+3. Только после этого хранилище откатывается.
+
+Пункт 2 обязателен: после отката в хранилище ноль строк `stratum(p,N)` и ноль строк `unstratified`
+(проба `p6.ts`, раздел 1.4), то есть свидетельства, которые обязана назвать диагностика, к тому
+моменту уже уничтожены.
+
+Отдельно: обычное исчерпание бюджета без неудачной стратификации — **не** отказ. Загрузка успешна,
+ответ помечается частичным, добавляется факт `hole($load(N), budget_exhausted)` (проба `p6.ts`:
+`partial= true  rows= 302  hole= ["I = $load(1), R = budget_exhausted"]`). Это территория соседнего
+участка про дыры; здесь только зафиксировано, что путь другой.
+
+### 5.4 Запрет на запись в служебные отношения: два слоя
+
+**Слой первый, при разборе.** Отказ `E-REFL-001` выдаётся тогда и только тогда, когда выполнены все
+три условия: у предложения **непустое тело**; отношение в голове входит в служебный словарь из
+двадцати имён (`reflect.ts:11-33`); отношение **не** входит в интерфейс стратификации (`stratum`,
+`unstratified`, `reflect.ts:39`).
+
+Отсюда прямо следует, что факты в служебные отношения **всегда законны** — это подтверждено пробой
+`p1.ts` (раздел 1.5) и на этом стоит сценарий `p3-breach`. Это же снимает и самоотказ, о котором
+предупреждал взгляд «реализуемость»: факты, которые пишет сам кодировщик, — это факты, у них пустое
+тело, и под запрет они не подпадают.
+
+**Слой второй, при сборке правил из хранилища.** Правило, собранное из фактов, чья голова в
+служебном словаре, помечается как неисполняемое с диагностикой, но программа не отвергается. Это
+`engine.ts:73-76`, и без второго слоя защиту можно обойти, утвердив правило в виде фактов, —
+проверено пробой `p9.ts`, часть B (раздел 1.5): факты приняты, `derived_by(a, …)` не выведено.
+
+Замечу, что для самого движка RFDB служебные имена сегодня ничем не выделены. Проба `eng2.ts`:
+
+```
+E7 reserved-looking head is just a name -> OK 1 rows [{"R":"rbad","R2":"derived_by"}]
+```
+
+Правило с головой `concludes` работает как обычное правило. Значит, оба слоя надо построить, ни один
+не достаётся даром.
+
+### 5.5 Где стоит шов и как включается режим
+
+Пять мест, а не четыре (раздел 2):
+
+1. `packages/rfdb-server/src/bin/rfdb_server.rs:2942-2972` — выбор цели. Сегодня он ходит через
+   базовый разборщик и роняет любой заголовок.
+2. `packages/rfdb-server/src/derive/parser_ext.rs:863` (функция `parse_ext_program`) — место, где
+   кодировщик получает разобранные предложения.
+3. Новый модуль кодировщика в `packages/rfdb-server/src/derive/` — обе проекции и
+   бутстрап-множество.
+4. `packages/rfdb-server/src/derive/stratify.rs` — понижение синтаксической проверки до
+   несмертельной в рефлексивном режиме.
+5. `packages/rfdb-server/src/derive/exec.rs` — сборка правил из хранилища вместо списка предложений
+   разборщика, бюджет срабатываний, построение диагностики до отката.
+
+**Режим включается полем запроса протокола, а не пометкой в тексте программы.** Основание —
+измерение из раздела 2: путь `executeDatalog` отвергает вообще любой заголовок, включая заведомо
+поддерживаемые `@tag`, `@materialize` и `#requires`. Поле запроса обходит разбор заголовка целиком и
+не зависит от того, где в тексте стоит пометка.
+
+### 5.6 Контракт `strataPlan`
+
+Возвращается **по одной строке на правило**, которое одновременно безопасно и содержит отрицание, —
+не по одной строке на отношение. Уровень берётся из фактов `stratum/2` как максимум по отношению
+головы; если факта нет, уровень равен `null`. Обращаться к `derive/stratify.rs` запрещено.
+
+Форма измерена, проба `p8.ts`, часть C (полный вывод приведён в разделе 3, пробел 3). Три следствия,
+каждое из которых легко нарушить:
+
+* отношение `malformed` даёт **две** строки, потому что его определяют два правила
+  (`C4) rows for malformed: [{"rule":"r7665ee9a",…},{"rule":"r7cbb8de5",…}]`);
+* отношение `linked` в план **не попадает**, хотя у него есть факт `stratum(linked,0)`, — потому что
+  определяющее его правило не содержит отрицания (`C3) … (linked appears in plan? false )`);
+* у `isolated` факты на двух уровнях, а в плане стоит максимум.
+
+Соответствие определению в v0: `engine.ts:223-230`.
+
+### 5.7 Видимость при вырезании (`excise`)
+
+Разность фактов считается по видимому срезу, из которого исключены все двадцать служебных отношений
+и оба отношения интерфейса стратификации (`api.ts:376-379`). Без этого фильтра любая операция
+вырезания утонула бы в рефлексивном шуме. Проверено, проба `p8.ts`, часть B:
+
+```
+B1) v0 excise(e1(a)) removed: ["e1[main](a)"] added: []
+```
+
+Одна строка, ни одного рефлексивного факта.
+
+---
+
+## 6. Что закрывает этот участок и что не закрывает
+
+Числа взяты из отчёта конформанса, лежащего в дереве на текущем коммите:
+`packages/rofl-conformance/conformance-run-meta.json` — прогон `rofl-conformance-1787502480903`,
+время `2026-08-23T16:28:00.903Z`. Прежняя редакция ссылалась на прогон
+`rofl-conformance-1787361952086`, он устарел.
+
+Порядок счёта здесь важен. Сначала я перезапустил сравнение сам и получил прогон
+`rofl-conformance-1787501110044` (16:05). Затем соседний участок работ дописал переводчик и
+закоммитил свой перезапуск — прогон `rofl-conformance-1787502480903` (16:28). Я пересчитал числа
+заново уже по его отчёту, и распределение причин отказа совпало с моим до единицы. Пересчёт снят
+командой `python3` по `packages/rofl-conformance/conformance-report.json`, поле `tier1`, её вывод:
+`Counter({'RED': 25, 'GREEN': 5})` и
+`Counter({'missing:rules-as-data': 18, 'dialect:untranslatable': 2, 'missing:compound-terms': 1,
+'missing:whynot-shape': 1, 'missing:perspectives': 1, 'missing:excise': 1, 'missing:holes': 1})`.
+
+Первый уровень: 30 сценариев, 25 красных и 5 зелёных. Причины отказов:
+
+| Причина | Сценариев |
+|---|---|
+| `missing:rules-as-data` | 18 |
+| `dialect:untranslatable` | 2 |
+| `missing:compound-terms` | 1 |
+| `missing:whynot-shape` | 1 |
+| `missing:perspectives` | 1 |
+| `missing:excise` | 1 |
+| `missing:holes` | 1 |
+
+**Восемнадцать из двадцати пяти красных сценариев упираются в этот участок.** Поимённо:
+`p2-stratum-order`, `p2-noboot-null-plan`, `p2-unstrat-reject`, `p2-derived-by`, `p3-kernel-grep`,
+`p3-runtime-rule`, `p3-write-protected`, `p3-breach`, `p3-malformed-sibling`, `p3-snapshot-roundtrip`,
+`p4-counter`, `p4-replay`, `p4-tm`, `p4-tm-diverge`, `p4-boot-audits`, `p4-sensors`, `p4-forged`,
+`boot-load`.
+
+Это не значит, что все восемнадцать позеленеют от одного этого участка: часть из них дополнительно
+требует перспектив, арифметики и дыр. Но ни один из восемнадцати не может позеленеть **без** него.
+
+Не закрывается здесь: `p1-tc-naive` (режим вычисления), `p1-functor-append` (составные термы),
+`p1-arith` (арифметика), `p2-why-tree` (форма объяснения), `p2-persp-isolation` (перспективы),
+`p4-excise-multi` (вырезание), `p4-budget-hole` (дыры).
+
+---
+
+## 7. Порядок работ
+
+Пять этапов. Каждый заканчивается измеримым условием, а не словом «сделано».
+
+**Этап 1. Провод и режим.** Поправить выбор цели в `bin/rfdb_server.rs`, добавить поле запроса,
+включающее рефлексивный режим. Условие выхода: программа с включённым режимом доходит до
+расширенного разборщика; сегодня это невозможно (раздел 2).
+
+**Этап 2. Бутстрап-множество ядра.** Условие выхода: до загрузки любой программы живой запрос даёт
+20 строк `reserved`, 20 строк `edb`, 7 строк `mode`, 1 строку `authority`; после одного обычного
+факта `edb` растёт до 21.
+
+**Этап 3. Кодировщик, обе проекции, авторитет — хранилище.** Условие выхода: после загрузки
+boot.rofl живой запрос даёт числа, снятые с эталона, — `bridge_decl` шесть строк из `main` в
+`audit`, `flow` равно множеству из двух пар `(main,audit)` и `(main,main)`, `reads_from` 21 строка,
+`writes_to` шесть строк в `audit` и пятнадцать в `main`, `uses_builtin` одна строка со строковым
+`"is"`; отзыв факта `rule(id)` снимает правило, и это переживает повторное вычисление; отзыв
+`has_premise` правило **не** снимает.
+
+Внешнее условие входа: арифметика во встроенных операциях (пробел 4), иначе `stratum` не выведется.
+
+**Этап 4. Приёмка из данных и бюджет.** Условие выхода: `unstratified(X)` после boot.rofl пусто,
+`stratum` даёт 38 строк, программа `e(1). p(X) :- e(X), not p(X).` при бюджете 5 000 отвергается с
+диагностикой, содержащей `unstratified[main](p)` и `dep_neg`, и после отказа `holds e(1)` равно
+`false`.
+
+**Этап 5. Поверхность API.** Условие выхода: `strataPlan` даёт шесть строк на программе из пробы
+`p8.ts` части C, с двумя строками у `malformed`, без `linked` и с уровнем-максимумом у `isolated`;
+уровень равен `null` для отношения без факта `stratum/2`.
+
+---
+
+## 8. Зафиксированные расхождения
+
+Это не пробелы и не задачи — это места, где мы сознательно отличаемся от эталона либо ещё не знаем,
+как совпасть.
+
+**1. Нерасслаиваемая программа без boot.rofl.** Без загруженного мета-ядра v0 принимает программу с
+отрицанием в цикле и вычисляет её до неподвижной точки, а RFDB отвергает её кодом `E-STRAT-001`
+(мои прогоны `E2` и `E3`, раздел 1.3). После четвёртого этапа расхождение сохранится для программ,
+которые грузятся **без** boot.rofl: в этом случае некому вывести `unstratified/1`, и решать будет
+синтаксическая проверка. Ни один сценарий первого уровня в это не упирается (раздел 1.7), поэтому
+расхождение записано, а не закрыто. Закрытие потребовало бы инфляционного прохода по последнему
+уровню — это отдельная работа со своим обоснованием.
+
+**2. Строгая монотипизация арности.** RFDB требует, чтобы имя предиката всюду употреблялось с одной
+арностью (`E-BIND-002`, проба `eng5.ts`, раздел 4.5). У v0 такого требования нет. Для рефлексивного
+словаря это не мешает — арности там фиксированы, — но требует, чтобы документация арностей была
+верной (раздел 4.5).
+
+**3. Тождество правил.** Внутренний хеш RFDB инвариантен к переименованию переменных, а
+идентификатор v0 — нет (проба `p10.ts`, раздел 3, пробел 6). Мы переносим способ v0 как
+поверхностный; внутренний хеш остаётся внутренним. Два тождества сосуществуют осознанно.
+
+---
+
+## 9. Чего я не проверил
+
+Честный список. Всё перечисленное ниже основано на чтении кода, а не на прогоне, и потому не может
+считаться доказанным по правилу из шапки.
+
+1. Не измерял стоимость сборки правил из хранилища перед каждым вычислением на больших графах. Для
+   boot.rofl это 21 правило, стоимость незаметна; для рабочих программ RFDB — неизвестно.
+2. Не проверял, как рефлексивные факты переживают уплотнение хранилища и снятие снимка. Сценарий
+   `p3-snapshot-roundtrip` это затрагивает, но он красный по другой причине.
+3. Не проверял поведение при одновременной записи из нескольких соединений.
+4. Не проверял, что позиционный эталон планов (`derive/golden/p3_plan_fingerprints.txt`, 40 816
+   строк) не сдвинется от появления рефлексивных правил. Ожидание — что не сдвинется, потому что
+   рефлексивный режим включается полем запроса, — но это ожидание, а не измерение.
+5. Не строил дерево объяснения для факта, выведенного правилом, которое существует только как
+   данные, на стороне RFDB. На стороне v0 это работает (проба `p9.ts`, часть A). На стороне RFDB
+   известно только, что у наземного факта дерево пустое, а у выведенного — нет (проба `eng3.ts`).
+6. Не проверял, что бюджет срабатываний можно вставить в исполнитель RFDB, не сломав существующие
+   пути; знаю только, что нынешний предел считает другую величину.
+7. Не измерял, во что обойдётся построение диагностики по частичному набору фактов до отката, — знаю
+   только, что после отката это невозможно (проба `p6.ts`).
+8. Числа конформанса в разделе 6 я снял дважды — до и после того, как соседний участок работ
+   (аудит отказов переводчика) закоммитил свою правку переводчика и свой перезапуск. Оба раза вышло
+   одно и то же: 25 красных, 5 зелёных, 18 на рефлексии. Чего я не проверял — держится ли это
+   равенство и на нулевом уровне сценариев: там я числа не пересчитывал.
