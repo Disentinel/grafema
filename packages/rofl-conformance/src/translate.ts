@@ -283,15 +283,18 @@ export function translate(clauses: Clause[]): TranslateResult {
     for (const b of c.body) {
       if (b.t === 'pos') for (const a of b.lit.args) if (a.k === 'v' && !isWildcard(a)) posVars.add(a.name);
     }
-    const seen = new Set<string>();
+    // A head variable REPEATED across positions needs no refusal: both engines
+    // build the head by substitution, so every repeated position receives the
+    // same value. Live-probed on six shapes (repeat of the first premise column,
+    // of the second, arity-3 triple repeat, repeat next to a distinct variable,
+    // and a repeat consumed by a later rule) — RFDB and v0 agree tuple-for-tuple;
+    // e.g. `r(V1, V1) :- p(V0, V1).` over `p(a, m)` yields r(m, m) on both,
+    // never r(a, m). Pinned by test/translate.test.ts
+    // ('repeated head vars translate — both engines build the head by substitution').
     for (const a of c.head.args) {
       if (a.k !== 'v' || isWildcard(a)) {
         return fail('missing:demand-mode', `head argument of clause ${ci + 1} is not a named variable: v0 tolerates such heads via demand/moded evaluation (engine.ts:80-127); RFDB has no demand mode`);
       }
-      if (seen.has(a.name)) {
-        return fail('missing:demand-mode', `repeated head variable '${a.name}' in clause ${ci + 1}: demand/moded head shapes have no RFDB counterpart`);
-      }
-      seen.add(a.name);
       if (!posVars.has(a.name)) {
         return fail('missing:demand-mode', `head variable '${a.name}' of clause ${ci + 1} is not bound by a positive premise (not range-restricted): v0 handles this via demand mode`);
       }

@@ -4,8 +4,12 @@
 // v0 generator lacks, both required by the RFDB planner (design tier0_subset):
 //
 //  (a) RANGE-RESTRICTED DISTINCT-VAR HEADS — every head arg is a distinct
-//      variable bound by a positive premise (v0 tolerates unsafe heads via
-//      demand mode; RFDB has none);
+//      variable bound by a positive premise (RANGE RESTRICTION is the real
+//      constraint: v0 tolerates unsafe heads via demand mode, RFDB has none.
+//      DISTINCTNESS is kept for SEED STABILITY only — a repeated head variable
+//      is legal on both engines and they agree on it tuple-for-tuple, pinned by
+//      wire-smoke's 'repeated head variable agrees with v0 row-for-row', but
+//      relaxing it would change every seed's byte-identical program text);
 //  (b) CONNECTED BODIES with ≥1 named variable per premise — premise j>0
 //      reuses ≥1 already-bound variable (RFDB E-PLAN-003 structural cross-join
 //      guard; ≥1 named var per premise is kept for SEED STABILITY — the F3

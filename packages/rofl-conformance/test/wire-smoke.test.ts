@@ -121,3 +121,26 @@ test('adapter end-to-end: TC rows in exact v0 rendering', async () => {
   assert.equal(await adapter.holds('path(a, d)'), true);
   assert.equal(await adapter.holds('path(d, a)'), false);
 });
+
+// A REPEATED HEAD VARIABLE is a real head construction on BOTH engines: every
+// repeated position receives the same value. The expected rows below are the
+// vendored v0's OWN answers, measured on the same three programs (in v0's own
+// row order), so this test is a cross-engine agreement pin, not a self-check.
+test('adapter end-to-end: repeated head variable agrees with v0 row-for-row', async () => {
+  // (1) repeat of the FIRST premise column
+  const a = new RfdbRofl(client);
+  a.load('p0(a, m).\np0(b, n).\nq0(X, X) :- p0(X, Y).');
+  assert.deepEqual((await a.query('q0(X, Y)')).rows.map((x) => x.text),
+    ['X = a, Y = a', 'X = b, Y = b']);
+  // (2) repeat of the SECOND premise column — the case that separates a real
+  // head build from a projection of column one (a projection would give a/b)
+  const b = new RfdbRofl(client);
+  b.load('p0(a, m).\np0(b, n).\nr0(Y, Y) :- p0(X, Y).');
+  assert.deepEqual((await b.query('r0(X, Y)')).rows.map((x) => x.text),
+    ['X = m, Y = m', 'X = n, Y = n']);
+  // (3) repeat next to a distinct variable, arity 3
+  const c = new RfdbRofl(client);
+  c.load('p0(a, m).\np0(b, n).\nu0(X, Y, X) :- p0(X, Y).');
+  assert.deepEqual((await c.query('u0(X, Y, Z)')).rows.map((x) => x.text),
+    ['X = a, Y = m, Z = a', 'X = b, Y = n, Z = b']);
+});

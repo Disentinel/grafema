@@ -103,10 +103,29 @@ test('rejects unsafe heads → missing:demand-mode', () => {
   assert.equal((r as { code: string }).code, 'missing:demand-mode');
 });
 
-test('rejects repeated head vars → missing:demand-mode', () => {
-  const r = t('p0(c0, c1).\nq0(X, X) :- p0(X, Y).');
-  assert.equal(r.ok, false);
-  assert.equal((r as { code: string }).code, 'missing:demand-mode');
+// A repeated head variable is NOT a refusal: both engines build the head by
+// substitution, so every repeated position receives the same value. Live-probed
+// on RFDB 0.4.1 and on vendored v0: `u_r(V1, V1) :- u_p(V0, V1).` over
+// `u_p(a, m)` yields u_r(m, m) on BOTH (never u_r(a, m)), so the repeat is a
+// real head construction and not a projection of the first premise column.
+test('repeated head vars translate — both engines build the head by substitution', () => {
+  const tr = okT('p0(c0, c1).\nq0(X, X) :- p0(X, Y).');
+  // the repeat survives renaming: both head positions carry the SAME variable,
+  // and it is the one bound by the FIRST premise column
+  assert.match(renderSource(tr), /u_q0\(V0, V0\) :- u_p0\(V0, V1\)\./);
+});
+
+test('repeated head var over the SECOND premise column keeps that column', () => {
+  const tr = okT('p0(c0, c1).\nr0(Y, Y) :- p0(X, Y).');
+  // renaming is by first occurrence and the head is renamed first, so Y → V0,
+  // X → V1. What matters is the WIRING: the repeated head variable is the one
+  // in the SECOND premise position, so the answer is r0(c1, c1) — not r0(c0, c1).
+  assert.match(renderSource(tr), /u_r0\(V0, V0\) :- u_p0\(V1, V0\)\./);
+});
+
+test('repeated head var next to a distinct var, arity 3', () => {
+  const tr = okT('p0(c0, c1).\nu0(X, Y, X) :- p0(X, Y).');
+  assert.match(renderSource(tr), /u_u0\(V0, V1, V0\) :- u_p0\(V0, V1\)\./);
 });
 
 test('rejects unsafe negation vars → missing:demand-mode', () => {
