@@ -1,7 +1,7 @@
 # ROFL v0 ↔ RFDB conformance report (P0 harness)
 
-- run: `rofl-conformance-1787361952086` (identity in `conformance-run-meta.json`; the machine report `conformance-report.json` is byte-reproducible and carries no run identity)
-- oracle: ROFL v0 vendored at `052a4c5` (main); subject: rfdb-server 0.4.1 (protocol v3, derive engine, repo `f08e5d536fc1`)
+- run: `rofl-conformance-1787489578948` (identity in `conformance-run-meta.json`; the machine report `conformance-report.json` is byte-reproducible and carries no run identity)
+- oracle: ROFL v0 vendored at `052a4c5` (main); subject: rfdb-server 0.4.1 (protocol v3, derive engine, repo `bc3db6c16ce3`)
 - a RED verdict is a SUCCESS of the harness: it is a machine-readable migration-roadmap entry, not a failure. Harness failures are crashes, fake greens, silent skips — gated by the oracle self-check (30/30 must pass on vendored v0) and the scenario-count check.
 
 ## Tier-0 — 120-seed TS↔RFDB differential (common subset)
