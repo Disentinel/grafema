@@ -141,4 +141,37 @@ export class RfdbClient {
     if (!('witness' in r)) throw new Error(`unexpected explainDatalogGap response: ${JSON.stringify(r)}`);
     return (r['witness'] as GapWitness | null) ?? null;
   }
+
+  /** Projection T: reflect a program's RULES into the open database as facts, returning
+   *  how many facts were written. Additive and idempotent — re-reflecting the same program
+   *  hits the same content-addressed nodes, a second program lands BESIDE the first, and
+   *  there is no retraction.
+   *
+   *  The returned count is the caller's POSITIVE CONTROL and has to be checked: a program
+   *  that never reached the store answers empty to every later store-mode query, and an
+   *  empty answer is indistinguishable from an honest zero. A program Projection T cannot
+   *  carry whole (#requires, an @materialize / @materialize_node annotation, a lattice head)
+   *  is REFUSED — it arrives here as an RfdbError whose `code` is the E-REFLECT-… the server
+   *  put in brackets, never as a silent 0. */
+  async reflectProgram(source: string): Promise<number> {
+    const r = (await this.call({ cmd: 'reflectProgram', source })) as { [k: string]: MpValue };
+    if (typeof r['error'] === 'string') throw new RfdbError(r['error']);
+    if (!('count' in r)) throw new Error(`unexpected reflectProgram response: ${JSON.stringify(r)}`);
+    return r['count'] as number;
+  }
+
+  /** Switch where the open database's rules come from: 'text' (the program text sent with
+   *  each query — the historical default) or 'store' (the facts reflectProgram wrote). A
+   *  durable property of the DATABASE, persisted server-side, reversible in both directions.
+   *
+   *  Returns the mode the SERVER read back off its engine, not an echo of the argument, so a
+   *  caller can state which mode it actually measured in instead of assuming the request took
+   *  effect. Note that while the source is 'store' every @materialize write-back refuses with
+   *  E-REFLECT-003 by design: Projection T carries no annotations. */
+  async setRuleSource(mode: 'text' | 'store'): Promise<'text' | 'store'> {
+    const r = (await this.call({ cmd: 'setRuleSource', mode })) as { [k: string]: MpValue };
+    if (typeof r['error'] === 'string') throw new RfdbError(r['error']);
+    if (!('ruleSource' in r)) throw new Error(`unexpected setRuleSource response: ${JSON.stringify(r)}`);
+    return r['ruleSource'] as 'text' | 'store';
+  }
 }

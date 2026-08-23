@@ -303,6 +303,43 @@ pub enum Request {
         key: Vec<String>,
     },
 
+    /// Projection T (rules-as-data): reflect a derive program's RULES into THIS database as
+    /// facts, and return how many fact nodes were written. WRITE path, derive-engine-ONLY.
+    ///
+    /// Additive and idempotent: a fact's node id is content-addressed over its canonical
+    /// tuple, so re-reflecting the same program hits the same nodes, and reflecting a second
+    /// program adds its rules BESIDE the first. There is no retraction — supersession is a
+    /// separate line of work.
+    ///
+    /// REFUSES with a coded error, rather than writing part of a program, one Projection T
+    /// cannot carry whole (`#requires`, `@materialize` / `@materialize_node`, a lattice
+    /// payload) or one whose 32-bit rule id is already claimed here by a DIFFERENT clause.
+    /// The refusal has to reach the client, because a program that never made it into the
+    /// store answers EMPTY to every later store-mode query — indistinguishable from an
+    /// honest zero.
+    ReflectProgram {
+        source: String,
+    },
+
+    /// Switch where THIS database's rules come from: `"text"` (the program text handed to
+    /// each eval entry — the historical default) or `"store"` (the facts `ReflectProgram`
+    /// wrote). WRITE path, derive-engine-ONLY. Returns the mode read BACK off the engine, so
+    /// a client asserts which mode it actually measured in instead of assuming its request
+    /// took effect.
+    ///
+    /// A durable property of the DATABASE persisted to `db_config.json`, not a per-request
+    /// switch, and reversible in BOTH directions — unlike the one-way ROFL marker
+    /// (`GraphEngineV2::enable_rofl_mode`), which has no defined exit. Flipping back destroys
+    /// nothing: the rule facts stay in the store, so `store → text → store` returns the same
+    /// program.
+    ///
+    /// While the source is `store`, every `@materialize` write-back path refuses with
+    /// `E-REFLECT-003` BY DESIGN: Projection T carries no annotations, so a write-back would
+    /// find zero directives and commit nothing while reporting success.
+    SetRuleSource {
+        mode: rfdb::derive::RuleSource,
+    },
+
     // Cypher queries
     CypherQuery {
         query: String,
@@ -553,6 +590,18 @@ pub enum Response {
     SimResults { rows: Vec<Vec<String>> },
     /// `ExplainDatalogGap` witness (null ⇒ no gap: derivable, or no head matches).
     GapWitness { witness: Option<WireGapWitness> },
+    /// Reply for `SetRuleSource`: where this database's rules come from, read BACK off the
+    /// engine AFTER the switch — never the echoed request, so a client that got this reply
+    /// knows the mode it will actually be measured in.
+    ///
+    /// `Response` is `#[serde(untagged)]`, so a reply is told apart by its FIELD SET alone.
+    /// `ruleSource` is carried by no other variant (checked: the only other `ruleSource` on
+    /// the wire is a `CheckGuarantee` REQUEST field), which is what keeps this from being
+    /// read as some other reply.
+    RuleSourceMode {
+        #[serde(rename = "ruleSource")]
+        rule_source: rfdb::derive::RuleSource,
+    },
     CypherResult {
         columns: Vec<String>,
         rows: Vec<Vec<serde_json::Value>>,
@@ -1247,6 +1296,8 @@ fn get_operation_name(request: &Request) -> String {
         Request::ExplainDatalogFact { .. } => "ExplainDatalogFact".to_string(),
         Request::SimDatalog { .. } => "SimDatalog".to_string(),
         Request::ExplainDatalogGap { .. } => "ExplainDatalogGap".to_string(),
+        Request::ReflectProgram { .. } => "ReflectProgram".to_string(),
+        Request::SetRuleSource { .. } => "SetRuleSource".to_string(),
         Request::IsEndpoint { .. } => "IsEndpoint".to_string(),
         Request::GetNodeIdentifier { .. } => "GetNodeIdentifier".to_string(),
         Request::UpdateNodeVersion { .. } => "UpdateNodeVersion".to_string(),
@@ -1297,6 +1348,15 @@ fn handle_request_with_cancel(
             // advertise the feature are refused by the orchestrator's fail-fast capability gate.
             if derive_engine_enabled() {
                 features.push("datalogDerive".to_string());
+                // Projection T (rules-as-data): `reflectProgram` writes a program's rules into
+                // the database as facts, `setRuleSource` makes the engine execute THOSE rules
+                // instead of the request's text. Advertised under the SAME kill switch because
+                // both dispatchers are derive-engine paths and refuse when it is off — a
+                // client that needs store-mode rules can then refuse UP FRONT instead of
+                // discovering it as empty answers, which are indistinguishable from an honest
+                // zero once a program failed to reach the store.
+                features.push("rulesAsData".to_string());
+
             }
             Response::HelloOk {
                 ok: true,
@@ -1801,6 +1861,31 @@ fn handle_request_with_cancel(
             with_engine_read(session, |engine| {
                 match dispatch_explain_datalog_gap(engine, &source, &predicate, &key, cf) {
                     Ok(witness) => Response::GapWitness { witness },
+                    Err(e) => Response::Error { error: e },
+                }
+            })
+        }
+
+        Request::ReflectProgram { source } => {
+            // WRITE path: reflection ends in `commit_batch_ext` (&mut self), so it takes the
+            // exclusive write lock — same shape as MaterializeDatalog. derive-engine-only and
+            // kill-switch-gated inside the dispatcher; a refusal is an explicit coded error (I5).
+            with_engine_write(session, |engine| {
+                match dispatch_reflect_program(engine, &source) {
+                    Ok(count) => Response::Count { count: count as u32 },
+                    Err(e) => Response::Error { error: e },
+                }
+            })
+        }
+
+        Request::SetRuleSource { mode } => {
+            // WRITE path, not a session setting: the flag is a durable database property
+            // persisted to `db_config.json` (&mut self) and it changes what EVERY later derive
+            // call on this database executes, for every session. Taking the write lock is what
+            // stops one session flipping the program out from under another mid-query.
+            with_engine_write(session, |engine| {
+                match dispatch_set_rule_source(engine, mode) {
+                    Ok(effective) => Response::RuleSourceMode { rule_source: effective },
                     Err(e) => Response::Error { error: e },
                 }
             })
@@ -3197,6 +3282,77 @@ fn dispatch_explain_datalog_gap(
         failing_predicate: g.failing_predicate,
         failing_is_negative: g.failing_is_negative,
     }))
+}
+
+/// `ReflectProgram` dispatch (WRITE path): reflect a derive program's rules into the current
+/// database as facts via [`GraphEngineV2::reflect_program`] (Projection T). derive-engine-ONLY
+/// and kill-switch-gated (a coded refusal when `RFDB_DERIVE_ENGINE` is off, I5 — never a silent
+/// no-op). Returns the number of reflected fact nodes.
+///
+/// The reflected facts are VISIBLE when this returns, with no `Flush` needed from the caller,
+/// and that matters more than it sounds: a client that reflected and then queried a store which
+/// had not yet published would decode a store WITHOUT the rules it just wrote and get an EMPTY
+/// answer — indistinguishable from an honest zero. It holds because reflection commits through
+/// `commit_batch_ext`, and a commit publishes a new manifest version (`graph/engine_v2.rs`
+/// ⟦a commit publishes a new manifest version⟧); the buffered `add_nodes` path that does need a
+/// flush is a different one. No explicit flush is issued here — the wire test
+/// `wire_reflect_program_then_store_mode_answers_from_the_store` sends no `Flush` between
+/// reflecting and querying and reads the reflected rule back, which is what makes that a
+/// measured fact rather than an assumption.
+///
+/// The source is program TEXT, not a pack selector: unlike the eval entries there is no
+/// `resolve_pack_source` here, because reflecting the bundled packs is what
+/// `derive::reflect`'s own round-trip test does in-process — the wire door exists to put a
+/// CLIENT's program into the store.
+fn dispatch_reflect_program(
+    engine: &mut dyn GraphStore,
+    source: &str,
+) -> std::result::Result<usize, String> {
+    if !derive_engine_enabled() {
+        return Err("RFDB_DERIVE_ENGINE: reflectProgram is a derive-engine-only path; with the kill \
+                    switch off there is no Projection T to reflect rules into"
+            .to_string());
+    }
+    let v2 = engine
+        .as_any_mut()
+        .downcast_mut::<GraphEngineV2>()
+        .ok_or_else(|| {
+            "RFDB_DERIVE_ENGINE: reflectProgram requires a storage_v2 GraphEngineV2 backend".to_string()
+        })?;
+
+    let written = v2
+        .reflect_program(source)
+        .map_err(|e| format!("derive engine reflect error [{}]: {}", e.code(), e))?;
+    Ok(written)
+}
+
+/// `SetRuleSource` dispatch (WRITE path): point this database's rules at the request TEXT or at
+/// the STORE via [`GraphEngineV2::set_rule_source`], and return the mode read BACK off the
+/// engine. derive-engine-ONLY and kill-switch-gated, like every other Projection T door.
+///
+/// The return value is deliberately re-READ through [`GraphEngineV2::rule_source`] instead of
+/// echoing the argument. An echo would confirm the request, not the state, and the state is
+/// what the next query is answered from — a client checking an echo would be assuming exactly
+/// the thing it meant to verify.
+fn dispatch_set_rule_source(
+    engine: &mut dyn GraphStore,
+    mode: rfdb::derive::RuleSource,
+) -> std::result::Result<rfdb::derive::RuleSource, String> {
+    if !derive_engine_enabled() {
+        return Err("RFDB_DERIVE_ENGINE: setRuleSource is a derive-engine-only path; with the kill \
+                    switch off nothing reads the rule source"
+            .to_string());
+    }
+    let v2 = engine
+        .as_any_mut()
+        .downcast_mut::<GraphEngineV2>()
+        .ok_or_else(|| {
+            "RFDB_DERIVE_ENGINE: setRuleSource requires a storage_v2 GraphEngineV2 backend".to_string()
+        })?;
+
+    v2.set_rule_source(mode)
+        .map_err(|e| format!("derive engine set_rule_source error: {e}"))?;
+    Ok(v2.rule_source())
 }
 
 /// Parse a wire term into a datalog [`rfdb::datalog::Value`] — the READ direction of the
@@ -8491,6 +8647,264 @@ one(X, 1) :- node(X, "MODULE")."#;
                 "v1 path must accept explain, got {:?}",
                 other.err()
             ),
+        }
+
+        match prev {
+            Some(v) => std::env::set_var("RFDB_DERIVE_ENGINE", v),
+            None => std::env::remove_var("RFDB_DERIVE_ENGINE"),
+        }
+    }
+
+    // ========================================================================
+    // Projection T on the wire: `ReflectProgram` + `SetRuleSource`
+    // ========================================================================
+
+    /// One FUNCTION/CLASS graph on a real database, driven ONLY through `handle_request` —
+    /// the wire dispatch layer, which is what is new here (the engine methods were already
+    /// covered in `graph::engine_v2`).
+    fn rules_as_data_session(
+        manager: &DatabaseManager,
+    ) -> ClientSession {
+        let mut session = ClientSession::new(1);
+        handle_request(
+            manager,
+            &mut session,
+            Request::OpenDatabase { name: "default".to_string(), mode: "rw".to_string() },
+            &None,
+        );
+        let mk = |sid: &str, ty: &str| WireNode {
+            id: string_to_id(sid).to_string(),
+            node_type: Some(ty.to_string()),
+            name: Some(sid.to_string()),
+            file: Some(format!("{sid}.js")),
+            exported: false,
+            metadata: None,
+            semantic_id: Some(sid.to_string()),
+        };
+        handle_request(
+            manager,
+            &mut session,
+            Request::AddNodes {
+                nodes: vec![mk("f", "FUNCTION"), mk("g", "FUNCTION"), mk("C", "CLASS")],
+            },
+            &None,
+        );
+        // MVCC B2: a reader sees only PUBLISHED state.
+        handle_request(manager, &mut session, Request::Flush, &None);
+        session
+    }
+
+    /// Count the rows an `ExecuteDatalog` request returns, failing loudly on an error reply —
+    /// a store-mode miss answers EMPTY, so a silent `0` here would look exactly like a real
+    /// measurement.
+    fn wire_datalog_rows(
+        manager: &DatabaseManager,
+        session: &mut ClientSession,
+        source: &str,
+    ) -> usize {
+        match handle_request(
+            manager,
+            session,
+            Request::ExecuteDatalog { source: source.to_string(), explain: false },
+            &None,
+        ) {
+            Response::DatalogResults { results } => results.len(),
+            other => panic!("expected DatalogResults, got {other:?}"),
+        }
+    }
+
+    /// THE wire contract of Projection T, end to end through `handle_request`.
+    ///
+    /// The decisive shape is the same negative control the engine test
+    /// `when_text_and_store_disagree_the_answer_follows_the_store` uses, lifted onto the
+    /// PROTOCOL: the store gets ONE rule, the query then arrives carrying TWO. If the wire
+    /// door silently kept parsing the request text, the extra rule would fire and the count
+    /// would be 3 — so `2` is the store winning, not an empty or broken read.
+    ///
+    /// Also pins three things the wire layer owns and the engine methods do not:
+    /// * a reflected program is VISIBLE straight away — no `Flush` request is sent between
+    ///   reflecting and querying, so a caller cannot be handed an empty answer that is really
+    ///   an unpublished write;
+    /// * `SetRuleSource` replies with the mode read BACK off the engine;
+    /// * the switch is REVERSIBLE — `store → text` restores the text program in full (3),
+    ///   which is also the positive control proving the graph could always yield 3.
+    #[test]
+    fn wire_reflect_program_then_store_mode_answers_from_the_store() {
+        let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+        let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
+        std::env::set_var("RFDB_DERIVE_ENGINE", "on");
+
+        const IN_STORE: &str = r#"p(X) :- node(X, "FUNCTION")."#;
+        const IN_TEXT: &str = r#"p(X) :- node(X, "FUNCTION").
+p(X) :- node(X, "CLASS")."#;
+
+        let (_dir, manager) = setup_test_manager();
+        let mut session = rules_as_data_session(&manager);
+
+        // ── Reflect: the rules become facts, and the reply counts them. ──
+        let reflected = match handle_request(
+            &manager,
+            &mut session,
+            Request::ReflectProgram { source: IN_STORE.to_string() },
+            &None,
+        ) {
+            Response::Count { count } => count,
+            other => panic!("expected Count from reflectProgram, got {other:?}"),
+        };
+        assert!(reflected > 0, "reflecting one rule must write facts, got {reflected}");
+
+        // ── Switch: the reply is the mode read back off the engine. ──
+        match handle_request(
+            &manager,
+            &mut session,
+            Request::SetRuleSource { mode: rfdb::derive::RuleSource::Store },
+            &None,
+        ) {
+            Response::RuleSourceMode { rule_source } => {
+                assert_eq!(rule_source, rfdb::derive::RuleSource::Store)
+            }
+            other => panic!("expected RuleSourceMode, got {other:?}"),
+        }
+
+        // ── The negative control: the request carries TWO rules, the store holds ONE. ──
+        assert_eq!(
+            wire_datalog_rows(&manager, &mut session, IN_TEXT),
+            2,
+            "store mode must answer from the reflected rule (2 FUNCTIONs); the request text's \
+             second rule must not fire"
+        );
+
+        // ── Reversible, unlike the one-way ROFL marker — and the positive control. ──
+        match handle_request(
+            &manager,
+            &mut session,
+            Request::SetRuleSource { mode: rfdb::derive::RuleSource::Text },
+            &None,
+        ) {
+            Response::RuleSourceMode { rule_source } => {
+                assert_eq!(rule_source, rfdb::derive::RuleSource::Text)
+            }
+            other => panic!("expected RuleSourceMode, got {other:?}"),
+        }
+        assert_eq!(
+            wire_datalog_rows(&manager, &mut session, IN_TEXT),
+            3,
+            "back in text mode the SAME request text adds the CLASS — so the 2 above was the \
+             store winning, not a graph that could only ever yield 2"
+        );
+
+        match prev {
+            Some(v) => std::env::set_var("RFDB_DERIVE_ENGINE", v),
+            None => std::env::remove_var("RFDB_DERIVE_ENGINE"),
+        }
+    }
+
+    /// A program Projection T cannot carry whole must come back as a REFUSAL the client can
+    /// read, not as silence and not as a dropped connection.
+    ///
+    /// This is the failure mode the whole door exists to prevent: an annotated program that
+    /// never reached the store answers EMPTY to every later store-mode query, which is
+    /// indistinguishable from an honest zero. So the reply must (a) be an error rather than a
+    /// count, (b) carry the machine code in the `[E-...-NNN]` brackets the conformance client
+    /// parses (`rofl-conformance/src/rfdb-client.ts` ⟦extractECode⟧), and (c) leave the
+    /// session usable — the very next request is served normally.
+    #[test]
+    fn wire_reflect_program_refuses_an_annotated_program_as_a_coded_error() {
+        let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+        let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
+        std::env::set_var("RFDB_DERIVE_ENGINE", "on");
+
+        // A well-formed `@materialize` program — it PARSES (the bundled `depends.dl` opens
+        // with this exact annotation), so the refusal below is Projection T's own gate and
+        // not a syntax error dressed up as one.
+        const ANNOTATED: &str = r#"@materialize(edge_type="DEPENDS_ON")
+p(X, Y) :- edge(X, Y, "IMPORTS_FROM")."#;
+
+        let (_dir, manager) = setup_test_manager();
+        let mut session = rules_as_data_session(&manager);
+
+        let error = match handle_request(
+            &manager,
+            &mut session,
+            Request::ReflectProgram { source: ANNOTATED.to_string() },
+            &None,
+        ) {
+            Response::Error { error } => error,
+            other => panic!("an unreflectable program must be REFUSED, got {other:?}"),
+        };
+        assert!(
+            error.contains("[E-REFLECT-"),
+            "the refusal must carry the machine code in brackets for the client to parse: {error}"
+        );
+
+        // The session survives the refusal: the next request is served.
+        match handle_request(&manager, &mut session, Request::Ping, &None) {
+            Response::Pong { pong, .. } => assert!(pong),
+            other => panic!("the session must survive a refusal, got {other:?}"),
+        }
+
+        match prev {
+            Some(v) => std::env::set_var("RFDB_DERIVE_ENGINE", v),
+            None => std::env::remove_var("RFDB_DERIVE_ENGINE"),
+        }
+    }
+
+    /// Both Projection T doors are derive-engine paths, so both are kill-switch-gated (I5):
+    /// with `RFDB_DERIVE_ENGINE=off` they refuse EXPLICITLY instead of writing nothing and
+    /// reporting success. Advertised to the client as the `rulesAsData` Hello capability,
+    /// which appears by default and disappears under the same switch — so a client that needs
+    /// store-mode rules refuses UP FRONT rather than reading empty answers as zeros.
+    #[test]
+    fn hello_advertises_rules_as_data_and_the_doors_gate_off_together() {
+        let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+        let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
+        let (_dir, manager) = setup_test_manager();
+
+        let hello = |manager: &DatabaseManager| {
+            let mut session = ClientSession::new(1);
+            match handle_request(
+                manager,
+                &mut session,
+                Request::Hello { protocol_version: Some(3), client_id: None },
+                &None,
+            ) {
+                Response::HelloOk { features, .. } => features,
+                other => panic!("expected HelloOk, got {other:?}"),
+            }
+        };
+
+        std::env::remove_var("RFDB_DERIVE_ENGINE");
+        assert!(
+            hello(&manager).contains(&"rulesAsData".to_string()),
+            "default Hello must advertise rulesAsData (reflectProgram + setRuleSource are live)"
+        );
+
+        std::env::set_var("RFDB_DERIVE_ENGINE", "off");
+        assert!(
+            !hello(&manager).contains(&"rulesAsData".to_string()),
+            "the off-switch must withdraw the capability, matching the doors' own refusal"
+        );
+
+        // …and the doors themselves refuse under that same switch, coded, having written
+        // nothing.
+        let mut session = ClientSession::new(2);
+        handle_request(
+            &manager,
+            &mut session,
+            Request::OpenDatabase { name: "default".to_string(), mode: "rw".to_string() },
+            &None,
+        );
+        for (what, request) in [
+            ("reflectProgram", Request::ReflectProgram { source: "p(X) :- node(X, \"FUNCTION\").".to_string() }),
+            ("setRuleSource", Request::SetRuleSource { mode: rfdb::derive::RuleSource::Store }),
+        ] {
+            match handle_request(&manager, &mut session, request, &None) {
+                Response::Error { error } => assert!(
+                    error.contains("derive-engine-only"),
+                    "{what} must refuse explicitly with the switch off: {error}"
+                ),
+                other => panic!("{what} must be refused with the switch off, got {other:?}"),
+            }
         }
 
         match prev {
