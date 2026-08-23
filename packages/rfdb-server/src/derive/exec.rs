@@ -1151,9 +1151,12 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
 
     /// Whether some clause of `key`'s predicate derives exactly `key` from the CURRENT
     /// `relations` (`Total`) and base (`view`) — a head-bound body-satisfiability probe. The
-    /// head variables are pinned to `key` (via [`head_bound_row`]); the body legs then read
-    /// `Total`/base with those bindings fixed, so a single surviving row means `key` has a
-    /// supporting derivation right now. The bounded primitive the DRed re-derive checks each
+    /// head variables are pinned to `key` (via [`head_bound_row`]) EXCEPT the ones the plan's
+    /// negations quantify existentially, which stay free so a negated leg keeps asking the
+    /// existence question the evaluation asked; the replay narrows back to `key` after every
+    /// leg ([`row_agrees_with_head_key`]) and accepts only a row that grounds the head to
+    /// `key` ([`row_grounds_head_key`]). A single accepted row means `key` has a supporting
+    /// derivation right now. The bounded primitive the DRed re-derive checks each
     /// over-deleted candidate with — `O(|candidates|)` probes, not a full re-evaluation.
     fn clause_derives_head(
         &self,
@@ -1163,7 +1166,9 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         key: &[Value],
     ) -> ExecResult<bool> {
         for clause in clauses.iter().filter(|c| c.head_pred == pred) {
-            let Some(init) = head_bound_row(clause.rule.head(), key) else {
+            self.refuse_unsafe_clause(clause)?;
+            let head = clause.rule.head();
+            let Some(init) = head_bound_row(head, key, &clause.existential) else {
                 continue;
             };
             let mut rows = vec![init];
@@ -1173,8 +1178,9 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                 }
                 // Every leg reads Total/base (no Δ): we are asking "is it derivable NOW".
                 rows = self.apply_leg(leg, rows, relations, false)?;
+                rows.retain(|row| row_agrees_with_head_key(head, key, row));
             }
-            if !rows.is_empty() {
+            if rows.iter().any(|row| row_grounds_head_key(head, key, row)) {
                 return Ok(true);
             }
         }
@@ -1246,7 +1252,9 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         key: &[Value],
     ) -> ExecResult<Option<DerivationWitness>> {
         for clause in clauses.iter().filter(|c| c.head_pred == pred) {
-            let Some(init) = head_bound_row(clause.rule.head(), key) else {
+            self.refuse_unsafe_clause(clause)?;
+            let head = clause.rule.head();
+            let Some(init) = head_bound_row(head, key, &clause.existential) else {
                 continue;
             };
             let mut rows = vec![init];
@@ -1255,10 +1263,11 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                     break;
                 }
                 rows = self.apply_leg(leg, rows, relations, false)?;
+                rows.retain(|row| row_agrees_with_head_key(head, key, row));
             }
-            // The first surviving row is one witnessing assignment; read each positive body
-            // literal's now-ground tuple back out of it.
-            if let Some(row) = rows.into_iter().next() {
+            // The first row that grounds the head to `key` is one witnessing assignment; read
+            // each positive body literal's now-ground tuple back out of it.
+            if let Some(row) = rows.into_iter().find(|row| row_grounds_head_key(head, key, row)) {
                 let mut body = Vec::new();
                 for lit in clause.rule.body() {
                     if lit.is_positive() {
@@ -1280,9 +1289,13 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
     /// why-NOT: explain why `pred(key)` is NOT derived by finding, for the rule that comes
     /// CLOSEST to firing, the first body premise that no binding satisfies (the unbound
     /// premise). Replays each clause for `pred` with the head bound to `key` exactly like
-    /// [`Self::witness_fact`], but instead of requiring a surviving row it watches for the leg
-    /// at which the partial bindings drop to empty — that leg is the gap. Returns `None` if the
-    /// fact IS in fact derivable by some clause (no gap), or if no clause's head shape matches.
+    /// [`Self::witness_fact`] — the same seed, the same existential variables left free, the
+    /// same per-leg narrowing back to `key` — but instead of requiring a surviving row it
+    /// watches for the leg at which the partial bindings drop to empty; that leg is the gap.
+    /// A negated leg that empties the rows is a gap whose blocker is a fact that is PRESENT
+    /// (`failing_is_negative`), and an existential negation is exactly that case: it holds of
+    /// something, so no row of this rule survives. Returns `None` if the fact IS in fact
+    /// derivable by some clause (no gap), or if no clause's head shape matches.
     pub(crate) fn witness_gap(
         &self,
         clauses: &[Clause<'_>],
@@ -1292,14 +1305,20 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
     ) -> ExecResult<Option<GapWitness>> {
         let mut best: Option<GapWitness> = None;
         for clause in clauses.iter().filter(|c| c.head_pred == pred) {
-            let Some(init) = head_bound_row(clause.rule.head(), key) else {
+            self.refuse_unsafe_clause(clause)?;
+            let head = clause.rule.head();
+            let Some(init) = head_bound_row(head, key, &clause.existential) else {
                 continue;
             };
             let mut rows = vec![init];
             let mut satisfied: Vec<(String, Box<[Value]>)> = Vec::new();
             let mut gapped = false;
             for leg in &clause.plan.legs {
-                let next = self.apply_leg(leg, rows, relations, false)?;
+                // `take` leaves `rows` empty on the gap path (which breaks out) and hands it
+                // straight back on the pass path, so the surviving rows are still readable
+                // after the loop for the final head-grounding check.
+                let mut next = self.apply_leg(leg, std::mem::take(&mut rows), relations, false)?;
+                next.retain(|row| row_agrees_with_head_key(head, key, row));
                 if next.is_empty() {
                     // This premise has no satisfying binding given the prefix — the gap.
                     let cand = GapWitness {
@@ -1324,7 +1343,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                 }
                 rows = next;
             }
-            if !gapped {
+            if !gapped && rows.iter().any(|row| row_grounds_head_key(head, key, row)) {
                 // Some clause derives the fact → it is NOT a gap.
                 return Ok(None);
             }
@@ -1577,12 +1596,37 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                     head_pred: plan.head.clone(),
                     plan,
                     rule,
-                    // Diagnosed once here, raised in `eval_clause` before any leg runs.
+                    // Diagnosed once here, raised by `refuse_unsafe_clause` before any leg runs.
                     unsafe_head: head_safety_diagnosis(plan, rule),
+                    // Read off the PLAN (execution order), so a replay of these legs asks the
+                    // same question the evaluation of these legs asked.
+                    existential: crate::derive::plan::plan_existential_vars(plan),
                 });
             }
         }
         out
+    }
+
+    /// Rule safety (I5): an unbindable head term REFUSES with `E-EXEC-004`, it does not
+    /// answer. Diagnosed from the program text when the clause was collected, so the refusal
+    /// is data-independent.
+    ///
+    /// One body, three callers: [`Self::eval_clause`] (where it fires ahead of BOTH the
+    /// empty-leg short-circuit and the per-row projection — otherwise an unsafe rule over an
+    /// empty body would return the very empty relation this code exists to stop being
+    /// ambiguous) and the head-bound replays [`Self::witness_fact`] / [`Self::witness_gap`] /
+    /// [`Self::clause_derives_head`], whose answers would otherwise rest on a head the rule
+    /// cannot ground. Sharing one body is what keeps the evaluation and the explanation from
+    /// drifting into disagreeing about the same clause.
+    fn refuse_unsafe_clause(&self, clause: &Clause<'_>) -> ExecResult<()> {
+        match &clause.unsafe_head {
+            Some(detail) => Err(ExecError {
+                code: ExecCode::UnsafeHead,
+                stratum: self.cur_stratum.get(),
+                detail: detail.clone(),
+            }),
+            None => Ok(()),
+        }
     }
 
     /// Evaluate one clause, optionally restricting the recursive leg at `delta_leg` to read
@@ -1599,18 +1643,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         delta_leg: Option<usize>,
     ) -> ExecResult<Vec<Box<[Value]>>> {
         // ── Rule safety (I5): an unbindable head term refuses, it does not answer ──
-        //
-        // Diagnosed from the program text when the clause was collected, so the refusal is
-        // data-independent and fires ahead of BOTH the empty-leg short-circuit below and the
-        // per-row projection at the end — otherwise an unsafe rule over an empty body would
-        // return the very empty relation this code exists to stop being ambiguous.
-        if let Some(detail) = &clause.unsafe_head {
-            return Err(ExecError {
-                code: ExecCode::UnsafeHead,
-                stratum: self.cur_stratum.get(),
-                detail: detail.clone(),
-            });
-        }
+        self.refuse_unsafe_clause(clause)?;
 
         // ── Empty-positive-derived-leg short-circuit (W9-iter2) ──
         //
@@ -3485,8 +3518,14 @@ struct Clause<'r> {
     rule: &'r Rule,
     /// The rule-safety diagnosis, computed once when the clause is collected: `None` when
     /// every head term is bindable, otherwise the one-line detail of the `E-EXEC-004`
-    /// refusal that [`Executor::eval_clause`] raises before running a single leg.
+    /// refusal that [`Executor::refuse_unsafe_clause`] raises before running a single leg.
     unsafe_head: Option<String>,
+    /// The variables this plan's negations quantify EXISTENTIALLY
+    /// ([`crate::derive::plan::plan_existential_vars`]), computed once here because the
+    /// head-bound replays run per queried tuple and must not recompute it per probe. A
+    /// replay leaves these unbound so a negated leg keeps asking the existence question the
+    /// evaluation asked. Empty for every bundled rule.
+    existential: HashSet<String>,
 }
 
 impl<'r> Clause<'r> {
@@ -3898,16 +3937,35 @@ fn head_safety_diagnosis(plan: &RulePlan, rule: &Rule) -> Option<String> {
 }
 
 /// Build the initial binding row that pins a clause's HEAD to a specific ground tuple — the
-/// seed for a head-bound body-satisfiability probe (DRed re-derive). Each head variable binds
-/// the tuple's value at its position; a head constant must already agree (else `None`, the
-/// tuple is not an instance of this head). A head wildcard binds nothing.
-fn head_bound_row(head: &Atom, key: &[Value]) -> Option<BindRow> {
+/// seed for a head-bound body-satisfiability probe (DRed re-derive, `why()`, `why-not()`).
+/// Each head variable binds the tuple's value at its position; a head constant must already
+/// agree (else `None`, the tuple is not an instance of this head). A head wildcard binds
+/// nothing.
+///
+/// # What is deliberately NOT pinned
+///
+/// `keep_free` holds the variables the plan's negations quantify EXISTENTIALLY
+/// ([`crate::derive::plan::plan_existential_vars`]). Those are left unbound even when the
+/// head carries them, because pinning one changes the QUESTION a negated leg asks: with `Y`
+/// free, `\+ p(Y)` asks "does `p` hold of anything"; with `Y` pinned from the key it asks
+/// "does `p` hold of this `Y`" — the row-wise anti-join, which is what the evaluation
+/// deliberately does NOT do when the negation is written before the premise that binds `Y`.
+/// Pinning it made the replay answer a question the evaluator never asked, so `why()`
+/// witnessed facts that were never derived and `why-not()` reported "no gap" for them.
+///
+/// Leaving them free means the replay can end on a row that satisfies the body but grounds
+/// the head to a DIFFERENT tuple, so every caller narrows back to `key` with
+/// [`row_agrees_with_head_key`] as the legs run, and confirms the final grounding with
+/// [`project_head`]. For a rule with no existential negation `keep_free` is empty and this
+/// is byte-for-byte the previous seed.
+fn head_bound_row(head: &Atom, key: &[Value], keep_free: &HashSet<String>) -> Option<BindRow> {
     if head.args().len() != key.len() {
         return None;
     }
     let mut row = BindRow::new();
     for (t, val) in head.args().iter().zip(key.iter()) {
         match t {
+            Term::Var(v) if keep_free.contains(v.as_str()) => {}
             Term::Var(v) => match row.get(v) {
                 Some(existing) if existing != val => return None,
                 Some(_) => {}
@@ -3930,6 +3988,52 @@ fn head_bound_row(head: &Atom, key: &[Value]) -> Option<BindRow> {
         }
     }
     Some(row)
+}
+
+/// Whether a partial replay row is still compatible with the head tuple `key`: every head
+/// position the row can already read must equal the key's value there.
+///
+/// This is the narrowing that replaces the pinning [`head_bound_row`] no longer does for an
+/// existential variable. Applying it AFTER a leg is sound at any point — each leg decides
+/// row by row, so dropping whole rows can never change the verdict for the rows that
+/// survive — whereas pinning BEFORE the negated leg is exactly what was unsound. A head
+/// variable the row has not bound yet is not constrained here; the final grounding check
+/// ([`project_head`]) is what refuses a row that never binds it.
+fn row_agrees_with_head_key(head: &Atom, key: &[Value], row: &BindRow) -> bool {
+    if head.args().len() != key.len() {
+        return false;
+    }
+    for (t, val) in head.args().iter().zip(key.iter()) {
+        match t {
+            Term::Var(v) => {
+                if let Some(existing) = row.get(v.as_str()) {
+                    if existing != val {
+                        return false;
+                    }
+                }
+            }
+            Term::Const(s) => {
+                if &Value::from_term_const(s) != val {
+                    return false;
+                }
+            }
+            Term::Lit(v) => {
+                if v != val {
+                    return false;
+                }
+            }
+            Term::Wildcard => {}
+        }
+    }
+    true
+}
+
+/// Whether a completed replay row grounds the head to exactly `key` — the final acceptance
+/// test of a head-bound replay. A row that leaves a head variable unbound grounds nothing
+/// and is refused (that is the unsafe-head case, which [`Executor::refuse_unsafe_clause`]
+/// has already rejected at the replay entry).
+fn row_grounds_head_key(head: &Atom, key: &[Value], row: &BindRow) -> bool {
+    matches!(project_head(head, row), Ok(tuple) if &tuple[..] == key)
 }
 
 /// Unify a positive derived-predicate atom against one stored fact tuple, given a partial
@@ -4626,6 +4730,170 @@ mod tests {
             ]),
             "written last, Y is bound by j and the negation is a per-row anti-join"
         );
+    }
+
+    /// R17 follow-up — THE three-way agreement gate. When a negation carries an
+    /// existential variable, the evaluation, `why()` and `why-not()` must tell ONE story
+    /// about the same fact on the same snapshot: the evaluator derives nothing, `why`
+    /// has no witness to show, and `why-not` names the negation as the blocker.
+    ///
+    /// The three disagreed before this gate existed, because the head-bound replay pinned
+    /// `Y` from the queried key — turning the existential question "does `p` hold of
+    /// ANYTHING" into the row-wise question "does `p` hold of `m`" — so `why` invented a
+    /// witness for a fact the evaluator never derived and `why-not` answered "no gap".
+    ///
+    /// `after` — the same literals with the negation written last, where `Y` is bound
+    /// before the negation and nothing is existential — is the control: it derives, `why`
+    /// witnesses it, and `why-not` reports no gap.
+    #[test]
+    fn why_and_why_not_agree_with_the_evaluation_under_an_existential_negation() {
+        use crate::derive::exec::{explain_fact, explain_gap};
+        let v = FixtureStorageView::new(1);
+        let src = r#"
+            i("a").
+            p("zz").
+            j("a", "m"). j("a", "n").
+            before(X, Y) :- i(X), \+ p(Y), j(X, Y).
+            after(X, Y) :- i(X), j(X, Y), \+ p(Y).
+        "#;
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let plans = plan_program(&rules, &strat, &Stats::default()).expect("plan");
+        let exec = Executor::<BoolTag>::with_limits(&v, EvalLimits::none(), DEFAULT_ITERATION_CAP);
+        let eval = exec.evaluate(&plans, &rules, &strat).expect("evaluate");
+
+        let key = [Value::Str("a".to_string()), Value::Str("m".to_string())];
+
+        // 1. The evaluator: `before` derives nothing (`p` is nonempty, `Y` is free there).
+        assert_eq!(
+            eval.facts("before").len(),
+            0,
+            "the existential negation blocks every row of `before`"
+        );
+        // 2. why(): no witness for a fact that was never derived.
+        let witness = explain_fact::<BoolTag>(
+            &v, &plans, &rules, &strat, "before", &key, EvalLimits::none(),
+        )
+        .expect("explain_fact ran");
+        assert!(
+            witness.is_none(),
+            "why() must not witness before(a,m): the evaluator derived 0 rows, got {witness:?}"
+        );
+        // 3. why-not(): the gap is the negated `p` — a fact whose PRESENCE blocks.
+        let gap = explain_gap::<BoolTag>(
+            &v, &plans, &rules, &strat, "before", &key, EvalLimits::none(),
+        )
+        .expect("explain_gap ran")
+        .expect("before(a,m) is NOT derivable → why-not must report a gap");
+        assert_eq!(gap.failing_predicate, "p", "the blocker is the negated `p`");
+        assert!(
+            gap.failing_is_negative,
+            "the gap closes by REMOVING a `p` fact, not by adding one"
+        );
+
+        // ── Control: the same body with the negation written last ──
+        let after_key = [Value::Str("a".to_string()), Value::Str("m".to_string())];
+        assert_eq!(eval.facts("after").len(), 2, "`after` derives both rows");
+        let after_witness = explain_fact::<BoolTag>(
+            &v, &plans, &rules, &strat, "after", &after_key, EvalLimits::none(),
+        )
+        .expect("explain_fact ran")
+        .expect("after(a,m) IS derivable → a witness");
+        let preds: Vec<&str> = after_witness.body.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(preds, vec!["i", "j"], "the witness body is the two positive premises");
+        let after_gap = explain_gap::<BoolTag>(
+            &v, &plans, &rules, &strat, "after", &after_key, EvalLimits::none(),
+        )
+        .expect("explain_gap ran");
+        assert!(after_gap.is_none(), "after(a,m) is derivable → no gap, got {after_gap:?}");
+    }
+
+    /// The hazard the previous gate's fix introduces, gated. Leaving an existential head
+    /// variable UNPINNED means a later premise can bind it to some OTHER value, so the
+    /// replay can end on a row that satisfies the whole body while grounding the head to a
+    /// DIFFERENT tuple than the one asked about. If that row were accepted, `why()` would
+    /// hand back a witness for `h(a,m)` whose body facts are really the derivation of
+    /// `h(a,n)` — the same class of lie, one step further along.
+    ///
+    /// Here `q` is EMPTY, so the existential negation passes and `r` binds `Y`; `r` holds
+    /// only `(a,n)`. `h(a,n)` is derived and must be witnessed; `h(a,m)` is not derived, so
+    /// `why()` must show nothing and `why-not()` must name `r` — the MISSING positive
+    /// premise, the one sim() would add — rather than the negation that did pass.
+    #[test]
+    fn a_freed_existential_head_var_must_not_witness_a_different_tuple() {
+        use crate::derive::exec::{explain_fact, explain_gap};
+        let v = FixtureStorageView::new(1);
+        let src = r#"
+            i("a").
+            r("a", "n").
+            h(X, Y) :- i(X), \+ q(Y), r(X, Y).
+        "#;
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let plans = plan_program(&rules, &strat, &Stats::default()).expect("plan");
+        let exec = Executor::<BoolTag>::with_limits(&v, EvalLimits::none(), DEFAULT_ITERATION_CAP);
+        let eval = exec.evaluate(&plans, &rules, &strat).expect("evaluate");
+
+        let derived: std::collections::BTreeSet<(String, String)> = eval
+            .facts("h")
+            .into_iter()
+            .map(|row| (row[0].as_str(), row[1].as_str()))
+            .collect();
+        assert_eq!(
+            derived,
+            std::collections::BTreeSet::from([("a".to_string(), "n".to_string())]),
+            "`q` is empty so the existential negation passes; `r` supplies the only row"
+        );
+
+        let absent = [Value::Str("a".to_string()), Value::Str("m".to_string())];
+        let present = [Value::Str("a".to_string()), Value::Str("n".to_string())];
+
+        // The derived tuple: a witness, and no gap.
+        let w = explain_fact::<BoolTag>(
+            &v, &plans, &rules, &strat, "h", &present, EvalLimits::none(),
+        )
+        .expect("explain_fact ran")
+        .expect("h(a,n) IS derived → a witness");
+        let body: Vec<(String, Vec<String>)> = w
+            .body
+            .iter()
+            .map(|(p, t)| (p.clone(), t.iter().map(|v| v.as_str()).collect()))
+            .collect();
+        assert_eq!(
+            body,
+            vec![
+                ("i".to_string(), vec!["a".to_string()]),
+                ("r".to_string(), vec!["a".to_string(), "n".to_string()]),
+            ],
+            "the witness body is the derivation of h(a,n) itself"
+        );
+        assert!(
+            explain_gap::<BoolTag>(&v, &plans, &rules, &strat, "h", &present, EvalLimits::none())
+                .expect("explain_gap ran")
+                .is_none(),
+            "h(a,n) is derived → no gap"
+        );
+
+        // The tuple that is NOT derived: no witness borrowed from its neighbour, and the
+        // gap is the missing `r` fact.
+        let stolen = explain_fact::<BoolTag>(
+            &v, &plans, &rules, &strat, "h", &absent, EvalLimits::none(),
+        )
+        .expect("explain_fact ran");
+        assert!(
+            stolen.is_none(),
+            "h(a,m) is not derived — the row that satisfies the body grounds h(a,n), \
+             not h(a,m); got {stolen:?}"
+        );
+        let gap = explain_gap::<BoolTag>(
+            &v, &plans, &rules, &strat, "h", &absent, EvalLimits::none(),
+        )
+        .expect("explain_gap ran")
+        .expect("h(a,m) is NOT derivable → a gap");
+        assert_eq!(gap.failing_predicate, "r", "the gap is the missing `r(a,m)` premise");
+        assert!(!gap.failing_is_negative, "it closes by ADDING r(a,m), not by removing anything");
     }
 
     // ── W8 Part 1: external cancellation (`EvalLimits::cancelled`) ──

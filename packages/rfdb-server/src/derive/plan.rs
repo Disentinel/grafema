@@ -745,6 +745,27 @@ fn existential_vars(body: &[Literal]) -> Vec<HashSet<String>> {
     out
 }
 
+/// Every variable this PLAN's negations quantify existentially, as one flat set.
+///
+/// [`existential_vars`] answers that question about the WRITTEN body; this answers it about
+/// the body in EXECUTION order — the legs the executor actually runs. The two agree (a
+/// negation carrying an existential variable is pinned at its written position and the gaps
+/// around it only reorder premises that bind nothing under it), but reading the answer off
+/// the PLAN means a replay of the plan asks the same question the evaluation asked by
+/// construction, rather than by an argument about ordering.
+///
+/// The consumer is the executor's head-bound replay (`why()`, `why-not()`, the DRed
+/// re-derive probe). Those replays seed the body with the head pinned to a queried tuple,
+/// and they must NOT pin these variables: `\+ p(Y)` with `Y` free asks "does `p` hold of
+/// ANYTHING", and binding `Y` from the head silently turns it into "does `p` hold of THIS
+/// `Y`" — a different question, with a different answer. For every bundled rule pack the
+/// set is empty (no bundled negation carries an existential variable), so nothing changes
+/// there.
+pub fn plan_existential_vars(plan: &RulePlan) -> HashSet<String> {
+    let body: Vec<Literal> = plan.legs.iter().map(|leg| leg.literal.clone()).collect();
+    existential_vars(&body).into_iter().flatten().collect()
+}
+
 /// Order body literals bound-first (ported from the query engine's `reorder_literals`) and break ties by a
 /// cardinality-aware estimate. At each step the candidates are the literals whose binding
 /// requirements are already satisfied (bound-first feasibility gates candidacy); among them
