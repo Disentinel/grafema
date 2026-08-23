@@ -13,6 +13,7 @@
 //! results; the caller updates the manifest.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufWriter, Cursor};
@@ -27,6 +28,46 @@ use crate::storage_v2::types::{DerivedFields, EdgeRecordV2, NodeRecordV2, Segmen
 use crate::storage_v2::write_buffer::WriteBuffer;
 use crate::storage_v2::writer::{EdgeSegmentWriter, NodeSegmentWriter};
 use serde::Serialize;
+
+// ── Exact-count scan cost meter ──────────────────────────────────────
+
+/// Process-wide counter of EXACT live-count full scans, i.e. calls to
+/// [`Shard::node_count`] / [`Shard::edge_count`].
+///
+/// Each such call walks every live record of the shard and builds a dedup
+/// `HashSet` over it — O(live records). That is a fair price for an on-demand
+/// stats answer, and a defect on the per-commit write path: one scan per commit
+/// makes a bulk load cost O(commits x database size), i.e. quadratic in the
+/// amount loaded. Counting the scans makes that cost observable, so the write
+/// path can be guarded mechanically instead of by wall-clock feel — see
+/// `packages/rfdb-server/tests/c3_hot_path_no_full_scan.rs`.
+static EXACT_LIVE_COUNT_SCANS: AtomicU64 = AtomicU64::new(0);
+
+/// Number of exact live-count full scans performed by this process so far.
+///
+/// Monotonic; read it before and after a workload and take the difference. The
+/// write path (`commit_batch`, including its auto-compaction trigger) must leave
+/// this difference at zero.
+pub fn exact_live_count_scans() -> u64 {
+    EXACT_LIVE_COUNT_SCANS.load(AtomicOrdering::Relaxed)
+}
+
+// ── Shard L0 segment counts ──────────────────────────────────────────
+
+/// Live L0 segment counts of one shard — the CHEAP subset of
+/// [`ShardDiagnostics`].
+///
+/// Every field here is a `Vec::len()` read, so building this for the whole
+/// database is O(shards) and touches no record. This is what the compaction
+/// trigger on the write path needs; the full diagnostics snapshot additionally
+/// computes exact live node/edge counts, which is O(database size).
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShardL0Counts {
+    pub shard_id: u16,
+    pub l0_node_segment_count: usize,
+    pub l0_edge_segment_count: usize,
+}
 
 // ── Shard Diagnostics ────────────────────────────────────────────────
 
@@ -2271,6 +2312,7 @@ impl Shard {
     /// segment model — the same cost as `count_by_type`, which is the
     /// authoritative count path.
     pub fn node_count(&self) -> usize {
+        EXACT_LIVE_COUNT_SCANS.fetch_add(1, AtomicOrdering::Relaxed);
         let mut seen_ids: HashSet<u128> = HashSet::new();
         let mut count = 0usize;
 
@@ -2322,6 +2364,7 @@ impl Shard {
     /// Counts each `(src, dst, edge_type)` key exactly once and excludes
     /// tombstoned keys — same liveness semantics as `get_all_edges`.
     pub fn edge_count(&self) -> usize {
+        EXACT_LIVE_COUNT_SCANS.fetch_add(1, AtomicOrdering::Relaxed);
         let mut seen_keys: HashSet<(u128, u128, Arc<str>)> = HashSet::new();
         let mut count = 0usize;
 
@@ -2387,7 +2430,24 @@ impl Shard {
         (self.write_buffer.node_count(), self.write_buffer.edge_count())
     }
 
+    /// Live L0 segment counts of this shard — constant time.
+    ///
+    /// Two `Vec::len()` reads. Callers that only steer compaction want this and
+    /// not [`Shard::diagnostics`], which also computes exact live node/edge
+    /// counts by scanning every record.
+    pub fn l0_counts(&self, shard_id: u16) -> ShardL0Counts {
+        ShardL0Counts {
+            shard_id,
+            l0_node_segment_count: self.l0_node_segment_count(),
+            l0_edge_segment_count: self.l0_edge_segment_count(),
+        }
+    }
+
     /// Collect full diagnostic snapshot of this shard's lifecycle state.
+    ///
+    /// Cost: O(live records) — `node_count()`/`edge_count()` scan and dedup
+    /// everything. Fine on demand (the GetStats wire command), never on the
+    /// per-commit write path; that path uses [`Shard::l0_counts`].
     pub fn diagnostics(&self, shard_id: u16) -> ShardDiagnostics {
         let (wb_nodes, wb_edges) = self.write_buffer_size();
 

@@ -38,7 +38,7 @@ use crate::storage_v2::index::token::{TokenIndex, TokenMatch, tokenize_name};
 use crate::storage_v2::manifest::{ManifestEdit, ManifestStore, SegmentDescriptor};
 use crate::storage_v2::read_snapshot::{ReadSnapshot, SegmentCache};
 use crate::storage_v2::segment::{self, EdgeSegmentV2, NodeSegmentV2};
-use crate::storage_v2::shard::{Shard, ShardDiagnostics, TombstoneSet};
+use crate::storage_v2::shard::{Shard, ShardDiagnostics, ShardL0Counts, TombstoneSet};
 use crate::storage_v2::shard_planner::ShardPlanner;
 use crate::storage_v2::types::{CommitDelta, DerivedFields, EdgeRecordV2, NodeRecordV2, SegmentType, extract_file_context};
 
@@ -4406,8 +4406,25 @@ impl MultiShardStore {
         })
     }
 
+    /// Per-shard live L0 segment counts — constant time per shard.
+    ///
+    /// The cheap subset of `shard_diagnostics()`, for callers that only need to
+    /// steer compaction. `shard_diagnostics()` additionally computes exact live
+    /// node and edge counts, which scans every record in the database; doing
+    /// that once per commit makes a bulk load quadratic in the amount loaded.
+    pub fn shard_l0_segment_counts(&self) -> Vec<ShardL0Counts> {
+        self.shards
+            .iter()
+            .enumerate()
+            .map(|(i, shard)| shard.l0_counts(i as u16))
+            .collect()
+    }
+
     /// Per-shard statistics for monitoring.
     /// Per-shard diagnostics for lifecycle visibility.
+    ///
+    /// Cost: O(database size) — see `Shard::diagnostics`. On-demand paths only,
+    /// never per commit.
     pub fn shard_diagnostics(&self) -> Vec<ShardDiagnostics> {
         self.shards
             .iter()

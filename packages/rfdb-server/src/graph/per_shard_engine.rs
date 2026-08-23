@@ -46,7 +46,7 @@ use std::path::Path;
 
 use crate::error::Result;
 use crate::storage::{AttrQuery, EdgeRecord, FieldDecl, NodeRecord};
-use crate::storage_v2::ShardDiagnostics;
+use crate::storage_v2::{ShardDiagnostics, ShardL0Counts};
 use super::{GraphEngineV2, GraphStore};
 
 /// RFD-71 Stage 1 engine: delegates to an inner [`GraphEngineV2`] behind
@@ -220,6 +220,10 @@ impl GraphStore for PerShardEngine {
 
     fn shard_diagnostics(&self) -> Vec<ShardDiagnostics> {
         self.inner.shard_diagnostics()
+    }
+
+    fn shard_l0_segment_counts(&self) -> Vec<ShardL0Counts> {
+        self.inner.shard_l0_segment_counts()
     }
 
     fn disk_size_bytes(&self) -> u64 {

@@ -9,7 +9,7 @@ pub use id_gen::{compute_node_id, string_id_to_u128};
 
 use std::any::Any;
 use crate::storage::{NodeRecord, EdgeRecord, AttrQuery, FieldDecl};
-use crate::storage_v2::ShardDiagnostics;
+use crate::storage_v2::{ShardDiagnostics, ShardL0Counts};
 use crate::error::Result;
 
 /// Основной trait для graph storage
@@ -152,7 +152,15 @@ pub trait GraphStore: Send + Sync {
 
     /// Per-shard lifecycle diagnostics (compaction state, indexes, tombstones).
     /// Default returns empty vec for engines that don't support sharding.
+    ///
+    /// Cost: O(database size) — it computes exact live node/edge counts. Use it
+    /// on demand, never once per commit; `shard_l0_segment_counts()` is the
+    /// constant-time answer when only L0 segment counts are needed.
     fn shard_diagnostics(&self) -> Vec<ShardDiagnostics> { vec![] }
+
+    /// Per-shard live L0 segment counts — constant time per shard.
+    /// Default returns empty vec for engines that don't support sharding.
+    fn shard_l0_segment_counts(&self) -> Vec<ShardL0Counts> { vec![] }
 
     /// Total size of the database on disk in bytes.
     /// Returns 0 for ephemeral databases.

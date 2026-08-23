@@ -2388,6 +2388,10 @@ impl GraphStore for GraphEngineV2 {
         self.store.shard_diagnostics()
     }
 
+    fn shard_l0_segment_counts(&self) -> Vec<crate::storage_v2::ShardL0Counts> {
+        self.store.shard_l0_segment_counts()
+    }
+
     fn disk_size_bytes(&self) -> u64 {
         match &self.path {
             Some(p) => dir_size_bytes(p),
@@ -2446,11 +2450,18 @@ impl GraphEngineV2 {
         }
         // Live L0 segment count per shard, from the published version mirrored in
         // shard state. Trigger when ANY shard crosses the threshold.
+        //
+        // This runs on EVERY commit, so it must be constant time. It reads the
+        // cheap counts (two `Vec::len()` per shard) and NOT the full diagnostics
+        // snapshot: the latter also computes exact live node/edge counts, which
+        // scans and dedups every record in the database, turning a serial bulk
+        // load into O(commits x database size). Guarded by
+        // `tests/c3_hot_path_no_full_scan.rs`.
         let max_l0 = self
             .store
-            .shard_diagnostics()
+            .shard_l0_segment_counts()
             .iter()
-            .map(|d| d.l0_node_segment_count.max(d.l0_edge_segment_count))
+            .map(|c| c.l0_node_segment_count.max(c.l0_edge_segment_count))
             .max()
             .unwrap_or(0);
         if max_l0 < self.auto_compact_threshold {

@@ -102,12 +102,17 @@ fn make_batch(file: &str, n: usize) -> (Vec<NodeRecordV2>, Vec<EdgeRecordV2>) {
     (nodes, edges)
 }
 
-/// Sum of live L0 segments across all shards (node + edge), from diagnostics.
+/// Sum of live L0 segments across all shards (node + edge).
+///
+/// Reads the CHEAP per-shard counts (two `Vec::len()` per shard), not the full
+/// diagnostics snapshot: the latter also computes exact live node/edge counts by
+/// scanning every record, and this helper is called once per commit, so it would
+/// add a second O(database size) pass per commit to the measurement itself.
 fn live_l0_total(engine: &GraphEngineV2) -> usize {
     engine
-        .shard_diagnostics()
+        .shard_l0_segment_counts()
         .iter()
-        .map(|d| d.l0_node_segment_count + d.l0_edge_segment_count)
+        .map(|c| c.l0_node_segment_count + c.l0_edge_segment_count)
         .sum()
 }
 
