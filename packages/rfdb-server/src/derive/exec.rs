@@ -1866,66 +1866,108 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         let mut out: Vec<BindRow> = Vec::new();
 
         if negated {
-            // Anti-join: every VARIABLE arg is bound (planner ordered bound-first).
+            // ── Anti-join over a literal that may quantify EXISTENTIALLY ──────────────
             //
-            // A WILDCARD position is EXISTENTIAL: `\+ p(X, _)` drops a row iff ANY
-            // fact matches on the non-wildcard columns, whatever the wildcard column
-            // holds. `bind_atom_args` returns `None` on a wildcard, and reading that
-            // `None` as "no match ⇒ row survives" made the whole negation silently
-            // vacuous (ROFL conformance F1, live-probed: `q0(X) :- p0(X), \+ p2(X, _).`
-            // returned every p0). Project both the fact keys and the per-row probe key
-            // onto the NON-wildcard positions instead; the wildcard-free case keeps the
-            // exact full-key set below (borrowed keys, no clones).
+            // Each column of a negated literal constrains the match in exactly one way,
+            // and the classification is a property of the LITERAL, not of the row:
+            //
+            //   • a constant / typed literal fixes the column outright;
+            //   • a variable the row BINDS fixes the column to the row's value;
+            //   • a variable the row does NOT bind is EXISTENTIAL — on its own it
+            //     constrains nothing, but every column carrying THE SAME variable must
+            //     agree: `\+ p(R, R)` asks about reflexive facts only. Reading it as
+            //     `\+ p(_, _)` answers a different question, and the difference is
+            //     measured on the reference engine — over `p(x,y)` alone `not p(R,R)`
+            //     holds and `not p(_,_)` does not;
+            //   • a wildcard constrains nothing and agrees with nothing.
+            //
+            // The row survives iff NO fact of the (frozen lower-stratum) relation
+            // satisfies all of that at once. An unbound variable used to be read as "no
+            // match ⇒ the row survives", which made the whole leg silently vacuous; the
+            // planner also refused to place such a leg at all, so this arm is what the
+            // planner's existential-negation placement now leans on.
             let atom_args = atom.args();
-            let wc_free: Vec<usize> = (0..atom_args.len())
-                .filter(|&i| !matches!(atom_args[i], Term::Wildcard))
-                .collect();
-            if wc_free.len() < atom_args.len() {
-                let keys: std::collections::HashSet<Vec<&Value>> = source
-                    .values()
-                    .filter(|f| f.key.len() == atom_args.len())
-                    .map(|f| wc_free.iter().map(|&i| &f.key[i]).collect())
-                    .collect();
-                return par_join_rows(&rows, self.cancel_ref(), |row, out| {
-                    let probe: Option<Vec<Value>> = wc_free
-                        .iter()
-                        .map(|&i| match &atom_args[i] {
-                            Term::Const(s) => Some(Value::from_term_const(s)),
-                            Term::Lit(v) => Some(v.clone()),
-                            Term::Var(v) => row.get(v).cloned(),
-                            // Unreachable: wc_free excludes wildcard positions.
-                            Term::Wildcard => None,
-                        })
-                        .collect();
-                    let present = match probe {
-                        Some(key) => {
-                            let borrowed: Vec<&Value> = key.iter().collect();
-                            keys.contains(&borrowed)
-                        }
-                        // A variable position unbound for this row (the planner
-                        // guarantees this does not happen for a safe rule): treated
-                        // as "no match" — the row survives, matching the wildcard-free
-                        // branch's behavior.
-                        None => false,
-                    };
-                    if !present {
-                        out.push(row.clone());
-                    }
-                });
+            let arity = atom_args.len();
+            if rows.is_empty() {
+                return Vec::new();
             }
-            // Wildcard-free: build the exact fact-key set ONCE; each row is then an O(1)
-            // membership probe. (The per-row `values().any()` scan made every anti-join
-            // O(rows × facts).) NOT cached (Part A exclusion): the source relation can
-            // change between Δ-rounds, and the set borrows its keys from the relation
-            // store.
-            let keys: std::collections::HashSet<&[Value]> =
-                source.values().map(|f| f.key.as_ref()).collect();
+            // Row-independent classification: the fixed columns, and every variable with
+            // ALL of the columns it occupies (the diagonal groups).
+            let mut consts: Vec<(usize, Value)> = Vec::new();
+            let mut var_cols: Vec<(&str, Vec<usize>)> = Vec::new();
+            for (i, t) in atom_args.iter().enumerate() {
+                match t {
+                    Term::Const(sym) => consts.push((i, Value::from_term_const(sym))),
+                    Term::Lit(val) => consts.push((i, val.clone())),
+                    Term::Wildcard => {}
+                    Term::Var(name) => {
+                        match var_cols.iter_mut().find(|(n, _)| *n == name.as_str()) {
+                            Some((_, positions)) => positions.push(i),
+                            None => var_cols.push((name.as_str(), vec![i])),
+                        }
+                    }
+                }
+            }
+            // The facts that satisfy every ROW-INDEPENDENT constraint — arity, the fixed
+            // columns, and the diagonal of every repeated variable. Built ONCE: the
+            // per-row `values().any()` scan it replaces made every anti-join
+            // O(rows × facts). NOT cached (Part A exclusion): the source relation can
+            // change between Δ-rounds, and the keys are borrowed out of the relation store.
+            let candidates: Vec<&[Value]> = source
+                .values()
+                .map(|f| f.key.as_ref())
+                .filter(|key: &&[Value]| {
+                    key.len() == arity
+                        && consts.iter().all(|(i, val)| key[*i] == *val)
+                        && var_cols.iter().all(|(_, positions)| {
+                            positions[1..].iter().all(|&p| key[p] == key[positions[0]])
+                        })
+                })
+                .collect();
+            // Which variables the rows bind. Read off the first row and VERIFIED on every
+            // row below — a row that disagrees takes the exact scan instead, so
+            // correctness never rests on the batch being uniform.
+            let bound_mask: Vec<bool> = var_cols
+                .iter()
+                .map(|(name, _)| rows[0].get(*name).is_some())
+                .collect();
+            let keys: std::collections::HashSet<Vec<&Value>> = candidates
+                .iter()
+                .map(|key| {
+                    var_cols
+                        .iter()
+                        .zip(&bound_mask)
+                        .filter(|(_, is_bound)| **is_bound)
+                        .map(|((_, positions), _)| &key[positions[0]])
+                        .collect()
+                })
+                .collect();
             return par_join_rows(&rows, self.cancel_ref(), |row, out| {
-                let present = match bind_atom_args(atom, row) {
-                    Some(key) => keys.contains(key.as_slice()),
-                    // A key that cannot be fully bound is treated as "no match" — the row
-                    // survives. The planner guarantees this does not happen for a safe rule.
-                    None => false,
+                let mut probe: Vec<&Value> = Vec::with_capacity(bound_mask.len());
+                let mut uniform = true;
+                for ((name, _), is_bound) in var_cols.iter().zip(&bound_mask) {
+                    match (row.get(*name), *is_bound) {
+                        (Some(val), true) => probe.push(val),
+                        (None, false) => {}
+                        // This row binds a variable the key set treats as existential (or
+                        // the other way round): its answer is a different question.
+                        _ => {
+                            uniform = false;
+                            break;
+                        }
+                    }
+                }
+                let present = if uniform {
+                    keys.contains(&probe)
+                } else {
+                    candidates.iter().any(|key| {
+                        var_cols
+                            .iter()
+                            .all(|(name, positions)| match row.get(*name) {
+                                Some(val) => key[positions[0]] == *val,
+                                None => true,
+                            })
+                    })
                 };
                 if !present {
                     out.push(row.clone());
@@ -3603,14 +3645,41 @@ fn anti_join_row_passes_on(
     atom: &Atom,
     row: &BindRow,
 ) -> bool {
-    let (spec, _slot_vars) = resolve_arg_spec(atom, row);
+    let (spec, slot_vars) = resolve_arg_spec(atom, row);
     let mut batch = Batch::new();
     if eval(view, &mut batch, &spec).is_err() {
         // An eval fault drops the row from a positive leg; for an anti-join the safe,
         // membership-preserving choice is "no match found" so the row survives.
         return true;
     }
-    batch.rows.is_empty()
+    // A variable the row leaves free that occupies SEVERAL positions is a DIAGONAL: the
+    // leg matches only tuples carrying the same value in every one of them.
+    // `resolve_arg_spec` hands each occurrence its own output slot — the positive path
+    // reconciles them in `extend_row_with_batch`, so the anti-join has to reconcile them
+    // here, or `\+ p(R, R)` would read as `\+ p(_, _)` and answer a different question
+    // (measured on the reference engine: over `p(x,y)` alone `not p(R,R)` holds and
+    // `not p(_,_)` does not). A produced tuple whose slots disagree is not a match.
+    !batch
+        .rows
+        .iter()
+        .any(|produced| slots_agree(produced, &slot_vars))
+}
+
+/// Whether one produced tuple binds every repeated free variable consistently — the
+/// diagonal check [`anti_join_row_passes_on`] applies to the tuples a negated base/builtin
+/// leg produces. A tuple missing a slot the spec asked for is not a match.
+fn slots_agree(produced: &[Value], slot_vars: &[(usize, String)]) -> bool {
+    for (i, (slot, var)) in slot_vars.iter().enumerate() {
+        let Some(val) = produced.get(*slot) else {
+            return false;
+        };
+        for (other_slot, other_var) in &slot_vars[..i] {
+            if other_var == var && produced.get(*other_slot) != Some(val) {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 // ── Binding / unification helpers ──────────────────────────────────
@@ -4414,6 +4483,148 @@ mod tests {
             got,
             std::collections::BTreeSet::from(["c0".to_string(), "c1".to_string()]),
             "\\+ p2(_, X): only c9 appears as a p2 VALUE, so it is dropped"
+        );
+    }
+
+    /// R17, defect one — a NAMED variable that occurs only under a negation is
+    /// existential, exactly like a wildcard. The planner used to refuse the whole
+    /// rule (`E-PLAN-002 ... no feasible binding for [R]`), so a body the reference
+    /// engine answers produced an error instead of rows. Live-probed against the v0
+    /// oracle: `leak(A, B)` is `[A = x, B = y]` there, and the same on this engine now.
+    #[test]
+    fn an_existential_variable_under_a_negation_answers_instead_of_refusing() {
+        let v = FixtureStorageView::new(1);
+        let src = r#"
+            flow("main", "audit"). flow("main", "main"). flow("x", "y").
+            sees("main", "main"). sees("audit", "audit").
+            bridge("r1", "main", "audit").
+            leak(A, B) :- flow(A, B), \+ sees(B, A), \+ bridge(R, A, B).
+        "#;
+        let eval = run(src, &v, Stats::default());
+        let got: std::collections::BTreeSet<(String, String)> = eval
+            .facts("leak")
+            .into_iter()
+            .map(|r| (r[0].as_str(), r[1].as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            std::collections::BTreeSet::from([("x".to_string(), "y".to_string())]),
+            "R occurs only under the negation: `\\+ bridge(R, A, B)` asks whether ANY bridge \
+             row joins A to B, and only (x, y) has none"
+        );
+    }
+
+    /// R17 — the same variable repeated under ONE negation is a DIAGONAL constraint,
+    /// not two independent wildcards. `\+ q(X, Y, Y)` asks whether any q row for this
+    /// X has its last two columns EQUAL; `\+ q(X, _, _)` asks whether any q row for
+    /// this X exists at all. The two must give different answers, and they do on the
+    /// v0 oracle (`res(X)` is `[X = x]` for the diagonal and `[]` for the wildcards).
+    #[test]
+    fn a_repeated_existential_variable_is_a_diagonal_constraint() {
+        let v = FixtureStorageView::new(1);
+        let src = r#"
+            p("x"). p("y").
+            q("x", "a", "b"). q("y", "c", "c").
+            diag(X) :- p(X), \+ q(X, Y, Y).
+            wild(X) :- p(X), \+ q(X, _, _).
+        "#;
+        let eval = run(src, &v, Stats::default());
+        let names = |pred: &str| -> std::collections::BTreeSet<String> {
+            eval.facts(pred)
+                .into_iter()
+                .map(|r| r[0].as_str())
+                .collect()
+        };
+        assert_eq!(
+            names("diag"),
+            std::collections::BTreeSet::from(["x".to_string()]),
+            "x has a q row but not a diagonal one, so x survives; y's row (c, c) IS diagonal"
+        );
+        assert_eq!(
+            names("wild"),
+            std::collections::BTreeSet::<String>::new(),
+            "both x and y have SOME q row, so the wildcard form drops both"
+        );
+    }
+
+    /// R17 — the diagonal still constrains when the negation shares NO variable at
+    /// all with the rest of the body: `\+ p(R, R)` succeeds while p holds only the
+    /// off-diagonal (x, y), and fails once a reflexive (z, z) is added. Same on v0.
+    #[test]
+    fn a_diagonal_with_no_bound_column_still_constrains() {
+        let v = FixtureStorageView::new(1);
+        let off = r#"
+            i("a").
+            p("x", "y").
+            n1(X) :- i(X), \+ p(R, R).
+            n2(X) :- i(X), \+ p(R, S).
+        "#;
+        let eval = run(off, &v, Stats::default());
+        let names = |eval: &Evaluation, pred: &str| -> std::collections::BTreeSet<String> {
+            eval.facts(pred)
+                .into_iter()
+                .map(|r| r[0].as_str())
+                .collect()
+        };
+        assert_eq!(
+            names(&eval, "n1"),
+            std::collections::BTreeSet::from(["a".to_string()]),
+            "p holds no reflexive pair, so `\\+ p(R, R)` succeeds"
+        );
+        assert_eq!(
+            names(&eval, "n2"),
+            std::collections::BTreeSet::<String>::new(),
+            "two DISTINCT free variables only ask for nonemptiness, and p is nonempty"
+        );
+
+        let refl = r#"
+            i("a").
+            p("x", "y"). p("z", "z").
+            n1(X) :- i(X), \+ p(R, R).
+        "#;
+        let eval = run(refl, &v, Stats::default());
+        assert_eq!(
+            names(&eval, "n1"),
+            std::collections::BTreeSet::<String>::new(),
+            "(z, z) is reflexive, so the diagonal now bites"
+        );
+    }
+
+    /// R17, defect two — a negation carrying an existential variable is evaluated
+    /// WHERE IT IS WRITTEN, so moving it across the leg that would bind that variable
+    /// changes the answer. The engine used to reorder freely and returned two rows for
+    /// `before`; v0 returns none, because `not p(Y)` runs while Y is still free and p
+    /// is nonempty. `after` — the same literals with the negation written last — keeps
+    /// both rows on both engines.
+    #[test]
+    fn a_negation_is_evaluated_where_it_is_written() {
+        let v = FixtureStorageView::new(1);
+        let src = r#"
+            i("a").
+            p("zz").
+            j("a", "m"). j("a", "n").
+            before(X, Y) :- i(X), \+ p(Y), j(X, Y).
+            after(X, Y) :- i(X), j(X, Y), \+ p(Y).
+        "#;
+        let eval = run(src, &v, Stats::default());
+        let pairs = |pred: &str| -> std::collections::BTreeSet<(String, String)> {
+            eval.facts(pred)
+                .into_iter()
+                .map(|r| (r[0].as_str(), r[1].as_str()))
+                .collect()
+        };
+        assert_eq!(
+            pairs("before"),
+            std::collections::BTreeSet::new(),
+            "Y is free where the negation is written, so `\\+ p(Y)` is `p is empty` — and it is not"
+        );
+        assert_eq!(
+            pairs("after"),
+            std::collections::BTreeSet::from([
+                ("a".to_string(), "m".to_string()),
+                ("a".to_string(), "n".to_string()),
+            ]),
+            "written last, Y is bound by j and the negation is a per-row anti-join"
         );
     }
 
@@ -5411,32 +5622,37 @@ mod tests {
         assert!(none.is_none(), "safe(f1) holds (no DANGER edge) → no gap");
     }
 
-    /// A NAMED var appearing ONLY inside a negated literal is UNSAFE Datalog (it can never be
-    /// positively bound, so a negated leg cannot existentially close over it as a wildcard does).
-    /// The planner correctly REJECTS it as `Infeasible` (E-PLAN-002) — it does NOT silently
-    /// mis-handle it. The wildcard form is the well-formed existential and evaluates correctly.
-    /// (This pins the SAFETY behavior; an earlier note mistook the plan-time rejection for a
-    /// silent why-not gap — it is a correct rejection, see gaps.md correction.)
+    /// R17 — a NAMED var appearing ONLY inside a negated literal is the SAME existential the
+    /// wildcard form expresses, and both must ANSWER. This test previously pinned the opposite
+    /// (`..._is_rejected_as_unsafe`): the planner returned `Infeasible` (E-PLAN-002) and that
+    /// refusal was read as a correct safety check. The ROFL reference engine disagrees — on
+    /// `safe(X) :- node(X, func), not edge(X, Y, danger).` over the same three facts v0 returns
+    /// `[X = f1]`, byte-identical to the wildcard form's `[X = f1]`. A negated leg closes
+    /// existentially over a named variable exactly as it does over `_`; only a variable the HEAD
+    /// carries would be genuinely unsafe, and that is a separate check.
     #[test]
-    fn named_existential_var_in_negation_is_rejected_as_unsafe() {
+    fn named_existential_var_in_negation_answers_like_the_wildcard() {
         let mut v = FixtureStorageView::new(1);
         node(&mut v, "f1", "FUNCTION");
         node(&mut v, "f2", "FUNCTION");
         edge(&mut v, "f2", "f1", "DANGER"); // f2 has danger; f1 does not.
         let stats = Stats { total_nodes: 2, total_edges: 1, ..Default::default() };
 
-        // Wildcard existential = well-formed: only f1 (no danger edge) is safe.
+        // Wildcard existential: only f1 (no danger edge) is safe.
         let wild = run("safe(X) :- node(X, \"FUNCTION\"), \\+ edge(X, _, \"DANGER\").", &v, stats.clone());
         assert_eq!(ids(&wild, "safe"), vec![id_of("f1")], "wildcard `\\+ edge(X,_,DANGER)`: only f1 is safe");
 
-        // Named var Y used ONLY in the negation = UNSAFE → the planner rejects it (E-PLAN-002),
-        // rather than producing a wrong or vacuous result.
-        let prog = parse_ext_program("safe(X) :- node(X, \"FUNCTION\"), \\+ edge(X, Y, \"DANGER\").")
-            .expect("parses (safety is a planner check, not a parse error)");
-        let strat = stratify(&prog).expect("stratify");
-        let rules = prog.rules();
-        let err = plan_program(&rules, &strat, &stats).expect_err("named-only-in-negation is unsafe → rejected");
-        assert_eq!(err.code.as_str(), "E-PLAN-002", "rejected as infeasible/unsafe, got {:?}", err.code);
+        // Named var Y used ONLY in the negation: the same existential, so the same answer.
+        let named = run(
+            "safe(X) :- node(X, \"FUNCTION\"), \\+ edge(X, Y, \"DANGER\").",
+            &v,
+            stats,
+        );
+        assert_eq!(
+            ids(&named, "safe"),
+            ids(&wild, "safe"),
+            "a named existential under a negation means what `_` means — v0 gives [f1] for both"
+        );
     }
 
     // ── DRed phase 1: over-delete candidate set ─────────────────────

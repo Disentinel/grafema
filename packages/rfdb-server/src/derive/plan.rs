@@ -708,6 +708,43 @@ fn plan_rule_with(
 
 // ── Literal ordering: bound-first feasibility + greedy cost ────────
 
+/// The variables a negated literal quantifies EXISTENTIALLY, one set per body position.
+///
+/// A variable standing under a negation is existential when NO premise written STRICTLY
+/// BEFORE that literal binds it — a positive literal binding its free arguments, or a
+/// builtin binding through its output mode ([`provided_vars`] is exactly that reading).
+/// Positions holding a constant or a wildcard carry no variable and so contribute nothing.
+///
+/// The scan looks only LEFT, at the written text of the rule, so the answer is fixed
+/// before any ordering decision is taken and cannot depend on the plan it constrains —
+/// there is no circularity between "which negations are pinned" and "what the plan binds".
+///
+/// This is the same scan the reference engine's `classify` performs
+/// (`packages/rofl-conformance/vendor/rofl-v0/src/engine.ts:130-160`): it walks the body in
+/// written order accumulating bound variables, and a negated premise contributes none.
+fn existential_vars(body: &[Literal]) -> Vec<HashSet<String>> {
+    let mut bound: HashSet<String> = HashSet::new();
+    let mut out: Vec<HashSet<String>> = Vec::with_capacity(body.len());
+    for lit in body {
+        match lit {
+            Literal::Negative(atom) => {
+                out.push(
+                    atom.variables()
+                        .into_iter()
+                        .filter(|v| !bound.contains(v))
+                        .collect(),
+                );
+            }
+            Literal::Positive(atom) => {
+                out.push(HashSet::new());
+                let provided = provided_vars(atom, &bound);
+                bound.extend(provided);
+            }
+        }
+    }
+    out
+}
+
 /// Order body literals bound-first (ported from the query engine's `reorder_literals`) and break ties by a
 /// cardinality-aware estimate. At each step the candidates are the literals whose binding
 /// requirements are already satisfied (bound-first feasibility gates candidacy); among them
@@ -717,6 +754,26 @@ fn plan_rule_with(
 /// longer cardinality-blind. Reordering is order-independent (I1): it changes only the join
 /// ORDER, never WHICH facts the rule derives.
 ///
+/// # Where I1 stops holding, and what pins the order there
+///
+/// I1 holds for a RANGE-RESTRICTED body: when every variable under every negation is bound
+/// by some other premise, the negated leg is a pure membership filter and conjunction
+/// commutes. It stops holding the moment a negation carries an EXISTENTIAL variable
+/// ([`existential_vars`]) — then `\+ p(Y)` with `Y` free asks "does `p` hold of ANYTHING",
+/// while the same literal after the leg that binds `Y` asks "does `p` hold of THIS `Y`",
+/// and the two are different questions with different answers. Measured on the reference
+/// engine: `before(X,Y) :- i(X), not p(Y), j(X,Y).` answers nothing over `p(zz)`, while the
+/// same body with the negation written last answers two rows.
+///
+/// So a negated literal carrying at least one existential variable is PINNED at its written
+/// index and acts as a BARRIER: everything written before it is ordered (by the cost model
+/// above) and placed before it, everything written after it is ordered after it. Ordering
+/// therefore still moves freely inside the gaps between pinned negations, and a body with no
+/// pinned negation is one single gap — byte-identically the pre-existing behaviour. Across
+/// the 42 bundled rule packs no negated literal carries an existential variable, so no
+/// bundled plan moves (mechanically gated by
+/// `tests::bundled_packs_carry_no_existential_negation` and by the golden plan fingerprints).
+///
 /// Returns `E-PLAN-002` if no candidate can be placed (circular feasibility) — the query
 /// engine's "circular dependency" rejection, surfaced with a stable code (I5).
 fn order_literals(
@@ -725,8 +782,67 @@ fn order_literals(
     stats: &Stats,
     catalog: &crate::derive::catalog::PredicateCatalog,
 ) -> PlanResult<Vec<Literal>> {
+    let existential = existential_vars(body);
     let mut bound: HashSet<String> = HashSet::new();
     let mut result: Vec<Literal> = Vec::with_capacity(body.len());
+    let mut gap_start = 0usize;
+
+    for (idx, lit) in body.iter().enumerate() {
+        if !(lit.is_negative() && !existential[idx].is_empty()) {
+            continue;
+        }
+        order_gap(
+            &body[gap_start..idx],
+            head,
+            stats,
+            catalog,
+            &mut bound,
+            &mut result,
+        )?;
+        // The barrier itself. Its non-existential variables are, by the definition of
+        // `existential_vars`, bound by premises written before it — all of which have just
+        // been placed — so this normally succeeds; the check is kept as the honest failure
+        // path rather than an assumption.
+        let (can_place, provides) = can_place_and_provides(lit, &bound, &existential[idx]);
+        if !can_place {
+            return Err(PlanError {
+                code: PlanCode::Infeasible,
+                head: head.to_string(),
+                detail: format!(
+                    "cannot order bound-first: negated literal `{}` is pinned at its written \
+                     position and no preceding premise binds it",
+                    lit.atom().predicate()
+                ),
+            });
+        }
+        bound.extend(provides);
+        result.push(lit.clone());
+        gap_start = idx + 1;
+    }
+    order_gap(
+        &body[gap_start..],
+        head,
+        stats,
+        catalog,
+        &mut bound,
+        &mut result,
+    )?;
+
+    Ok(result)
+}
+
+/// Greedily order ONE gap between pinned negations (the whole body when there is none),
+/// appending to `result` and advancing `bound`. Every literal here is range-restricted with
+/// respect to negation: a pinned negation never enters a gap, and an unpinned one has all of
+/// its variables bound by premises written before it, hence an empty existential set.
+fn order_gap(
+    body: &[Literal],
+    head: &str,
+    stats: &Stats,
+    catalog: &crate::derive::catalog::PredicateCatalog,
+    bound: &mut HashSet<String>,
+    result: &mut Vec<Literal>,
+) -> PlanResult<()> {
     let mut remaining: Vec<Literal> = body.to_vec();
 
     while !remaining.is_empty() {
@@ -755,20 +871,22 @@ fn order_literals(
         //   • cost — the exact per-type / per-endpoint estimate, final tiebreak within a band.
         let mut best: Option<(usize, (u64, u64, u64, u64, u64))> = None;
         for (i, lit) in remaining.iter().enumerate() {
-            let (can_place, provides) = can_place_and_provides(lit, &bound);
+            // Inside a gap every literal is range-restricted with respect to negation, so
+            // the empty existential set is the exact reading here (see [`order_gap`]).
+            let (can_place, provides) = can_place_and_provides(lit, bound, &HashSet::new());
             if !can_place {
                 continue;
             }
             let cross_join_class = if !result.is_empty()
                 && lit.is_positive()
                 && introduces_tuples(lit.atom().predicate())
-                && shares_no_binding(lit.atom(), &bound)
+                && shares_no_binding(lit.atom(), bound)
             {
                 1
             } else {
                 0
             };
-            let cost = ordering_estimate(lit, &bound, stats, catalog);
+            let cost = ordering_estimate(lit, bound, stats, catalog);
             // Order of magnitude: 64 − leading_zeros = number of significant bits. Costs within
             // the same power-of-two band tie here and defer to hub_rank.
             let cost_band = (u64::BITS - cost.leading_zeros()) as u64;
@@ -798,7 +916,7 @@ fn order_literals(
             // rule outright. One step of lookahead breaks that tie towards a body that can
             // still be ordered. Placed LAST so it cannot reorder anything on a graph where
             // cost already discriminates — production plans are untouched.
-            let strands = strands_body(&remaining, i, &bound, &provides);
+            let strands = strands_body(&remaining, i, bound, &provides);
             let key = (cross_join_class, cost_band, hub_rank, cost, strands);
             match best {
                 Some((_, bk)) if key >= bk => {}
@@ -809,7 +927,7 @@ fn order_literals(
         match best {
             Some((i, _)) => {
                 let lit = remaining.remove(i);
-                let (_, provides) = can_place_and_provides(&lit, &bound);
+                let (_, provides) = can_place_and_provides(&lit, bound, &HashSet::new());
                 bound.extend(provides);
                 result.push(lit);
             }
@@ -830,7 +948,7 @@ fn order_literals(
         }
     }
 
-    Ok(result)
+    Ok(())
 }
 
 /// Whether placing `remaining[placed]` next leaves the body with no continuation except a
@@ -851,7 +969,8 @@ fn strands_body(
             continue;
         }
         has_other = true;
-        let (can_place, _) = can_place_and_provides(other, &next_bound);
+        // Same gap, same reading: no literal inside a gap has an existential variable.
+        let (can_place, _) = can_place_and_provides(other, &next_bound, &HashSet::new());
         if !can_place {
             continue;
         }
@@ -935,15 +1054,37 @@ fn ordering_estimate(
 /// provides if placed. Ported from `crate::datalog::utils::literal_can_place_and_provides`
 /// and specialized to the derive builtin set; unknown predicates are derived heads (always
 /// placeable, provide their free args via the rule's projection).
-fn can_place_and_provides(lit: &Literal, bound: &HashSet<String>) -> (bool, HashSet<String>) {
+///
+/// `existential` is the set of variables THIS literal quantifies existentially — empty for
+/// every positive literal and for every range-restricted negation, non-empty only for a
+/// negation the caller has pinned at its written position ([`existential_vars`]).
+fn can_place_and_provides(
+    lit: &Literal,
+    bound: &HashSet<String>,
+    existential: &HashSet<String>,
+) -> (bool, HashSet<String>) {
     match lit {
         Literal::Negative(atom) => {
-            // Negative literals require ALL Var args to be in bound.
-            let all_bound = atom.args().iter().all(|t| match t {
-                Term::Var(v) => bound.contains(v),
-                _ => true,
-            });
-            (all_bound, HashSet::new())
+            // ONE rule, stated over the variables the literal CARRIES rather than over an
+            // enumeration of its columns: a negated literal binds nothing, and it requires
+            // bound exactly the variables it does NOT quantify existentially. Phrased this
+            // way it covers the argument positions and the perspective column at once —
+            // the perspective is column zero of the very same mechanism
+            // (`_ai/research/rofl-demand-mode-design.md` §2.8), so when it lands it is
+            // carried by `Atom::variables()` and needs no second, divergable edit here.
+            //
+            // With an empty `existential` this is byte-for-byte the previous requirement
+            // ("all Var args bound"), which is what every literal inside an ordering gap
+            // gets and what keeps every already-planned rule planned exactly as before.
+            // With a non-empty one it is the existential anti-join the reference engine
+            // runs: `\+ p(Y)` with `Y` free asks whether `p` holds of ANYTHING, and the
+            // executor's anti-join answers that question honestly, diagonal included
+            // (`exec.rs::join_derived`).
+            let needed_bound = atom
+                .variables()
+                .iter()
+                .all(|v| existential.contains(v) || bound.contains(v));
+            (needed_bound, HashSet::new())
         }
         Literal::Positive(atom) => positive_can_place_and_provides(atom, bound),
     }
@@ -1966,6 +2107,170 @@ mod tests {
                 .map(|(t, n)| (t.to_string(), *n))
                 .collect(),
         }
+    }
+
+    // ── Existential negation and the written order of negations ──────
+
+    /// The mechanical half of the golden gate: over EVERY bundled rule pack, count the
+    /// rules carrying a negated literal, the negated literals, and — the number the pin
+    /// rule turns on — the negated literals carrying a variable that no strictly-preceding
+    /// premise binds. That last count must be ZERO: it is exactly the set of literals the
+    /// pin would move, so zero is what makes `p3_plan_fingerprints.txt` byte-identical.
+    ///
+    /// A regex sweep over the pack sources is not enough for this (it cannot tell which
+    /// premise binds what), so the census runs the real parser and the real detector.
+    #[test]
+    fn bundled_packs_carry_no_existential_negation() {
+        let mut rules_with_negation = 0usize;
+        let mut negated_literals = 0usize;
+        let mut existential_literals: Vec<String> = Vec::new();
+
+        for (pack, src) in crate::derive::stdlib::STDLIB_PACKS {
+            let prog = parse_ext_program(src)
+                .unwrap_or_else(|e| panic!("bundled pack {pack} must parse: {e}"));
+            for rule in prog.rules() {
+                let body = rule.body();
+                let existential = existential_vars(body);
+                let mut carries = false;
+                for (idx, lit) in body.iter().enumerate() {
+                    if !lit.is_negative() {
+                        continue;
+                    }
+                    carries = true;
+                    negated_literals += 1;
+                    if !existential[idx].is_empty() {
+                        let mut vars: Vec<String> = existential[idx].iter().cloned().collect();
+                        vars.sort();
+                        existential_literals.push(format!(
+                            "{pack}: {} :- ... \\+ {}(...) free {:?}",
+                            rule.head().predicate(),
+                            lit.atom().predicate(),
+                            vars
+                        ));
+                    }
+                }
+                if carries {
+                    rules_with_negation += 1;
+                }
+            }
+        }
+
+        assert!(
+            existential_literals.is_empty(),
+            "the pin rule would move {} bundled negated literal(s) and the golden plan \
+             fingerprints can no longer be byte-identical:\n{}",
+            existential_literals.len(),
+            existential_literals.join("\n")
+        );
+        // Floors, not equalities: a pack may legitimately gain rules. They exist so the
+        // zero above cannot be produced by an empty census.
+        assert!(
+            rules_with_negation >= 100 && negated_literals >= 200,
+            "census collapsed: {rules_with_negation} rules / {negated_literals} negated \
+             literals"
+        );
+        println!(
+            "bundled packs: {rules_with_negation} rules carry >=1 negated literal, \
+             {negated_literals} negated literals, 0 with an existential variable"
+        );
+    }
+
+    /// The written order of a negation is only significant when it quantifies
+    /// existentially — that is the whole of the pin rule, and it is what keeps every
+    /// already-planned rule where it was.
+    #[test]
+    fn only_an_existential_negation_is_pinned() {
+        // Range-restricted: `Y` is bound by the preceding `j`, so nothing is existential.
+        let restricted = vec![
+            pos("i", vec![v("X")]),
+            pos("j", vec![v("X"), v("Y")]),
+            Literal::negative(Atom::new("p", vec![v("Y")])),
+        ];
+        assert!(existential_vars(&restricted).iter().all(|e| e.is_empty()));
+
+        // The same three literals with the negation written BEFORE its binder: `Y` is
+        // existential, because the condition looks strictly LEFT.
+        let existential = vec![
+            pos("i", vec![v("X")]),
+            Literal::negative(Atom::new("p", vec![v("Y")])),
+            pos("j", vec![v("X"), v("Y")]),
+        ];
+        let ex = existential_vars(&existential);
+        assert!(ex[0].is_empty() && ex[2].is_empty());
+        assert_eq!(
+            ex[1].iter().cloned().collect::<Vec<_>>(),
+            vec!["Y".to_string()]
+        );
+
+        // A wildcard carries no variable, so it never makes a negation existential.
+        let wildcarded = vec![
+            pos("i", vec![v("X")]),
+            Literal::negative(Atom::new("p", vec![Term::Wildcard])),
+            pos("j", vec![v("X"), v("Y")]),
+        ];
+        assert!(existential_vars(&wildcarded).iter().all(|e| e.is_empty()));
+    }
+
+    /// A pinned negation is a BARRIER: the cost model may not hoist a later leg over it.
+    /// Without the barrier the planner defers `\+ p(Y)` until `j` binds `Y`, which is the
+    /// measured divergence from the reference engine (`i(X), not p(Y), j(X,Y)` answers
+    /// nothing there, two rows here).
+    #[test]
+    fn a_pinned_negation_keeps_its_written_position() {
+        let body = vec![
+            pos("i", vec![v("X")]),
+            Literal::negative(Atom::new("p", vec![v("Y")])),
+            pos("j", vec![v("X"), v("Y")]),
+        ];
+        let catalog = crate::derive::catalog::PredicateCatalog::with_base_relations();
+        let ordered = order_literals(&body, "before", &stats(10, 10), &catalog)
+            .expect("an existential negation plans instead of refusing");
+        let preds: Vec<&str> = ordered.iter().map(|l| l.atom().predicate()).collect();
+        assert_eq!(
+            preds,
+            vec!["i", "p", "j"],
+            "written order of the negation holds"
+        );
+        assert!(ordered[1].is_negative());
+
+        // The same body with the negation written last keeps the negation last — the
+        // reference engine answers differently for the two, and so must the planner.
+        let body_last = vec![
+            pos("i", vec![v("X")]),
+            pos("j", vec![v("X"), v("Y")]),
+            Literal::negative(Atom::new("p", vec![v("Y")])),
+        ];
+        let ordered_last = order_literals(&body_last, "after", &stats(10, 10), &catalog)
+            .expect("a range-restricted negation plans as it always did");
+        // The two positive legs stay free to swap on cost (they always were); what the
+        // rule fixes is that the negation is NOT hoisted above the leg that binds `Y`.
+        assert!(ordered_last[2].is_negative());
+        assert_eq!(ordered_last[2].atom().predicate(), "p");
+    }
+
+    /// The two halves of a gap still reorder by cost — pinning constrains only the
+    /// negation itself and the two sides of it, never the legs inside one gap.
+    #[test]
+    fn legs_inside_a_gap_still_reorder_by_cost() {
+        // `node(X,"RARE")` is far more selective than `node(Y,"COMMON")`; with no pin the
+        // planner leads with the rare one. Adding a pinned negation AFTER both must not
+        // change that.
+        let body = vec![
+            pos("node", vec![v("Y"), c("COMMON")]),
+            pos("edge", vec![v("X"), v("Y"), c("CALLS")]),
+            pos("node", vec![v("X"), c("RARE")]),
+            Literal::negative(Atom::new("p", vec![v("Z")])),
+        ];
+        let catalog = crate::derive::catalog::PredicateCatalog::with_base_relations();
+        let st = stats_typed(100_000, 100_000, &[("COMMON", 100_000), ("RARE", 5)]);
+        let ordered = order_literals(&body, "h", &st, &catalog).expect("plans");
+        assert!(
+            ordered[3].is_negative(),
+            "the pin stays at its written index"
+        );
+        let first = ordered[0].atom();
+        assert_eq!(first.predicate(), "node");
+        assert_eq!(first.args()[1], c("RARE"), "the selective leg still leads");
     }
 
     // ── P4 (ledger round-010-pre H6/D13): supersedes costs through the ──
