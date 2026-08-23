@@ -121,7 +121,7 @@ measured conflicts are fully covered by node/type).
 Also ratified: fa40b361 commit message stands without history rewrite (audited SHA ordering
 outweighs message template); F1 process rule — ONE agent owns the timed perf window at a time.
 
-## OQ-C3-1 (OPEN — raised by round-012 adversarial review, awaiting an owner ruling)
+## OQ-C3-1 (RESOLVED 2026-08-23 by ruling R-9 below — SWITCH TO THE NAME. Kept verbatim for the record)
 
 **Question: should `canonical_state_sha` digest the author NAME instead of the interned author
 RANK?**
@@ -154,3 +154,58 @@ Recorded, not silently embedded: the non-injectivity is stated verbatim in the m
 `canonical_state_sha`, and it is pinned by the test
 `canonical_state_sha_author_component_is_the_rank_not_the_name`
 (packages/rfdb-server/src/facts/convert/reader.rs) so no future round can change it by accident.
+
+## R-9. `canonical_state_sha` author component = the NAME, not the rank (resolves OQ-C3-1)
+
+**Switch it.** §9.1's `u32(author)` becomes the author's canonical NAME as len-prefixed canon bytes,
+exactly as §9.2 already requires for the predicate and perspective components. The change is
+scoped to `canonical_state_sha` ONLY — the interned rank stays everywhere it is legitimately used
+(in-memory interning, and the numeric-min F3 whose order-isomorphism to shortlex-name-min is a
+property of the TABLE, not of the digest, and is therefore untouched).
+
+Grounds:
+(a) THE DIGEST IS AN EQUALITY ORACLE, AND THE STOP CONDITION IS A CROSS-STORE COMPARISON. P8's A4
+    own-LSM ↔ RocksDB differential is the literal acceptance condition of this whole migration, and
+    it compares two independently built stores. A component that is not injective over author names
+    can report EQUAL for two states that differ in author identity. An audit environment whose
+    canonical state digest admits that collision is unsound as an oracle, and «gate it instead» here
+    means bolting an author-table-equality precondition onto every cross-store comparison forever.
+(b) §9.2 IS NORMATIVE AND THIS IS ITS ONE VIOLATION. Two of the three interned components already
+    ship as names. Leaving the third as a rank is an inconsistency reviewers will keep re-finding.
+(c) THE COST IS STRICTLY MONOTONE IN TIME. It is one line today; every round from stage 2 onward
+    records more state shas under the wrong recipe, and P8 would bake it into the acceptance gate.
+(d) THE INVALIDATED SHAS ARE NOT LOST, THEY ARE RELABELLED. `6b83d6fc…` and the P2-P5 `ed520009…`
+    lineage remain true statements about recipe v1 and stay in the ledger as such; the next round
+    records the recipe change as a REPAIR with both values side by side.
+(e) D6 IS NOT REWRITTEN. round-012-pre stays immutable and its claim stays honoured — the ships-today
+    artifact WAS the rank. Superseding a pre-registered decision by a later pre-registration plus a
+    recorded repair is exactly what the «Рабочий протокол» prescribes; silently editing D6 is what it
+    forbids. The pinning test is renamed and inverted in the same commit, not deleted.
+
+EXECUTION (binding on the next round that touches the converter): the switch, the repair record, the
+re-pinned state sha, and the test inversion land TOGETHER in one round, BEFORE any stage-2 gate
+consumes a state sha. Determinism (E7 two-process byte-identity) must be re-proven after the switch;
+the output fact bytes must NOT move (the digest is self-description, not data) — if any `.seg` file
+changes, that is a blocker, not a file to regenerate.
+
+## R-10. `provenance.converter` git SHA — accept the digest pair, do NOT add build.rs (resolves OQ-C3-2)
+
+**No build.rs.** Injecting git state into every build of the crate makes the binary non-reproducible
+across dirty trees, which attacks A3 determinism at its root: the artifact's identity would move with
+unrelated working-tree state. The store's identity is the ⟨input recursive sha256, output bytes⟩
+pair — both already measured, both already in the report and the manifest.
+
+`ROFL_CONVERT_GIT_SHA` stays an explicit opt-in env var, and `not-baked(...)` stays an honest value.
+Binding process rule: any run whose output is CITED IN THE LEDGER must set it, and the ledger records
+the resulting string. An unset value in a ledgered run is a defect of that round, not of the design.
+
+## R-11. NM6 / divergence X1 (id↔sid subject skew of 32) — LOCALISE IT IN THE STAGE-2 PREMISE
+
+Not deferrable past node_view, and not a reason to delay launching stage 2. The gap is BOUNDED and
+well understood (503,372 id-metadata subjects vs 503,404 sid subjects; the delta is a set difference
+over two enumerable sets), so per the completeness standard it gets CLOSED, not parked.
+
+Binding: stage 2's premise phase produces the explicit list of the 32 subjects and a stated cause,
+and node_view (S2-d) does not land until it exists. If the cause turns out to be a converter
+lossiness class rather than a property of the base, that is a stage-1 defect and comes back as a
+repair round — which is precisely why it must be answered BEFORE anything is built on sid.
