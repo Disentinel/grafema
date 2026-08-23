@@ -1,0 +1,579 @@
+-- Round 012 (2026-08-23) — P6 STAGE 1 (the CONVERTER, §10.3) ACTUALS vs the
+-- pre-registered expectations of round-012-pre.rofl (commit 54dca5dc, committed
+-- BEFORE any implementation — the git-auditable ordering 54dca5dc < b63a8049 <
+-- cec8a029 < this file). Assert-only, never retract.
+--
+-- P6 stage 1 = the standalone `rofl-convert` binary: read the OLD record-model
+-- store READ-ONLY, emit a NEW fact-layout store (catalog + columnar fact
+-- segments + rofl_manifest.json), verify it with the converter's OWN reader.
+-- No engine read path, no compaction, no supersession (N2/N3 of the pre file).
+--
+-- ── Files changed ──────────────────────────────────────────────────
+--   Implementation commit b63a8049:
+--     packages/rfdb-server/Cargo.toml          ([[bin]] rofl-convert + sha2)
+--     packages/rfdb-server/Cargo.lock          (+1 line, sha2 promoted to a
+--                                               direct dep at the SAME 0.10.9)
+--     packages/rfdb-server/src/bin/rofl_convert.rs   (new CLI)
+--     packages/rfdb-server/src/facts/mod.rs          (pub mod convert)
+--     packages/rfdb-server/src/facts/convert/{mod,segment,reader,manifest}.rs
+--     packages/rfdb-server/src/facts/lsm.rs    (+7/−5, C23 below — attribute
+--                                               and doc-comment only)
+--   Finalize commit cec8a029 (this round's review dispositions):
+--     packages/rfdb-server/src/facts/convert/mod.rs      (+587/−57)
+--     packages/rfdb-server/src/facts/convert/reader.rs   (+410/−18)
+--     packages/rfdb-server/src/facts/convert/segment.rs  (+156/−17, incl.
+--                                               the blocker fix)
+--     packages/rfdb-server/src/facts/convert/manifest.rs (+84/−0)
+--     git show --numstat cec8a029 over the four = 1,237 insertions /
+--       92 deletions.
+--   tests/: ZERO diff hunks, ZERO untracked files (crash gate untouched).
+--   Actuals commit (this file): run-migration/rounds/round-012.rofl +
+--     run-migration/OWNER-RULINGS.md (OQ-C3-1, new open question).
+
+-- ══ E1..E10 — EXPECTED → FOUND ═════════════════════════════════════
+
+-- E1 INPUT. Expected: recursive sha256 unchanged after every run; size
+--   567,405,250 B; manifest version 171; 503,443 node records; 1,107,838 edge
+--   records; 503,404 distinct node ids; multi-record ids EXACTLY 39.
+--   FOUND, ALL SEVEN EXACT:
+--     input recursive sha256 BEFORE and AFTER every one of the seven real-base
+--       runs of this round = 2661cf011934d70e3a972469316e82f29742810ae431d517
+--       5297442eb5efee9b (the converter measures it itself, before and after,
+--       and the report carries both). Independent external instrument (run
+--       phase): `find -type f | sort | xargs sha256sum | sha256sum` =
+--       5be9ce58ab8bdd13e074669e66b48f95434801d47cd6ca776f0c9920cfe71b9f
+--       identical before/after, AND the (path,size,mtime) table of all 427
+--       input files diffs EMPTY — not one file was opened for write.
+--     size_bytes 567,405,250; manifest_version 171 (current.json version ==
+--       manifest_index.json latest_version, so the rebuild_index write path
+--       inside ManifestStore::open is never reached — D1's whole point).
+--     node_records_enumerated 503,443; edge_records_enumerated 1,107,838;
+--       distinct_node_ids 503,404; multi_record_node_ids 39.
+--     S2 counters ALL ZERO: node/edge_exact_duplicates 0/0,
+--       node/edge_shadowed_dropped 0/0, unparseable_generation 0,
+--       non_string_source 0 — so nothing was excluded from the C1 input
+--       multiset, and (after the finalize commit) a nonzero one would ABORT.
+
+-- E2 §10.1 ARITHMETIC. Expected: $legacy nodes 917, edges 33,096; tick-0 nodes
+--   1,153, edges 35,929. FOUND: 917 / 33,096 / 1,153 / 35,929 — ALL FOUR EXACT.
+--   Q4 pollution, measured for the first time (not pre-registered):
+--   43 distinct sha256-hex authors carrying 138,129 assertions; 59 authors
+--   interned in total. Carried AS-IS, registered, never rewritten.
+
+-- E3 RETYPING. Expected: total 20,709, retype_misses 0. FOUND: 20,709 and 0.
+--   The per-key split was explicitly NOT pre-known; this round PINS it:
+--   source_node 20,570 + anchorCall 83 + handler_function_id 56 = 20,709.
+--   All three are declared PhysStrategy::Adjacency and therefore carry reverse
+--   runs — the sole driver of the E6 row-count divergence.
+
+-- E4 conflict/5. Expected: type 39, file 39, name 0, __exported 0, sid 0
+--   PRIMARY (or 39 under the registered ALTERNATIVE); total 78 (or 117).
+--   FOUND: type 39, file 39, name 0, __exported 0, sid 0, TOTAL 78.
+--     type   winner GLOBAL_DEFINITION 39/39, loser EXTERNAL_FUNCTION 39/39,
+--            winner author haskell-runtime-globals 39/39 — exactly the R8a
+--            ground truth, decided at R-1a F2 on a 39/39 tick tie.
+--     file   winner <runtime/haskell> 39/39, loser
+--            __grafema_virtual/haskell-local-refs 39/39, same winner author.
+--     Subjects (the finalize commit's new denominator): type 39, file 39.
+--   THE sid HYPOTHESIS IS PINNED: PRIMARY. The ALTERNATIVE is FALSIFIED.
+--     Mechanical evidence from the output catalog itself: sid live_facts
+--     503,404 vs live_asserts 503,443 → the 39 pairs assert the IDENTICAL
+--     (subject, sid) tuple, which S3 collapses to ONE fact with TWO assertions,
+--     so R-1a has nothing to arbitrate. Same shape for `name`: 503,278 facts /
+--     503,317 asserts. `type` 503,443/503,443 and `file` 503,392/503,392 carry
+--     no dedup — they are the two predicates that DISAGREE.
+--   C7's «≥39» met (78). DEV-P6-1 cross-check: 39 subjects, all agreeing.
+
+-- E5 §9.4 METRICS. Expected: entities 503,404 primary. FOUND 503,404 — the
+--   PRIMARY branch, consistent with the pinned sid hypothesis. (After the
+--   finalize commit `entities` counts DISTINCT sid SUBJECTS, not sid facts;
+--   on this base the two coincide precisely because sid has no conflict.)
+--   facts 4,463,012 = 4,462,934 main + 78 audit conflict/5.
+--   assertions 4,463,090 = 4,462,934 + 78 dup-assertions (39 name + 39 sid)
+--     + 78 conflict assertions. assertions > facts, as required.
+--   rows 7,605,232 = forward 4,463,090 (exactly one physical row per assertion
+--     per run) + reverse 3,142,142.
+--   THREE INDEPENDENT CROSS-CHECKS on the written manifest (not the in-memory
+--   counters): Σ catalog.live_facts over all 134 predicates = 4,463,012;
+--   Σ catalog.live_asserts = 4,463,090; Σ segments.rows over all 2,776
+--   descriptors = 7,605,232. All three equal the reported metrics exactly.
+
+-- E6 GROWTH ORACLE (measured, not asserted).
+--   FOUND: 4,463,012 facts = 2.7698x of 1,611,281 records;
+--   output 681,958,506 B = 2.9950x of the 227,698,510 live-byte denominator
+--   (1.2019x of the full 567,405,250 input directory) — INSIDE the doc's
+--   1.74x..3.11x band, near its top.
+--   THE DOC-vs-MEASURED DIVERGENCE RECONCILES TO ZERO RESIDUAL. Doc A″
+--   estimate 4,463,189; measured MAIN facts 4,462,934; difference −255, and the
+--   four registered E6 drivers sum to exactly 255:
+--     −126 empty `name` column omissions   (decompose.empty_name)
+--     − 51 empty `file` column omissions   (decompose.empty_file)
+--     − 39 `name` facts deduped across the 39 pairs (equal values, S3)
+--     − 39 `sid`  facts deduped across the 39 pairs (equal values, S3)
+--     = −255. Then +78 conflict/5 → 4,463,012 total. empty_sid 0,
+--     blob_copies_skipped 0, meta_prefixed_keys 0 (S6 collision guard never
+--     fired), partial_span_subjects 0, retype_misses 0, null_values 0.
+--   span/5: 475,483 facts (A″ collapse shipped; every span subject had ALL
+--     FOUR of line/column/endLine/endColumn — partial_span_subjects 0).
+--   json_composite_values 4,997 — the S4 Term($json,[Str]) carrier that today's
+--     attr path would have DROPPED; C1 proves they round-trip.
+--   BYTE ITEMISATION of the 680,690,922 segment bytes (independently
+--   reproduced by a hand-written Python .seg decoder over all 2,776 segments,
+--   all deltas vs the report zero): assertion columns 266,183,120 (39.11%,
+--   a FIXED 35 B per physical row — the single largest driver and pure per-row
+--   constant); value columns 210,475,806 (30.92%); string table 192,731,540
+--   (28.31%; 190,779,133 B raw utf8 + 1,941,303 B varint prefixes + 11,104 B
+--   count u32s over 1,252,486 entries — per-SEGMENT tables, so a string
+--   repeated across shards is stored once per shard); bloom 11,239,384
+--   (1.651%); headers 61,072 (0.009%); plus rofl_manifest.json 1,267,584.
+--   NOT MEASURED: any A′ RLE variant of the assertion columns (stage-2+).
+
+-- E7 DETERMINISM. Expected: two SEPARATE-PROCESS runs byte-identical.
+--   FOUND — FOUR separate processes on the final binary, no exclusions:
+--     f1, f2  same binary, same input spelling, fresh output dirs
+--     f3      DIFFERENT INPUT PATH SPELLING (/tmp/rofl-p2-real-base/./graph.rfdb)
+--     f4      REBUILT release binary (after the segment.rs endianness doc line)
+--   `diff -r --brief` between every pair reports NO DIFFERENCES.
+--   Converter's own output digest, all four: 8149f27c0416aa3fb8dd5bb5bee8790b
+--     22db4b9264d715967d7f8d2f6fe44403.
+--   INDEPENDENT instrument (not the converter's hash function):
+--     `find . -type f | LC_ALL=C sort | xargs sha256sum | sha256sum` =
+--     db5abc90ed84b33ff5b31f09a415dd211b3c03b87e92596d68f714b547356c1c on all
+--     four trees.
+--   canonical_state_sha, all four: 6b83d6fcf65bd8e81921c9a3145379b783e5af7408
+--     83cf9b183ff06d2042947f.
+--   Wallclock 107.98 / 109.49 / ~110 / 114.49 s; peak RSS 9,538,164 kB.
+--   The report is EXCLUDED structurally, not by a filter: it is written OUTSIDE
+--   the store dir (F4), so the wallclock it carries never enters the tree.
+--   HONEST RESIDUAL SCOPE (finding 8/10/12): byte-identity is now proven
+--   invariant to the input PATH SPELLING (f3) and to a rebuild (f4). It is
+--   NOT claimed across machines: `provenance.input_path` is a different string
+--   at a different mount point, and `provenance.converter` embeds a
+--   compile-time env var. Both live ONLY in the manifest; every .seg file and
+--   canonical_state_sha are free of them. NOT MEASURED: byte-identity on a
+--   big-endian target (the codec is now documented LITTLE-ENDIAN-pinned).
+
+-- E8 C1 ON THE REAL BASE. Expected: full reassembly multiset == input multiset;
+--   resolved view == input minus EXACTLY the 39 loser records, each joined to
+--   its conflict/5 fact.
+--   FOUND, BOTH HALVES:
+--     input_nodes 503,443 → reassembled_nodes 503,443; input_edges 1,107,838 →
+--     reassembled_edges 1,107,838; full_multiset_equal true; node_mismatches 0;
+--     edge_mismatches 0. C1 is DISK-DRIVEN on BOTH sides (load_input re-reads
+--     the old base; ConvertedStore::open + reassemble re-read the new store) —
+--     not an in-memory tautology.
+--     exceptions 39; distinct subjects 39; distinct loser fids 39; loser type
+--     EXTERNAL_FUNCTION 39/39; winner GLOBAL_DEFINITION 39/39; loser author
+--     haskell-local-refs 39/39; loser tick 1 on all 39. Sample: subject
+--     117eca19d3047ccbb010c56ef3355ed8, semantic_id HASKELL_GLOBAL::notElem,
+--     loser fid 71414da8bad44ab7e4de37d383eb5d3f.
+--     resolved_view_consistent true — and, after the finalize commit, NOT
+--     VACUOUSLY: the expected conflict set is now derived from the INPUT, and
+--     the three new report fields prove the derivation was non-empty:
+--     input_multi_record_subjects 39, input_type_divergent_subjects 39,
+--     type_conflict_subjects 39.
+--   Q10 HELD — THE LOSERS ARE LIVE, mechanically visible in the manifest:
+--     `type` live_facts 503,443 while distinct_node_ids is 503,404. The
+--     difference is EXACTLY 39. Nothing was superseded.
+--   C1's LEVEL, stated (finding 7): C1 is a RECORD-LEVEL round trip after the
+--     §10.1 provenance lift and JSON canonicalisation. The v2 metadata STRING
+--     is NOT byte-reproducible — measured 502,526/503,443 node and
+--     1,074,742/1,107,838 edge blobs unreproducible after provenance strip
+--     (serde_json::Map is a BTreeMap here: original key order and whitespace
+--     are gone; _source/_generation are lifted into columns). Any consumer
+--     needing the ORIGINAL BYTES (a byte-diffing rollback) must not read C1 as
+--     that guarantee.
+
+-- E9 SUITE GATES → see the final gate battery at the bottom of this file.
+--   Mechanical test diff over the round: +21 #[test] in b63a8049, +7 in
+--   cec8a029, −0; +0/−0 #[ignore]. 1557 (round-011 baseline) + 21 + 7 = 1585,
+--   which is the measured number. facts::convert:: alone = 28 tests.
+
+-- E10 PERF-PROXY EXEMPTION — VOID, AND THE PROXY WAS RUN.
+--   The exemption's file list excluded facts/lsm.rs; C23 (below) touched it, so
+--   the implementer declared diff_scope_clean=false rather than hiding it, and
+--   ran the timed proxy against the round-010 governance medians (4.926 /
+--   8.708 / 5.376 s, ceiling 1.10x): depends 4.912s (0.997x), method_calls
+--   8.765s (1.007x), axum_routes 5.448s (1.013x) — all PASS.
+--   The FINALIZE commit re-earns the exemption on its own terms: `git diff
+--   --stat` of cec8a029 scoped to storage_v2/, derive/, graph/, Cargo.toml and
+--   facts/lsm.rs is EMPTY — it touches only facts/convert/*. NOT RE-MEASURED
+--   after the finalize commit, and not required to be: no engine file moved.
+
+-- ══ DIVERGENCES, PLAINLY ═══════════════════════════════════════════
+
+-- X1 E4 sid: a pre-registered BRANCH RESOLVED, not a failure. PRIMARY pinned
+--    (sid conflicts 0, total 78 not 117, entities 503,404 not 503,443). The
+--    §5.3 three-id-paths skew that motivated the alternative (distinct sids
+--    503,372 < distinct ids 503,404) is REAL but does not touch the 39 pairs:
+--    they agree on sid, so the skew lives elsewhere in the base. NOT MEASURED:
+--    where. Recorded as a stage-2 question, not silently closed.
+-- X2 PREDICATE COUNT IS 134, NOT THE 141 CITED THREE TIMES IN THE PRE FILE
+--    (lines 102, 246, 333). The pre-registration's prose was wrong; the run is
+--    right. RECONCILED EXACTLY, ZERO RESIDUAL, this round:
+--      /tmp/rofl-measure/preds.py (1,944 B, present — an earlier claim in this
+--      session that it was absent was FACTUALLY WRONG and is retracted here)
+--      measures 60 node types / 48 edge types / 72 node meta keys / 17 edge
+--      meta keys, and its own formula 4 core + 48 + 72 + 17 = 141.
+--      Independently: node-meta ∪ edge-meta = 84, node-meta ∩ edge-meta = 5
+--      (constructor, kind, method, path, source) — 72 + 17 double-counts those
+--      five. 141 − 5 (double-counted) − 4 (line/column/endLine/endColumn
+--      collapsed) + 1 (span/5) + 1 (conflict/5) = 134.
+--      Manifest catalog kinds confirm it independently: core 4 + edge 48 +
+--      meta 77 + retyped 3 + span 1 + conflict 1 = 134, and the 81 meta-like
+--      predicates expand back to exactly the 84-key union with BOTH set
+--      differences EMPTY. Third, independent cross-check: the manifest's five
+--      `subject_universe == "node|edge"` predicates are EXACTLY the five
+--      intersection keys.
+--      NOTE: `node_type` values (60) are NOT predicates in variant A — types
+--      are the VALUE of type/2, not predicate names. That is why 60 never
+--      enters the arithmetic.
+-- X3 DEV-P6-1 SHIPPED WEAKER THAN REGISTERED, AND WAS REPAIRED IN-ROUND. The
+--    pre file registers «winner value+author+tick must agree»; b63a8049
+--    compared the VALUE only, over the converter's own conflict subjects.
+--    cec8a029 makes it four agreements over the UNION with the INPUT's
+--    multi-record subjects, plus a mechanical coverage gate. The original check
+--    DID pass on all 39; the repair is that it now COULD fail.
+-- X4 MANIFEST PROVENANCE CARRIES NO GIT SHA. F3 registers «converter git SHA».
+--    `ROFL_CONVERT_GIT_SHA` is read at COMPILE time and no build.rs bakes it
+--    (build.rs is outside the E10 change envelope and would put git state into
+--    every build of the whole crate). The honest default now names the failure
+--    rather than a commit that was never captured:
+--    `rfdb-0.4.1 git:not-baked(ROFL_CONVERT_GIT_SHA unset at compile time)`.
+--    F3 is therefore PARTIALLY MET: input path, input sha, input size and input
+--    manifest version are all present and verified; the converter revision is
+--    identified by the reproducibility pair (input_recursive_sha256, this
+--    store's own bytes) instead. Carried to stage 2 as an open item.
+-- X5 canonical_state_sha's u32 author component is the RANK, not the NAME —
+--    exactly as D6 pinned it, and §9.2's ban on interned ids in canonical
+--    artifacts is honoured for predicate and perspective but NOT for author.
+--    This is a real non-injectivity across stores. NOT changed (D6 is
+--    pre-registered and immutable); ESCALATED as OWNER-RULINGS OQ-C3-1, stated
+--    verbatim in the manifest's own `schemes.author_interning`, and PINNED by
+--    `canonical_state_sha_author_component_is_the_rank_not_the_name` so no
+--    future round can move it by accident.
+
+-- ══ COMPILE-PHASE SEMANTIC FIXES (C-numbers) ═══════════════════════
+
+-- C23 (facts/lsm.rs:332-350) — the round's ONLY compile-phase semantic call.
+--   Ambiguity: D1 requires reading the old base THROUGH `LsmFactStore::open`
+--   and S1 requires enumeration over ONE pinned snapshot, but the only two
+--   accessors reaching that snapshot (`read_snapshot_of`, `store_read`) were
+--   `#[cfg(test)] pub(crate)` test seams — they do not exist in a non-test
+--   build. These produced the ONLY two compile errors in the 3,283-line
+--   converter (E0599 at convert/mod.rs:361 and :363). Meanwhile E10's file list
+--   excludes lsm.rs entirely.
+--   Choice: un-gate the two accessors (drop `#[cfg(test)]`, retitle «Test seam»
+--   → «Crate seam» naming the converter as the second consumer). Bodies
+--   byte-identical, visibility stays pub(crate), no new public API, +7/−5.
+--   Rationale: the alternative (open ManifestStore + MultiShardStore directly
+--   inside convert/) was a REAL behaviour change against the pre-registration —
+--   it would double-open the 543 MB base, contradicting D1's single read-only
+--   open, and move S1's pin off the LsmFactStore snapshot. The minimal fix that
+--   preserves pre-registered SEMANTICS beats the one that preserves the file
+--   LIST. E10's operative criterion (storage_v2/, derive/plan*, derive/exec*,
+--   graph/ diff EMPTY) was measured and IS empty; the crate's own hygiene test
+--   `no_fact_store_consumer_outside_facts` mechanically proves facts/lsm.rs has
+--   no consumer outside src/facts/, so it is provably off the engine hot path.
+--   Flagged loudly (diff_scope_clean=false), never hidden.
+
+-- ══ DEFECTS THE UNIT TESTS CAUGHT ══════════════════════════════════
+
+-- T1 The blocker (finding 14) was reproduced BEFORE it was fixed:
+--   `every_corrupted_length_is_a_typed_error_never_a_panic` walks every length
+--   field of a real encoded segment, corrupts each in turn, and asserts a typed
+--   `SegmentError`. On pre-fix code it PANICKED (slice index out of range on a
+--   36-byte segment with a corrupted varint) — the test failing first is what
+--   proved the reviewer's claim rather than assuming it.
+-- T2 `c1_rejects_a_store_that_dropped_its_conflicts` is a falsification test,
+--   not an assertion: it FIRST asserts the control store is non-vacuous
+--   (input_multi_record_subjects 1, input_type_divergent_subjects 1,
+--   type_conflict_subjects 1, consistent true), THEN strips the conflict facts
+--   and requires resolved_view_consistent == false. On pre-fix code the
+--   stripped store passed — which is precisely findings 21/22.
+-- T3 The pre-existing tamper test had to be STRENGTHENED to survive the new
+--   sha256 verification: it now RE-SEALS the manifest descriptor after
+--   re-encoding the tampered row. That made it a better test — C1 must now
+--   catch a wrong value in an INTERNALLY CONSISTENT store, which is exactly the
+--   shape a converter bug produces (a real bug writes a consistent digest of
+--   wrong bytes).
+-- T4 `r1a_f3_numeric_author_min_agrees_with_shortlex_name_min` uses a
+--   vocabulary where shortlex ≠ plain lexicographic (sorted: Z, b, aa, $legacy)
+--   and pins that F3-over-ids picks the shortlex-least NAME. It also asserts
+--   the REAL converter's author table is strict shortlex — the invariant the
+--   equivalence rests on, which had zero coverage before (finding 25).
+-- NOT RECORDED by the implementation phase: whether any of ITS 21 tests caught
+--   a defect during development. The phase reported only the final green run,
+--   so this ledger cannot claim otherwise.
+
+-- ══ REVIEW FINDINGS — ALL 35, WITH DISPOSITION ═════════════════════
+-- Severities as filed: 1 blocker, 10 major, 14 minor, 10 note. Five duplicate
+-- pairs: 21≡29, 10≡30, 17≡31, 2≡33, 20≡35 — each fixed once, both listed.
+
+-- 14 blocker read_segment panics on a corrupted varint length — FIXED.
+--    Bounded `Cursor` (`remaining`/`take`/`bounded_len`/`bounded_count`),
+--    varint overflow rejected. Test T1. The reviewer was right and the panic
+--    was reproduced before the fix, not argued about.
+-- 15 major unbounded Vec::with_capacity from attacker-controlled row_count /
+--    string_count (703 GiB reserved from a ~40 B file) — FIXED: both counts are
+--    clamped against the bytes actually remaining before any allocation.
+-- 1  major five silent-drop counters ungated and invisible to C1 — FIXED:
+--    `gate_silent_drops` (convert/mod.rs) turns all five into a typed
+--    E-CONV-ENVELOPE abort. Test `every_silent_drop_counter_aborts_the_conversion`
+--    (all five abort; an EXACT duplicate still converts — the distinction
+--    matters, exact duplicates lose nothing).
+-- 2  major (≡33) verify_c1 normalises COLUMN_META_KEYS away on the INPUT side,
+--    so S5 can never fail C1 — FIXED via option (1) of the reviewer's own two:
+--    `blob_copies_differing > 0` is now an abort, which makes the reader-side
+--    filter SAFE because the differing case can no longer reach it. Test
+--    `a_blob_copy_that_disagrees_with_its_column_aborts_the_run` (agreeing
+--    control converts; differing aborts). Why not option (2) ($meta: emission):
+--    it would mint a NEW predicate on data no measured base carries, i.e. ship
+--    an untested vocabulary path to handle a case we abort on anyway.
+-- 17 major (≡31) load_run never verified the sha256 it wrote, nor arity —
+--    FIXED: bytes are read ONCE, length drift rejected, sha256 verified against
+--    THOSE bytes, then `decode_segment` (split out of `read_segment` precisely
+--    so verify and decode cannot see different bytes) decodes the same buffer,
+--    then arity is checked against the catalog. Test
+--    `a_segment_whose_bytes_disagree_with_the_manifest_digest_is_rejected`.
+--    CLOSED BY CONSTRUCTION on the real base: every run now verifies all 2,776
+--    digests, which had NEVER been checked before this round.
+-- 16 major Q2 catalog cannot reconstruct the semantics it pins — FIXED:
+--    `DeclJson.columns` (span/5's endLine is no longer an untyped Int),
+--    `DeclJson.subject_universe`, and `SchemesJson` recording canon / fid /
+--    eid / routing / bloom / author_interning / state_sha as fixed strings of
+--    this format version. They are recorded, not computed, so they cost nothing
+--    and cannot drift silently.
+-- 21 major (≡29) DEV-P6-1 is value-only and driven by the converter's own
+--    conflicts, so it cannot see a MISSING conflict — FIXED, see X3.
+-- 22 major no run-level gate fires if ZERO conflicts are emitted — FIXED:
+--    the coverage gate plus verify_c1's INPUT-derived non-vacuity
+--    (`type_divergent ⊆ conflict_subjects` AND
+--    `exceptions.len() == type_losers.len()`), with the three new report fields
+--    proving the derivation was non-empty (39/39/39). Test T2.
+-- 8  major E7's gate object contains a caller-environment field — FIXED:
+--    `--input` is canonicalized, and the fix is PROVEN, not argued: run f3 with
+--    `/tmp/rofl-p2-real-base/./graph.rfdb` produced a byte-identical store with
+--    an identical `provenance.input_path`. Residual (different mount point)
+--    stated in E7 and in the code comment, not hidden.
+-- 9  major canonical_state_sha digests the author RANK, not the NAME —
+--    ACKNOWLEDGED, DOCUMENTED, PINNED, ESCALATED; not changed. See X5 and
+--    OWNER-RULINGS OQ-C3-1. Rejecting the code change is a D6 (pre-registered,
+--    immutable) constraint, NOT a disagreement with the reviewer: the collision
+--    class is real and is now stated in the store's own manifest.
+-- 3  minor content_hash absent from NormNode — FIXED: the field exists and C1
+--    compares it; the doc states it can only ever be 0 BECAUSE the envelope
+--    aborts otherwise, so anyone who relaxes that gate turns C1 red instead of
+--    quietly making it blind.
+-- 4  minor failed winner-fid lookup swallowed by unwrap_or_default — FIXED:
+--    typed E-CONV-VERIFY naming the subject and the fid.
+-- 5  minor (≡24) type_cross_checked_subjects reported the LOSER count — FIXED:
+--    it is now `cross_checked_subjects.len()`, an actual subject count
+--    (39 on the real base), and the doc comment no longer asserts a false
+--    general equality.
+-- 6  minor metrics.entities defined as sid live_facts — FIXED: it counts
+--    DISTINCT Id subjects of live sid facts, so a subject with two live sid
+--    facts can no longer inflate it.
+-- 11 minor two order-sensitive paths unexercised by this input — FIXED, both:
+--    (a) S2 keep-first is now UNREACHABLE without an abort (the shadowed-drop
+--    counters gate), which is stronger than making the tie-break
+--    content-derived; (b) the exceptions sort key is now TOTAL —
+--    (subject, loser_fid, loser_author, loser_tick).
+-- 18 minor PhysStrategy chosen data-dependently (has_term ? Nary : Attribute)
+--    — FIXED: the data-dependent strategy selection is gone, so the same
+--    predicate name cannot carry different declared physics in two stores.
+-- 19 minor five metadata predicates silently mix node and edge-EID subjects —
+--    FIXED by `subject_universe`. Measured histogram: node 65, pair 51,
+--    edge 12, node|edge 5, fact 1. The five `node|edge` predicates are exactly
+--    the five keys measured in BOTH metadata key sets (X2) — the catalog and
+--    the independent measurement agree.
+-- 23 minor ConflictSummary mixes denominators — FIXED: a `subjects` field was
+--    added alongside `count`, with an explicit doc stating which fields count
+--    conflicts and which count subjects.
+-- 25 minor F3 has zero real-base coverage and rests on an untested invariant —
+--    FIXED: test T4, PLUS `ConvertedStore::open` now REJECTS a manifest whose
+--    author or perspective table is not in strict shortlex order. The invariant
+--    is no longer an assumption; it is a load-time gate.
+-- 10 minor (≡30) manifest ships `git:unbaked` / build-env-coupled — FIXED as
+--    far as honesty goes (see X4); the git SHA itself is carried to stage 2.
+-- 32 minor round-012 results ledger not committed — FIXED BY THIS FILE.
+-- 7  note C1 is not byte-level — ACCEPTED, no code change (the reviewer asked
+--    for exactly that): the level is now stated explicitly in E8 above with the
+--    measured 502,526/503,443 and 1,074,742/1,107,838 numbers.
+-- 12 note LE-pinned format, §9.1 pins no byte order — FIXED, doc-only:
+--    `schemes.state_sha` and `schemes.fid` spell LE explicitly in every written
+--    manifest, and segment.rs now carries an explicit BYTE ORDER paragraph
+--    (all fixed-width integers little-endian; varints LEB128; canon-v1 payloads
+--    keep their own big-endian order). NOT MEASURED: an actual big-endian run.
+-- 13 note POSITIVE — the nondeterminism hunt found nothing, across four
+--    independent processes with zero exclusions — RECORDED. E7 is structural,
+--    not accidental. This round added two more processes (f3 path-spelling,
+--    f4 rebuild), so the property now has six independent confirmations.
+-- 20 note (≡35) the implementer's «141 NOT MEASURED / preds.py absent» claim
+--    is factually wrong — ACCEPTED AND THE CLAIM RETRACTED. See X2: the
+--    reconciliation is exact with zero residual, and the same wrong claim was
+--    repeated once inside this phase before being checked. The lesson is the
+--    Evidence Rule applied to one's OWN prior sentences.
+-- 26 note conflict/5 decl duplicated inline — FIXED: the converter now derives
+--    the physics from `PredicateCatalog::conflict_decl()` and asserts every
+--    field it depends on (MultiValued, Timeless, BoolTag, empty priority,
+--    arity == CONFLICT_COLUMNS.len()), so a catalog change cannot drift past it.
+-- 27 note no-op `.map(|v| v)` in verify_c1 — FIXED: deleted.
+-- 28 note metrics.facts adds the in-memory conflict counter — FIXED: it uses
+--    the PERSISTED `conflict` decl's live_facts, guarded by a drift gate that
+--    fails if in-memory and on-disk disagree. VERIFIED on the real base: the
+--    manifest's own Σ live_facts equals the reported metrics.facts exactly.
+-- 33 note (≡2) — see 2.
+-- 34 note bloom + zone map are write-only, 11,239,384 B unexercised —
+--    REJECTED AS A STAGE-1 DEFECT, with the cost recorded (1.651% of the
+--    store). Grounds the reviewer can check: (a) F1 pre-registers exactly this
+--    («The reader does not NEED bloom/zone — full-scan verification; they are
+--    the §3.2 conventions carried into the format»), so this is a registered
+--    property, not a discovery; (b) the structures are NOT untested — the
+--    reviewer's own suggested test already exists at the encoder level:
+--    `bloom_has_no_false_negatives_and_still_rejects_absent_keys`
+--    (convert/segment.rs) and `zone_map_min_max_bound_the_leading_column`
+--    (convert/segment.rs) assert precisely «every Id-typed leading key present
+--    is accepted by its own bloom» and «every key falls inside the zone-map
+--    bounds»; (c) their probe and parameter rules are now in
+--    `schemes.bloom`, so a stage-2 reader can consume them without the
+--    converter source. Building the PROBE path is stage 2's read path, which is
+--    where a probe can be measured against a real query. Writing them now is
+--    what makes the store usable then without a re-encode.
+-- 35 note (≡20) — see 20.
+
+-- ══ WHAT IS NOT MEASURED (stated, not implied) ═════════════════════
+--
+-- NM1 No engine query over the converted store (Q3/N2 — stage 2).
+-- NM2 No compaction, no supersession, no ⊕-invariance over the new layout
+--     (C3-full is stage-2+; stage 1 ships no compaction at all).
+-- NM3 No cross-model sha equality vs the old base (N1) — P2..P5 speak base-five
+--     attr/3, the converter speaks 134 predicates. C1 is the honest instrument.
+-- NM4 Perf of any read over the converted store: no probe path exists yet.
+-- NM5 Byte-identity across machines or across endianness (see E7 residual).
+-- NM6 Where the §5.3 id/sid skew (503,372 vs 503,404) actually lives (X1).
+-- NM7 Whether the implementation phase's own 21 tests caught defects (T-notes).
+-- NM8 The perf proxy was NOT re-run after the finalize commit — unnecessary,
+--     the finalize diff touches only facts/convert/*, but stated rather than
+--     implied.
+
+-- ══ FINAL GATE BATTERY (post-finalize, on the exact committed tree) ═
+--
+-- cargo test --lib: 1585 passed / 0 failed / 28 ignored (26.88s). Baseline
+--   1557 (round-011) + 21 (b63a8049) + 7 (cec8a029) = 1585 ✓. Known-flaky
+--   test_commit_batch_performance_scaling passed in-suite.
+-- cargo test --lib facts::convert:: : 28 passed / 0 failed (0.72s).
+-- crash_recovery: 9 passed / 0 failed (0.04s);
+--   `git diff --stat -- packages/rfdb-server/tests/` EMPTY and
+--   `git status --short` shows no untracked test file.
+-- bench_c2_bulkload (release): 4 passed / 0 failed (18.24s).
+-- plan_golden: src/derive/golden/p3_plan_fingerprints.txt = 40,816 lines,
+--   `git status --short` on golden/ EMPTY (bit-identical).
+-- Conformance harness: exit 0, wallclock 17.1s; tier-0 120 seeds /
+--   0 divergences, why 325/325 sound, whynot 554/554 sound; tier-1 oracle
+--   self-check 30/30; verdicts GREEN 5 / RED 25 / DIVERGENCE 0 /
+--   HARNESS_GAP 0 — verdict-identical to the round-011 baseline. The three
+--   generated files (conformance-report.json, conformance-run-meta.json,
+--   _ai/research/rofl-conformance-report.md) restored via `git checkout --`;
+--   the tree afterwards showed ONLY the round's own files.
+-- Forbidden-pattern scan over the ADDED lines of the whole round
+--   (54dca5dc..worktree, src/ + Cargo.toml): CLEAN, zero hits for
+--   TODO/FIXME/HACK/XXX/todo!/unimplemented!/mock/stub/fake.
+-- Converter re-verified on the real base by the FINAL binary: four separate
+--   processes (f1, f2, f3 different path spelling, f4 rebuilt), all exit 0,
+--   all four output trees byte-identical, C1 clean on all four.
+-- ZERO FACT BYTES MOVED BY THE REVIEW ROUND: `diff -r --brief` between the
+--   pre-review store (/tmp/rofl-out-run1) and the final store (/tmp/rofl-out-f1)
+--   reports EXACTLY ONE differing file — rofl_manifest.json. All 2,776 .seg
+--   files are byte-identical; the +15,049 B is the manifest's new
+--   self-description (columns, subject_universe, schemes).
+-- Ledger discipline: 54dca5dc (pre) < b63a8049 (implementation) < cec8a029
+--   (finalize) < this file. The pre-registration was NOT modified.
+
+-- ══ OPEN QUESTIONS CARRIED TO THE OWNER ════════════════════════════
+--
+-- OQ-C3-1 (NEW, recorded in run-migration/OWNER-RULINGS.md): should
+--   canonical_state_sha digest the author NAME instead of the interned RANK?
+--   Keeping the rank costs nothing now but makes the digest a WITHIN-STORE
+--   identity, so a stage-2 cross-backend C3 gate must first prove the author
+--   tables are equal. Switching is one line but invalidates every recorded
+--   state sha and contradicts the immutable D6.
+-- OQ-C3-2 the git SHA in `provenance.converter` (X4): bake it via build.rs
+--   (puts git state into every build of the crate) or accept the
+--   (input sha, output bytes) reproducibility pair as the store's identity?
+-- The round-011 acks (OQ-1..OQ-5, R-8) all stand as implemented. OQ-4 landed
+--   here: conflict/5 IS durably materialized, 78 facts in perspective `audit`.
+--   OQ-5 DISSOLVED as pre-registered: in the per-key-predicate layout every
+--   metadata key is its own predicate, so every Functional subject is plain c0
+--   and the attr/3 compound-subject question no longer exists.
+
+-- ══ P4/P5 CARRY-FORWARDS UNTOUCHED (restated) ══════════════════════
+--
+-- OnceLock stats-cache staleness stays the P7 REQUIRED item; assert_batch edge
+-- groups still require the src node; legacy read paths (find_nodes_at,
+-- get_node_at physics, C22/R1 winner-collapse) keep today's behaviour — this
+-- round did not touch them, proven by the EMPTY engine-scoped diff of the
+-- finalize commit and by the untouched plan_golden / conformance verdicts.
+
+-- ══ STAGE-2 CONTRACT (what stage 1 actually learned) ═══════════════
+--
+-- S2-a ENGINE ROUTING (§5.2). Ship `blake3_u64(canon(subject)) % shard_count`
+--   in the ENGINE write path. Stage 1 already IMPLEMENTED and PROVED this
+--   function over 2,776 segments and recorded it in
+--   `schemes.routing`, so stage 2 copies a verified rule instead of inventing
+--   one. HARDER THAN EXPECTED: the reverse run routes by ITS OWN leading column,
+--   so a fact's two runs live in DIFFERENT shards by construction — any
+--   engine-side «one fact, one shard» assumption is already false in the data
+--   on disk.
+-- S2-b MVCC CONFLICT KEY. Replace `file_last_committed_version`
+--   (storage_v2/multi_shard.rs:143) with `(perspective, predicate, subject)`.
+--   Stage 1 makes this concrete: the converted store has no `file` dimension at
+--   all, so the current key cannot even be computed over it.
+-- S2-c OPEN SegmentType / ManifestStore. `storage_v2/types.rs from_u8` rejects
+--   any third variant today — that is, in code, WHY the engine cannot read the
+--   converted store. Stage 1 deliberately kept storage_v2 at a ZERO diff, so
+--   this is an additive change against a frozen baseline. Stage 2 either adopts
+--   the ROFLSEG1 header or re-encodes once; the format is now fully
+--   self-describing (columns, subject_universe, schemes, per-segment sha256 +
+--   arity, all verified on load), so a re-encoder can be written against the
+--   manifest alone.
+-- S2-d node_view §3.3 materialised Composite + the http_server.rs full-scan
+--   consumers. EASIER: the four node_view components plus sid are already
+--   Functional with the seeded author_priority on all five decls, the R-1a
+--   resolution is already computed, and the 39 arbitrations are already
+--   DURABLE as conflict/5 in `audit` — node_view can read the resolution
+--   instead of recomputing it. HARDER: the losers are LIVE (Q10), so every
+--   consumer that assumes «one live fact per (subject, Functional predicate)»
+--   is wrong on 39 subjects TODAY and must go through the resolver.
+-- S2-e LEGACY READ PATHS onto FactStore: cypher/, datalog/eval.rs
+--   reverse_attr_lookup, graph view. Stage 1 pins the shape they must speak:
+--   134 predicates, 65 node-subject / 51 pair / 12 edge / 5 node|edge / 1 fact
+--   universes, span/5 as a Composite (four keys collapsed), edge metadata keyed
+--   by a COMPUTED EID with no `edge_of/3` to join through. That last one is the
+--   single biggest surprise for a legacy reader: to find an edge's metadata you
+--   must recompute `fid("main", <EDGE_TYPE>, [Id(src), Id(dst)])`. It is
+--   recorded in `schemes.eid`, but every consumer needs the helper.
+-- S2-f GATES. C2 (six enrichers back on BatchHandle.commit), C6 (pack-phase
+--   perf fence 56.2 / 74 s), C8 (crash_recovery rewritten on supersession —
+--   §10.4 pins it to the P7 crash gate), C3-full (compaction ⊕-invariance),
+--   C4 (P8 backends), C5 (v0 corpus 29 tests). Stage 1 contributes the
+--   INSTRUMENT for C3-full: `canonical_state_sha` is computed by a reader over
+--   written bytes, so a compaction that changes it has provably changed the
+--   logical state — subject to OQ-C3-1 (the author-rank component) being ruled
+--   on FIRST if the comparison is cross-backend.
+-- S2-g WHAT STAGE 1 DISCOVERED THAT CHANGES THE PLAN:
+--   (i) the 2.995x byte growth is dominated by a FIXED 35 B assertion column
+--       per physical row (39.1% of the store). Stage 2's storage budget is
+--       decided by the row shape, not by the tuple data — A′ RLE over the
+--       assertion columns is the lever, and it is worth more than any value
+--       encoding.
+--   (ii) the per-SEGMENT string table stores a repeated string once per shard
+--       (1,252,486 entries, 28.3% of the store). A store-wide dictionary is a
+--       second, independent lever.
+--   (iii) `metrics.entities` is a SUBJECT count, and the sid predicate is the
+--       only carrier of that notion in the new layout — stage 2's node_view
+--       must not treat live-fact counts as entity counts.
+--   (iv) 4,997 JSON-composite metadata values survive as Term($json,[Str]).
+--       Today's attr path DROPS them. Any stage-2 read path that reproduces
+--       the old `json_scalar_to_string` behaviour would silently re-introduce
+--       the loss C1 just proved is gone.

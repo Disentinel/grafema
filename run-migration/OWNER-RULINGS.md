@@ -120,3 +120,37 @@ OQ-5 ACK — attr/3 Functional (file/name) deferred to P6 (compound (id,key) sub
 measured conflicts are fully covered by node/type).
 Also ratified: fa40b361 commit message stands without history rewrite (audited SHA ordering
 outweighs message template); F1 process rule — ONE agent owns the timed perf window at a time.
+
+## OQ-C3-1 (OPEN — raised by round-012 adversarial review, awaiting an owner ruling)
+
+**Question: should `canonical_state_sha` digest the author NAME instead of the interned author
+RANK?**
+
+What ships today (round-012, P6 stage 1): §9.1's `u32(author)` component is the author's position
+in the store's own shortlex-sorted author table — exactly what round-012-pre D6 pre-registered and
+what the implementation commit `b63a8049` pins. It is process-invariant (proven: three separate
+runs, byte-identical stores) and it is what makes the converter's numeric-min F3 provably agree
+with the base's shortlex-name-min F3.
+
+Why the reviewer is right that this is a real question: the rank is **not injective over author
+names across stores**. Two stores with different author sets that happen to sort to the same table
+length produce the same u32 for different names, and the same author gets a different u32 the
+moment the author set changes. §9.2 bans interned ids in canonical artifacts for the predicate and
+perspective components; the author component is the one place that ban is not honoured. A stage-2
+cross-backend C3 gate that compares `canonical_state_sha` between two backends whose author tables
+were built independently would therefore compare ranks, not identities.
+
+Cost of each answer:
+- **Keep the rank** (status quo): zero work now; the digest stays a WITHIN-STORE identity, and any
+  cross-store comparison must first prove the author tables are equal. That precondition must be
+  written into the stage-2 C3 gate.
+- **Switch to the NAME** (len-prefixed canon bytes, matching the predicate/perspective treatment):
+  a one-line change in `canonical_state_sha`, but it INVALIDATES every recorded state sha
+  (`6b83d6fc…` and the P2-P5 `ed520009…` lineage) and contradicts round-012-pre D6, which is
+  pre-registered and immutable.
+
+Recorded, not silently embedded: the non-injectivity is stated verbatim in the manifest itself
+(`schemes.author_interning`, which cites this open question by name), in the doc comment on
+`canonical_state_sha`, and it is pinned by the test
+`canonical_state_sha_author_component_is_the_rank_not_the_name`
+(packages/rfdb-server/src/facts/convert/reader.rs) so no future round can change it by accident.
