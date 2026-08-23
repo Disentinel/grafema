@@ -34,7 +34,7 @@ export class RfdbRofl {
   constructor(client: RfdbClient, opts: { naive?: boolean } = {}) {
     if (opts.naive) {
       throw new UnsupportedFeature('dialect:untranslatable',
-        'naive evaluation mode is a v0 engine-internal toggle; RFDB has a single evaluation mode (v0 modes agree on fact sets, LIMITS.md:48)');
+        'naive evaluation mode is a v0 engine-internal toggle; RFDB has a single evaluation mode (v0 modes agree on fact sets, LIMITS.md:48 ⟦and seminaive agree on results⟧)');
     }
     this.client = client;
   }
@@ -63,7 +63,7 @@ export class RfdbRofl {
   private guardOpts(opts: { who?: string; budget?: number }, what: string): void {
     if (opts.budget !== undefined) {
       throw new UnsupportedFeature('missing:holes',
-        `${what} with an evaluation budget: v0 commits partial results + hole/2 facts on exhaustion (engine.ts:188-198); RFDB aborts without committing (E-codes, engine_v2.rs:681-684) — the known policy contradiction, ТЗ P1 mandates holes`);
+        `${what} with an evaluation budget: v0 commits partial results + hole/2 facts on exhaustion (engine.ts:188-198 ⟦this.store.add(V.hole, MAIN⟧); RFDB aborts without committing (E-codes, engine_v2.rs:681-684 ⟦abort-no-commit⟧) — the known policy contradiction, ТЗ P1 mandates holes`);
     }
     if (opts.who !== undefined) {
       throw new UnsupportedFeature('missing:rules-as-data',
@@ -186,7 +186,7 @@ export class RfdbRofl {
     this.checkQueryLit(lit, `query '${text.trim()}'`);
     const tuples = await this.dumpRel(lit.rel);
     // vendored-unify matching over RFDB-returned tuples (matching code reuse,
-    // facts always RFDB's) + the exact v0 row rendering (api.ts:206-223)
+    // facts always RFDB's) + the exact v0 row rendering (api.ts:206-223 ⟦vars.length === 0 ? 'true'⟧)
     const vars = [...varsOf(lit.persp, varsOf(mkf('$t', lit.args)))].sort();
     const rows = new Map<string, QueryRow>();
     for (const tuple of tuples) {
@@ -234,7 +234,7 @@ export class RfdbRofl {
   }
 
   /** v0 API why(): the v0 contract is a recursive indented witness TREE with
-   *  content-addressed rule ids and ticks (api.ts:250-277). RFDB's witness is
+   *  content-addressed rule ids and ticks (api.ts:250-277 ⟦w.tick⟧). RFDB's witness is
    *  a flat {ruleAstHash, body[]} — the SHAPE is unrepresentable, so this
    *  throws missing:whynot-shape (after delegating existence to the engine,
    *  carried in the detail for evidence). */
@@ -244,7 +244,7 @@ export class RfdbRofl {
     }
     const { witness, factLine } = await this.whyWitness(text);
     throw new UnsupportedFeature('missing:whynot-shape',
-      `v0 why() is a recursive tree '<key> <= r<fnv1a> @tick N' (api.ts:250-277); RFDB witness for ${factLine} is flat {ruleAstHash, body[]} (derive/exec.rs:279-287) — witness ${witness ? 'EXISTS' : 'is null'} but the tree shape is unrepresentable. Live-probed R15/P5a: explainDatalogFact on u_r ← u_q ← u_p returns ONE level (body=[u_q(a)], no nesting into u_p) and carries no tick, and the rule id is a 64-hex ast hash, not v0's r<fnv1a>`);
+      `v0 why() is a recursive tree '<key> <= r<fnv1a> @tick N' (api.ts:250-277 ⟦w.tick⟧); RFDB witness for ${factLine} is flat {ruleAstHash, body[]} (derive/exec.rs:298-306 ⟦pub struct DerivationWitness⟧) — witness ${witness ? 'EXISTS' : 'is null'} but the tree shape is unrepresentable. Live-probed R15/P5a: explainDatalogFact on u_r ← u_q ← u_p returns ONE level (body=[u_q(a)], no nesting into u_p) and carries no tick, and the rule id is a 64-hex ast hash, not v0's r<fnv1a>`);
   }
 
   async whynot(text: string, opts: { budget?: number } = {}): Promise<{ holds: boolean; text: string }> {
@@ -253,18 +253,18 @@ export class RfdbRofl {
     }
     const { witness, factLine } = await this.whynotWitness(text);
     throw new UnsupportedFeature('missing:whynot-shape',
-      `v0 whynot() demonstrates per-rule failed premises as an indented text demo (api.ts:290-345); RFDB gap witness for ${factLine} is flat single-rule/first-premise (${witness ? 'gap EXISTS' : 'no gap'}) — the demo shape is unrepresentable`);
+      `v0 whynot() demonstrates per-rule failed premises as an indented text demo (api.ts:290-345 ⟦failed premise:⟧); RFDB gap witness for ${factLine} is flat single-rule/first-premise (${witness ? 'gap EXISTS' : 'no gap'}) — the demo shape is unrepresentable`);
   }
 
   excise(_text: string, _opts: { budget?: number } = {}): { ok: boolean; removed: string[]; added: string[] } {
     throw new UnsupportedFeature('missing:excise',
-      'v0 excise = clean re-evaluation on EDB minus one fact (api.ts:348); RFDB sim_derive is overlay-ADD, there is no minus-one-fact counterpart');
+      'v0 excise = clean re-evaluation on EDB minus one fact (api.ts:348 ⟦excise(text: string⟧); RFDB sim_derive is overlay-ADD, there is no minus-one-fact counterpart');
   }
 
   // ── time ────────────────────────────────────────────────────────
 
   tickAdvance(_opts: object = {}): { advanced: boolean; quiescent: boolean; partial: boolean } {
-    throw new UnsupportedFeature('missing:temporal', '@init/@next tick semantics (api.ts:393-421) have no RFDB counterpart');
+    throw new UnsupportedFeature('missing:temporal', '@init/@next tick semantics (api.ts:393-421 ⟦tickAdvance(⟧) have no RFDB counterpart');
   }
 
   run(_opts: object = {}): { ticks: number; quiescent: boolean; partial: boolean } {
@@ -297,7 +297,7 @@ export class RfdbRofl {
 
   strataPlan(): { rule: string; rel: string; level: number | null }[] {
     throw new UnsupportedFeature('missing:rules-as-data',
-      'v0 strata come from boot-derived stratum/2 + unstratified/1 FACTS (engine.ts:2-4, boot.rofl:17-21); RFDB stratification is internal, not queryable');
+      'v0 strata come from boot-derived stratum/2 + unstratified/1 FACTS (engine.ts:2-4 ⟦READ from stratum/2 facts⟧, boot.rofl:17-21 ⟦stratum(Rel, 0)⟧); RFDB stratification is internal, not queryable');
   }
 
   supportCount(_key: string): number {

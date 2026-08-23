@@ -28,7 +28,7 @@
 //     by the structural cross-join guard (E-PLAN-003, by design);
 //   • v0 ATOM and v0 INTEGER constants both translate and stay DISTINCT: an
 //     atom goes out as a quoted const, an integer as a BARE numeric literal
-//     that the program parser types as Value::Int (datalog/parser.rs:165-223)
+//     that the program parser types as Value::Int (datalog/parser.rs:165-223 ⟦Value::Int(i)⟧)
 //     and that comes back tagged `~int:N`. Live-probed (R15/P1, see
 //     run-migration/R15-citation-audit.md): `u_p(1)` and `u_p("1")` dump as
 //     `~int:1` and `1` and do NOT join; an int literal also works as a body
@@ -36,7 +36,7 @@
 //     do NOT translate — program text has a single quoted-const surface, so a
 //     v0 string and the v0 atom of the same spelling become one value
 //     (live-probed R15/P3a). Integers past i64/2^53 stay missing:bignum: that
-//     is the ORACLE's ceiling (LIMITS.md:49-51), checked first.
+//     is the ORACLE's ceiling (LIMITS.md:49-51 ⟦no bignums (safe-integer JS range)⟧), checked first.
 
 import type { Clause, Lit, BodyElem, Term } from './neutral.ts';
 import { RESERVED, IFACE } from '../vendor/rofl-v0/src/reflect.ts';
@@ -119,7 +119,7 @@ function isWildcard(t: Term): boolean {
 /** RFDB program text for a checked constant term: a v0 atom becomes a quoted
  *  const, a v0 integer a BARE numeric literal, which the program parser types
  *  as `Value::Int` rather than as a string const or a node id
- *  (datalog/parser.rs:165-223). */
+ *  (datalog/parser.rs:165-223 ⟦Value::Int(i)⟧). */
 function constText(t: Term): string {
   if (t.k === 'a') return `"${t.name}"`;
   if (t.k === 'i') return String(t.v);
@@ -127,9 +127,9 @@ function constText(t: Term): string {
 }
 
 /** v0-canonical text for a checked constant term — exactly unify.ts:79-87
- *  canonTerm: an atom renders as its name, an integer as its decimal. The two
+ *  ⟦export function canonTerm⟧: an atom renders as its name, an integer as its decimal. The two
  *  never collide, because a v0 atom is lexed as `[a-z][A-Za-z0-9_]*` and can
- *  never be all-digit (a leading digit is lexed as an int, parser.ts:52-63). */
+ *  never be all-digit (a leading digit is lexed as an int, parser.ts:52-63 ⟦toks.push({ t: 'int'⟧). */
 function constCanon(t: Term): string {
   if (t.k === 'a') return t.name;
   if (t.k === 'i') return String(t.v);
@@ -154,7 +154,8 @@ export function canonToTerm(s: string): Term {
 }
 
 /** Checked ground constant → its wire form for an `explain` key (the READ
- *  direction of the protocol's value surface, rfdb_server.rs:3202-3213): an
+ *  direction of the protocol's value surface, rfdb_server.rs:3202-3213
+ *  ⟦resolves the bare-decimal ambiguity⟧): an
  *  atom is its bare name, an integer is `~int:N` (live-probed R15/P1f). */
 export function constToWireKey(t: Term): string {
   if (t.k === 'a') return t.name;
@@ -167,17 +168,17 @@ export function constToWireKey(t: Term): string {
 export function checkLitTerms(lit: Lit, where: string): TranslationFailure | null {
   for (const a of lit.args) {
     if (a.k === 'f') {
-      return fail('missing:compound-terms', `functor term '${a.name}(…)' in ${where}: the derive program parser has no functor form — parse_term accepts wildcard, quoted const, variable, bare const and number, nothing else (datalog/parser.rs:146-173). Live-probed R15/P2: 'u_p(f(a, b)).' in a fact, in a body and in a head each come back "Datalog parse error"; the ~term: tag (datalog/wire.rs:31) is a WIRE form, rejected in program text`);
+      return fail('missing:compound-terms', `functor term '${a.name}(…)' in ${where}: the derive program parser has no functor form — parse_term accepts wildcard, quoted const, variable, bare const and number, nothing else (datalog/parser.rs:146-173 ⟦fn parse_term⟧). Live-probed R15/P2: 'u_p(f(a, b)).' in a fact, in a body and in a head each come back "Datalog parse error"; the ~term: tag (datalog/wire.rs:31 ⟦"~term:"⟧) is a WIRE form, rejected in program text`);
     }
     if (a.k === 'i') {
       const abs = BigInt(Math.abs(a.v));
       if (abs > I64_MAX || Math.abs(a.v) > Number.MAX_SAFE_INTEGER) {
-        return fail('missing:bignum', `integer ${a.v} in ${where} exceeds the safe-integer range the v0 ORACLE can hold (LIMITS.md:49-51 — no bignums, JS safe-integer range), so the two engines would disagree by construction; RFDB itself holds it exactly (live-probed R15/P1e: 2^68 dumps as ~big:295147905179352825856)`);
+        return fail('missing:bignum', `integer ${a.v} in ${where} exceeds the safe-integer range the v0 ORACLE can hold (LIMITS.md:49-51 ⟦no bignums (safe-integer JS range)⟧), so the two engines would disagree by construction; RFDB itself holds it exactly (live-probed R15/P1e: 2^68 dumps as ~big:295147905179352825856)`);
       }
       continue; // translates as a bare numeric literal — see constText()
     }
     if (a.k === 's') {
-      return fail('dialect:untranslatable', `string constant ${JSON.stringify(a.v)} in ${where}: derive program text has exactly ONE quoted-const surface (datalog/parser.rs:154-164), so a v0 string and the v0 atom of the same spelling become the same engine value — live-probed R15/P3a, u_p("hello") joins u_q(hello) and yields a row. The ~str: tag that separates them on the wire (datalog/wire.rs:30) is not program-text syntax (R15/P3c: parse error)`);
+      return fail('dialect:untranslatable', `string constant ${JSON.stringify(a.v)} in ${where}: derive program text has exactly ONE quoted-const surface (datalog/parser.rs:154-164 ⟦Ok(Term::Const(s))⟧), so a v0 string and the v0 atom of the same spelling become the same engine value — live-probed R15/P3a, u_p("hello") joins u_q(hello) and yields a row. The ~str: tag that separates them on the wire (datalog/wire.rs:30 ⟦"~str:"⟧) is not program-text syntax (R15/P3c: parse error)`);
     }
   }
   return null;
@@ -238,7 +239,7 @@ export function translate(clauses: Clause[]): TranslateResult {
     for (const lit of litsOf(c)) {
       for (const a of lit.args) {
         if (a.k === 'i' && Math.abs(a.v) > Number.MAX_SAFE_INTEGER) {
-          return fail('missing:bignum', `integer ${a.v} in clause ${ci + 1} exceeds the safe-integer range the v0 ORACLE can hold (LIMITS.md:49-51 — no bignums, JS safe-integer range), so the two engines would disagree by construction; RFDB itself holds it exactly (live-probed R15/P1e: 2^68 dumps as ~big:295147905179352825856)`);
+          return fail('missing:bignum', `integer ${a.v} in clause ${ci + 1} exceeds the safe-integer range the v0 ORACLE can hold (LIMITS.md:49-51 ⟦no bignums (safe-integer JS range)⟧), so the two engines would disagree by construction; RFDB itself holds it exactly (live-probed R15/P1e: 2^68 dumps as ~big:295147905179352825856)`);
         }
       }
     }
@@ -247,7 +248,7 @@ export function translate(clauses: Clause[]): TranslateResult {
   for (const [ci, c] of clauses.entries()) {
     for (const b of c.body) {
       if (b.t === 'bi') {
-        return fail('dialect:untranslatable', `builtin '${b.op}' in clause ${ci + 1}: the v0 arithmetic/comparison semantics (unify.ts:96-113, JS trunc) → RFDB builtin mapping is unverified in P0 (first P1 flip candidate)`);
+        return fail('dialect:untranslatable', `builtin '${b.op}' in clause ${ci + 1}: the v0 arithmetic/comparison semantics (unify.ts:96-113 ⟦Math.trunc(l / r)⟧, JS trunc) → RFDB builtin mapping is unverified in P0 (first P1 flip candidate)`);
       }
     }
   }
@@ -293,7 +294,7 @@ export function translate(clauses: Clause[]): TranslateResult {
     // ('repeated head vars translate — both engines build the head by substitution').
     for (const a of c.head.args) {
       if (a.k !== 'v' || isWildcard(a)) {
-        return fail('missing:demand-mode', `head argument of clause ${ci + 1} is not a named variable: v0 tolerates such heads via demand/moded evaluation (engine.ts:80-127); RFDB has no demand mode`);
+        return fail('missing:demand-mode', `head argument of clause ${ci + 1} is not a named variable: v0 tolerates such heads via demand/moded evaluation (engine.ts:80-127 ⟦demand-backed (unfolded at call sites)⟧); RFDB has no demand mode`);
       }
       if (!posVars.has(a.name)) {
         return fail('missing:demand-mode', `head variable '${a.name}' of clause ${ci + 1} is not bound by a positive premise (not range-restricted): v0 handles this via demand mode`);
@@ -334,7 +335,7 @@ export function translate(clauses: Clause[]): TranslateResult {
         }
       }
       if (reached.size !== varLits.length) {
-        return fail('dialect:untranslatable', `disconnected rule body in clause ${ci + 1}: a positive premise shares no variable with the rest — RFDB's §3 structural cross-join guard rejects it (derive/plan.rs:599-613). Live-probed R15/P4: two, three-leg and non-leading shapes all come back "[E-PLAN-003] cross-join: literal \`u_q\` shares no bound variable with the preceding body"`);
+        return fail('dialect:untranslatable', `disconnected rule body in clause ${ci + 1}: a positive premise shares no variable with the rest — RFDB's §3 structural cross-join guard rejects it (derive/plan.rs:599-613 ⟦§3 cross-join guard⟧). Live-probed R15/P4: two, three-leg and non-leading shapes all come back "[E-PLAN-003] cross-join: literal \`u_q\` shares no bound variable with the preceding body"`);
       }
     }
   }
