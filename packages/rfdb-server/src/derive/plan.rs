@@ -1818,13 +1818,29 @@ fn arg_pattern(atom: &Atom, bound: &HashSet<String>) -> Vec<ArgMode> {
 /// constant probe — so it is exempt.
 fn shares_no_binding(atom: &Atom, bound: &HashSet<String>) -> bool {
     if bound.is_empty() {
-        // NOTHING is bound yet: every preceding leg was a binding-free FILTER (a ground
-        // probe / a variable-free negated leg — each multiplies the output by at most 1),
-        // so this leg is the rule's FIRST generator, not a Cartesian product. Without this
-        // exemption a filter was only safe in the WRITTEN order: once the cost model
-        // reordered the cheap ground probe first, the generator that followed was falsely
-        // rejected with E-PLAN-003 (ROFL conformance F3, live-probed:
+        // NOTHING is bound yet, so this leg is the rule's FIRST generator, not a Cartesian
+        // product. Without this exemption a filter was only safe in the WRITTEN order:
+        // once the cost model reordered the cheap ground probe first, the generator that
+        // followed was falsely rejected with E-PLAN-003 (ROFL conformance F3, live-probed:
         // `q0(X) :- p0(X), p1("c1","c2").`).
+        //
+        // Why the preceding legs cannot have multiplied: a leg placed while the bound set
+        // is still empty has NO VARIABLE ARGUMENT AT ALL — a free variable would have been
+        // bound by it, making the set non-empty, and a negated or function leg is not
+        // placeable until its variables are bound. On the FROM-SCRATCH routes the executor
+        // evaluates exactly that class as a ROW-INDEPENDENT nonemptiness filter with
+        // fan-out ≤ 1 (the variable-free branches of `join_derived` / `join_extensional`),
+        // so there the premise is ENFORCED, not assumed — without it a leading `edge(_, _)`
+        // is a real generator and this exemption would admit a genuine Cartesian product.
+        // Pinned by `exec::tests::variable_free_leg_does_not_multiply_the_intermediate`.
+        //
+        // EXACT SCOPE of that enforcement: `apply_leg` has a THIRD route,
+        // `join_base_against` (the semi-naive ΔB base leg), which carries no such branch
+        // and still cross-extends. ANSWERS are unaffected there (the extra rows are
+        // duplicates and the head projection is set semantics over an idempotent tag), and
+        // the fan-out is bounded by |ΔB| for that one relation rather than by the full
+        // base — but the ≤ 1 bound stated above is a claim about the from-scratch routes,
+        // not about the incremental one.
         return false;
     }
     let vars: Vec<&String> = atom
@@ -2316,6 +2332,41 @@ mod tests {
         let rules = prog.rules();
         plan_program(&rules, &strat, &stats(100, 100))
             .expect("a variable-free negated leg must never trip the E-PLAN-003 cross-join guard");
+    }
+
+    // ── registry ↔ planner vocabulary pin ───────────────────────────
+
+    /// Successor to `builtin.rs::every_registered_builtin_is_extensional_for_the_stratifier`,
+    /// which went vacuous when the stratifier dropped its predicate vocabulary (ROFL F2):
+    /// a stratify probe now succeeds for EVERY string, so it could no longer catch drift.
+    /// The PLANNER still keeps a vocabulary, and it is load-bearing — a name that is
+    /// neither storage-served (the catalog's `base_dispatch` map, which retired the
+    /// `BASE_RELATIONS` name list in P3/round-009) nor [`is_filter_or_function`] is
+    /// classified as tuple-introducing ([`introduces_tuples`]), which is exactly what the
+    /// E-PLAN-003 cross-join guard polices and what the cost model sizes as a relation. A
+    /// builtin registered in `builtin::registry()` but forgotten here would therefore be
+    /// mis-planned (the `method_suffix` miss, one consumer over). Pin the whole registry
+    /// against it.
+    #[test]
+    fn every_registered_builtin_is_a_filter_or_base_relation_for_the_planner() {
+        let catalog = crate::derive::catalog::PredicateCatalog::with_base_relations();
+        let known =
+            |pred: &str| catalog.base_dispatch(pred).is_some() || is_filter_or_function(pred);
+        for def in crate::derive::builtin::registry() {
+            assert!(
+                known(def.name),
+                "builtin `{}` is in builtin::registry() but is neither a catalog base \
+                 relation nor in plan.rs is_filter_or_function — the planner would treat \
+                 it as a tuple-introducing generator (E-PLAN-003 guard + cost model)",
+                def.name
+            );
+        }
+        // Non-vacuity control: the predicate above is a real discriminator, NOT a
+        // tautology like the stratifier probe it replaces.
+        assert!(
+            !known("zzz_not_a_registered_builtin"),
+            "the drift check must reject an unknown predicate, otherwise it pins nothing"
+        );
     }
 
     // ── per-rule materialization guard ──────────────────────────────

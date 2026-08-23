@@ -1693,11 +1693,19 @@ mod tests {
         }
     }
 
-    // A registry↔stratifier builtin-vocabulary pinning test lived here until the
-    // stratifier's `BUILTINS` mirror was removed (ROFL F2): the stratifier now treats
-    // EVERY non-derived, non-materialize-linked body predicate as extensional, so the
-    // registry/stratifier drift the test pinned (the method_suffix miss) is impossible
-    // by construction and the assertion had become a tautology.
+    // The registry↔consumer drift pin that lived here probed the STRATIFIER
+    // (`every_registered_builtin_is_extensional_for_the_stratifier`). The stratifier no
+    // longer keeps a predicate vocabulary at all (ROFL F2), so that probe now succeeds for
+    // EVERY string — registered builtin or nonsense — and the assertion had become a
+    // tautology. The drift risk itself did NOT disappear: the surviving vocabulary mirror
+    // is the PLANNER's (the catalog's `base_dispatch` map plus `plan.rs::is_filter_or_function`,
+    // which together decide `introduces_tuples` and therefore the E-PLAN-003 cross-join
+    // guard). The pin moved there, non-vacuously, as
+    // `plan.rs::every_registered_builtin_is_a_filter_or_base_relation_for_the_planner`
+    // (private items — it must live in plan.rs). The stratifier's *absence* of a
+    // vocabulary is itself pinned by `stratify.rs::stratifier_carries_no_predicate_vocabulary`,
+    // whose failure message carries the obligation to restore a stratifier-side pin if a
+    // vocabulary is ever reintroduced.
 
     #[test]
     fn arity_matches_mode_widths() {

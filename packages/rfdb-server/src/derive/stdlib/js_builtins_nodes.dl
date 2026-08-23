@@ -359,8 +359,14 @@ ext_func_node_plain(Sid, FnN, "<builtin>", M) :-
 % retracted) — identical-sid nodes from the legacy resolver are never touched.
 resolved_imp(I) :- node(I, "IMPORT"), edge(I, _, "IMPORTS_FROM").
 
-% Single-column projection so negation binds one ground var (the `\+ dotted(C)`
-% discipline — a 2-arg `\+ builtin_spec(Spec, _)` does NOT exclude reliably).
+% Single-column projection of `builtin_spec/2`, so the negated leg below carries
+% one ground var and no wildcard. This was once REQUIRED for soundness: a wildcard
+% column in a negated leg was read as "no match", so `\+ builtin_spec(Spec, _)`
+% excluded nothing. That executor bug is fixed — an anti-join now projects facts
+% and probe key onto the non-wildcard positions (exec.rs `join_derived`, pinned by
+% `exec::tests::negated_derived_leg_with_wildcard_is_existential`) — so the 2-arg
+% form is sound today. The projection stays because it is the shape the pack gates
+% cover, and it reads no worse.
 is_builtin_spec(Spec) :- builtin_spec(Spec, _).
 
 ext_other_imp(I, Spec) :-
