@@ -126,6 +126,18 @@ impl VersionPins {
         self.counts.lock().unwrap().keys().next().copied()
     }
 
+    /// Every version a live reader currently pins (refcount > 0), ascending.
+    ///
+    /// GC must union each of THESE versions' segments into the live set. Deriving
+    /// the pin union from `index.snapshots` instead is wrong on the delta-manifest
+    /// path: only checkpoint versions (`v == 1 || v % checkpoint_interval == 0`)
+    /// ever enter `index.snapshots`, so a reader that pinned any of the other 31
+    /// versions in a 32-version checkpoint interval contributes NOTHING to the
+    /// union and its segments are reclaimed under a live mmap.
+    pub fn pinned_versions(&self) -> Vec<u64> {
+        self.counts.lock().unwrap().keys().copied().collect()
+    }
+
     /// Total number of distinct pinned versions (diagnostics/tests).
     pub fn pinned_version_count(&self) -> usize {
         self.counts.lock().unwrap().len()
@@ -1658,10 +1670,17 @@ impl ManifestStore {
             atomic_write_json(&edit_path, &edit, self.durability)?;
             // Keep the index coherent so open() does not see a stale
             // latest_version and trigger a (correct but costly) rebuild.
+            // ALL four segment lists an edit can carry, not just the L0 pair: a
+            // missing id is invisible in-process (gc_collect's `self.current`
+            // guard covers it) but reaches disk in `referenced_segments`, where
+            // `open_with_config` seeds `next_segment_id` from its maximum and
+            // would hand the next commit a live segment id to truncate.
             for seg in edit
                 .added_node_segments
                 .iter()
                 .chain(edit.added_edge_segments.iter())
+                .chain(edit.l1_node_segments.iter().flatten())
+                .chain(edit.l1_edge_segments.iter().flatten())
             {
                 new_index.referenced_segments.insert(seg.segment_id);
             }
@@ -1810,6 +1829,23 @@ impl ManifestStore {
 // ── ManifestStore: Garbage Collection ──────────────────────────────
 
 impl ManifestStore {
+    /// Every segment id the CURRENT published version references.
+    ///
+    /// Live by definition — GC must never reclaim these. This is exactly what a
+    /// snapshots-only liveness rebuild cannot see on the delta-manifest path:
+    /// only checkpoint versions enter `index.snapshots`, so whenever the current
+    /// version is a non-checkpoint edit commit its segments appear in no snapshot.
+    fn current_segment_ids(&self) -> Vec<u64> {
+        self.current
+            .node_segments
+            .iter()
+            .chain(self.current.edge_segments.iter())
+            .chain(self.current.l1_node_segments.iter())
+            .chain(self.current.l1_edge_segments.iter())
+            .map(|s| s.segment_id)
+            .collect()
+    }
+
     /// Collect unreferenced segments (move to gc/ directory).
     ///
     /// Uses index.referenced_segments to determine live segments, then
@@ -1817,6 +1853,15 @@ impl ManifestStore {
     ///
     /// Safety: Two-phase GC (collect -> purge). If logic is wrong, files
     /// are in gc/ (recoverable), not deleted (permanent).
+    ///
+    /// CALLER PRECONDITION — exclusive engine access. `commit_batch_private`
+    /// writes and fsyncs its new `.seg` files BEFORE publishing the manifest
+    /// version that references them, so a segment file that is in no manifest is
+    /// not necessarily an orphan: it may be a commit in flight. Today the server
+    /// enforces this by lock choice alone (CommitBatch takes `engine.read()`,
+    /// while `compact` / `end_bulk_load` — the only GC entry points — take
+    /// `engine.write()`). Any future background or concurrent GC caller MUST hold
+    /// the same exclusive access or it will delete in-flight segments.
     ///
     /// Complexity: O(F) where F = files in segments/ directory
     pub fn gc_collect(&self) -> Result<Vec<String>> {
@@ -1838,19 +1883,49 @@ impl ManifestStore {
         // as defense-in-depth: even if `gc_collect` is called without a prior
         // `gc_manifests`, a pinned reader's segment file is never reclaimed.
         let mut referenced_ids: HashSet<u64> = self.index.referenced_segments.clone();
+        // Defense-in-depth (mirrors the pin guard below): the CURRENT published
+        // version's segments are live by definition — never reclaim them, even
+        // if `referenced_segments` is stale (e.g. a snapshots-only rebuild that
+        // predates edit commits, or any future caller that skips the rebuild).
+        referenced_ids.extend(self.current_segment_ids());
+        // MVCC B5 pin union, part 1 — the EXACT set of pinned versions. Deriving
+        // this from `index.snapshots` alone (as it did) misses every pinned
+        // NON-CHECKPOINT version: with `MANIFEST_CHECKPOINT_INTERVAL = 32` that is
+        // 31 of every 32 pinnable versions, and `ReadSnapshot::capture` pins
+        // whatever version happens to be current, with no checkpoint alignment.
+        // `load_manifest` replays the edit chain onto the enclosing checkpoint, so
+        // an edit version resolves here; `gc_manifests`'s retention floor
+        // (`checkpoint_at_or_below(min_pinned)`) is what keeps that chain on disk.
+        for version in self.version_pins.pinned_versions() {
+            // FAIL-CLOSED: an unreadable pinned manifest must NOT mean "references
+            // nothing" — that silently narrows the live set and unlinks a segment
+            // under a live reader's mmap. Refuse to collect instead.
+            let manifest = self.load_manifest(version)?;
+            for seg in manifest
+                .node_segments
+                .iter()
+                .chain(manifest.edge_segments.iter())
+                .chain(manifest.l1_node_segments.iter())
+                .chain(manifest.l1_edge_segments.iter())
+            {
+                referenced_ids.insert(seg.segment_id);
+            }
+        }
+        // Pin union, part 2 — every RETAINED version at or above the pin floor.
+        // Redundant with `referenced_segments` after a `gc_manifests` rebuild, but
+        // kept so a `gc_collect` called on its own is still conservative.
         if let Some(min_pinned) = self.version_pins.min_pinned() {
             for info in &self.index.snapshots {
                 if info.version >= min_pinned {
-                    if let Ok(manifest) = self.load_manifest(info.version) {
-                        for seg in manifest
-                            .node_segments
-                            .iter()
-                            .chain(manifest.edge_segments.iter())
-                            .chain(manifest.l1_node_segments.iter())
-                            .chain(manifest.l1_edge_segments.iter())
-                        {
-                            referenced_ids.insert(seg.segment_id);
-                        }
+                    let manifest = self.load_manifest(info.version)?;
+                    for seg in manifest
+                        .node_segments
+                        .iter()
+                        .chain(manifest.edge_segments.iter())
+                        .chain(manifest.l1_node_segments.iter())
+                        .chain(manifest.l1_edge_segments.iter())
+                    {
+                        referenced_ids.insert(seg.segment_id);
                     }
                 }
             }
@@ -2050,27 +2125,66 @@ impl ManifestStore {
             }
         }
 
-        // Recalculate referenced_segments from remaining manifests
+        // Recalculate referenced_segments from remaining manifests.
+        //
+        // FAIL-CLOSED on a read error. `if let Ok(..)` silently treated an
+        // unreadable manifest as "references nothing", and because the result
+        // OVERWRITES the live set (`set_referenced_segments`), one transient EIO /
+        // EMFILE / partially-written JSON permanently narrowed it — and the very
+        // next statements in the callers (`compact`, `reclaim_superseded_segments`)
+        // are `gc_collect()` then `gc_purge()`, so the narrowing became an unlink
+        // in the same breath. A recoverable read error must never escalate into
+        // permanent data loss: if any retained version cannot be read, leave
+        // `referenced_segments` alone (it is a superset, maintained incrementally
+        // by `commit` / `commit_edit`) so GC under-collects, and report the error.
         let mut referenced = HashSet::new();
+        let mut rebuild_error: Option<GraphError> = None;
         for info in &self.index.snapshots {
-            if let Ok(manifest) = self.load_manifest(info.version) {
-                for seg in manifest
-                    .node_segments
-                    .iter()
-                    .chain(manifest.edge_segments.iter())
-                    .chain(manifest.l1_node_segments.iter())
-                    .chain(manifest.l1_edge_segments.iter())
-                {
-                    referenced.insert(seg.segment_id);
+            match self.load_manifest(info.version) {
+                Ok(manifest) => {
+                    for seg in manifest
+                        .node_segments
+                        .iter()
+                        .chain(manifest.edge_segments.iter())
+                        .chain(manifest.l1_node_segments.iter())
+                        .chain(manifest.l1_edge_segments.iter())
+                    {
+                        referenced.insert(seg.segment_id);
+                    }
+                }
+                Err(e) => {
+                    rebuild_error = Some(e);
+                    break;
                 }
             }
         }
-        self.index.set_referenced_segments(referenced);
+        if rebuild_error.is_none() {
+            self.index.set_referenced_segments(referenced);
+        }
+        // The CURRENT published version can be AHEAD of the newest kept
+        // snapshot: on the delta-manifest path only checkpoint versions enter
+        // `index.snapshots`, and edit commits between checkpoints add their
+        // segments to `referenced_segments` incrementally (`commit_edit`,
+        // non-checkpoint branch). Rebuilding from snapshots alone dropped those
+        // still-live segments, and a later `gc_collect` reclaimed files the
+        // published version references (bench_c2 end_bulk_load Io(NotFound) +
+        // bulk data loss). Union `self.current` — the in-memory authority for
+        // the published version — so the rebuild never un-references it. This
+        // also keeps `next_segment_id` correct across a reopen: `open_with_config`
+        // seeds it from `max(referenced_segments) + 1`, so dropping a live id here
+        // hands the next commit an id whose `.seg` file is live and truncates it
+        // (the RFD-74 R1 silent-overwrite shape, reached through GC).
+        for id in self.current_segment_ids() {
+            self.index.referenced_segments.insert(id);
+        }
 
         // Persist updated index
         let index_path = db_path.join("manifest_index.json");
         atomic_write_json(&index_path, &self.index, self.durability)?;
 
+        if let Some(e) = rebuild_error {
+            return Err(e);
+        }
         Ok(removed)
     }
 }
@@ -3831,6 +3945,366 @@ mod tests {
         // After GC: only segment 2 is referenced (from v3 manifest)
         assert!(!store.index.referenced_segments.contains(&1));
         assert!(store.index.referenced_segments.contains(&2));
+    }
+
+    /// DATA LOSS regression — `gc_manifests` rebuilds `referenced_segments` from
+    /// the kept SNAPSHOTS only (`index.snapshots`, i.e. checkpoint versions). On
+    /// the delta-manifest write path a non-checkpoint `commit_edit` does NOT add a
+    /// snapshot; it only inserts its new segment ids into `referenced_segments`
+    /// incrementally (manifest.rs `commit_edit`, non-checkpoint branch). So every
+    /// segment introduced by an edit commit AFTER the newest kept checkpoint —
+    /// including segments the CURRENT PUBLISHED VERSION still references — is
+    /// dropped from the set by the recalculation, and the following
+    /// `gc_collect` + `gc_purge` move and then PERMANENTLY DELETE live segment
+    /// files. This test proves the deletion, not just the set difference.
+    #[test]
+    fn test_gc_manifests_recalc_keeps_current_edit_version_segments() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.rfdb");
+        let mut store = ManifestStore::create(&db_path).unwrap();
+        store.set_checkpoint_interval(2);
+
+        // v2 (checkpoint: 2 % 2 == 0) — adds segment 2, enters index.snapshots.
+        let mut e2 = empty_edit(2, 1);
+        e2.added_node_segments.push(make_node_descriptor(2, 10));
+        e2.stats = ManifestStats::from_segments(&e2.added_node_segments, &[]);
+        store.commit_edit(e2, &[], &[]).unwrap();
+
+        // v3 (edit delta — the CURRENT published version) — adds segment 3.
+        // Non-checkpoint: NO snapshot entry, only referenced_segments insert.
+        let mut e3 = empty_edit(3, 2);
+        e3.added_node_segments.push(make_node_descriptor(3, 10));
+        e3.stats = ManifestStats {
+            total_nodes: 20,
+            total_edges: 0,
+            node_segment_count: 2,
+            edge_segment_count: 0,
+        };
+        store.commit_edit(e3, &[], &[]).unwrap();
+        assert_eq!(store.current().version, 3);
+
+        // Liveness premise: the CURRENT published version references segment 3.
+        assert!(
+            store
+                .current()
+                .node_segments
+                .iter()
+                .any(|s| s.segment_id == 3),
+            "premise: the current version must reference segment 3"
+        );
+
+        // Real segment files on disk for both live segments.
+        let seg_dir = db_path.join("segments");
+        let live_v2 = seg_dir.join("seg_000002_nodes.seg");
+        let live_v3 = seg_dir.join("seg_000003_nodes.seg");
+        std::fs::write(&live_v2, b"live-v2").unwrap();
+        std::fs::write(&live_v3, b"live-v3").unwrap();
+
+        // GC keeping 1 snapshot triggers the recalculation (snapshots [1, 2] -> [2]).
+        store.gc_manifests(1).unwrap();
+        // Two-phase segment GC: collect (move to gc/) then purge (unlink).
+        let moved = store.gc_collect().unwrap();
+        store.gc_purge().unwrap();
+
+        // THE DATA LOSS: a segment file the current published version references
+        // has been permanently unlinked.
+        assert!(
+            live_v3.exists(),
+            "DATA LOSS: gc deleted seg_000003_nodes.seg, which the CURRENT \
+             published version (v{}) references (gc_collect moved: {:?})",
+            store.current().version,
+            moved
+        );
+        assert_eq!(std::fs::read(&live_v3).unwrap(), b"live-v3");
+        assert!(
+            live_v2.exists(),
+            "the checkpoint's segment must survive too"
+        );
+
+        // Mechanism assertions (why the file was lost).
+        assert!(
+            moved.is_empty(),
+            "gc_collect moved live current-version segment file(s): {:?}",
+            moved
+        );
+        assert!(
+            store.index.referenced_segments.contains(&3),
+            "recalculated referenced_segments must include the current \
+             version's segments (got {:?})",
+            store.index.referenced_segments
+        );
+    }
+
+    /// MVCC B5 use-after-free / data-loss regression — `gc_collect` derived its
+    /// pinned-version union from `index.snapshots` (`info.version >= min_pinned`),
+    /// but on the delta-manifest path ONLY checkpoint versions
+    /// (`v == 1 || v % checkpoint_interval == 0`) ever enter `index.snapshots`. At
+    /// the production interval of 32 that is 31 of every 32 pinnable versions, and
+    /// `ReadSnapshot::capture` pins whatever version happens to be current — there
+    /// is no checkpoint alignment. A reader pinning such a version contributed
+    /// NOTHING to the live set, so a segment only that version references was moved
+    /// to `gc/` and then PERMANENTLY UNLINKED while the reader's mmap was open.
+    ///
+    /// The fix unions the EXACT pinned set (`VersionPins::pinned_versions`); an
+    /// edit version resolves through `load_manifest`'s checkpoint+delta replay,
+    /// which `gc_manifests`'s retention floor keeps on disk.
+    #[test]
+    fn test_gc_preserves_pinned_non_checkpoint_version_segments() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.rfdb");
+        let mut store = ManifestStore::create(&db_path).unwrap();
+        store.set_checkpoint_interval(4); // checkpoints at v1, v4, v8, ...
+
+        // v2, v3: edit deltas (no snapshot entry). v4: checkpoint (snapshot).
+        for v in 2u64..=4 {
+            let mut e = empty_edit(v, v - 1);
+            e.added_node_segments.push(make_node_descriptor(v, 10));
+            e.stats.total_nodes = (v - 1) * 10;
+            e.stats.node_segment_count = (v - 1) as u32;
+            store.commit_edit(e, &[], &[]).unwrap();
+        }
+
+        // v5: edit delta adding segment 5 — the version a live reader pins.
+        let mut e5 = empty_edit(5, 4);
+        e5.added_node_segments.push(make_node_descriptor(5, 10));
+        e5.stats.total_nodes = 40;
+        e5.stats.node_segment_count = 4;
+        store.commit_edit(e5, &[], &[]).unwrap();
+        store.version_pins().pin(5);
+
+        // v6: edit delta adding segment 6 and DROPPING segment 5, so neither the
+        // current version nor any checkpoint references seg 5 — only the pin does.
+        let mut e6 = empty_edit(6, 5);
+        e6.added_node_segments.push(make_node_descriptor(6, 10));
+        e6.removed_node_segment_ids = vec![5];
+        e6.stats.total_nodes = 40;
+        e6.stats.node_segment_count = 4;
+        store.commit_edit(e6, &[], &[]).unwrap();
+
+        // Premises: v6 is current, it does not reference seg 5, and seg 5 is in no
+        // retained snapshot (snapshots hold only the checkpoints v1 and v4).
+        assert_eq!(store.current().version, 6);
+        assert!(
+            !store
+                .current()
+                .node_segments
+                .iter()
+                .any(|s| s.segment_id == 5),
+            "premise: the current version must NOT reference segment 5"
+        );
+        let snapshot_versions: Vec<u64> = store.index.snapshots.iter().map(|s| s.version).collect();
+        assert_eq!(
+            snapshot_versions,
+            vec![1, 4],
+            "premise: only checkpoint versions enter index.snapshots"
+        );
+        assert_eq!(store.version_pins().min_pinned(), Some(5));
+
+        // Real segment files for every live segment.
+        let seg_dir = db_path.join("segments");
+        for id in 2u64..=6 {
+            std::fs::write(
+                seg_dir.join(format!("seg_{:06}_nodes.seg", id)),
+                format!("live-{}", id).as_bytes(),
+            )
+            .unwrap();
+        }
+        let pinned_file = seg_dir.join("seg_000005_nodes.seg");
+
+        // Manifest GC (retention floor = checkpoint_at_or_below(5) = 4, so v4 and
+        // 5.edit.json survive and the pinned version stays loadable).
+        store.gc_manifests(1).unwrap();
+        assert!(
+            !store.index.referenced_segments.contains(&5),
+            "premise: the snapshot rebuild legitimately drops seg 5 — only the \
+             live pin keeps it alive (referenced_segments: {:?})",
+            store.index.referenced_segments
+        );
+
+        // Two-phase segment GC: collect (move to gc/) then purge (unlink).
+        let moved = store.gc_collect().unwrap();
+        store.gc_purge().unwrap();
+
+        assert!(
+            pinned_file.exists(),
+            "USE-AFTER-FREE / DATA LOSS: gc deleted seg_000005_nodes.seg, which the \
+             PINNED version v5 references (gc_collect moved: {:?})",
+            moved
+        );
+        assert_eq!(std::fs::read(&pinned_file).unwrap(), b"live-5");
+        assert!(
+            moved.is_empty(),
+            "gc_collect moved live segment file(s): {:?}",
+            moved
+        );
+    }
+
+    /// `gc_collect` must be safe ON ITS OWN, not only after a `gc_manifests`
+    /// rebuild: it is a `pub` entry point, and its liveness input
+    /// (`index.referenced_segments`) is also `pub`-settable
+    /// (`ManifestIndex::set_referenced_segments`). Here the set is deliberately
+    /// stale in exactly the shape a snapshots-only rebuild produces — checkpoints
+    /// only, with the current edit version's segment missing. Without
+    /// `gc_collect`'s own `self.current` guard the live file is unlinked.
+    #[test]
+    fn test_gc_collect_alone_keeps_current_version_segments() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.rfdb");
+        let mut store = ManifestStore::create(&db_path).unwrap();
+        store.set_checkpoint_interval(2); // v2 is a checkpoint, v3 is an edit
+
+        let mut e2 = empty_edit(2, 1);
+        e2.added_node_segments.push(make_node_descriptor(2, 10));
+        e2.stats.total_nodes = 10;
+        e2.stats.node_segment_count = 1;
+        store.commit_edit(e2, &[], &[]).unwrap();
+
+        let mut e3 = empty_edit(3, 2);
+        e3.added_node_segments.push(make_node_descriptor(3, 10));
+        e3.stats.total_nodes = 20;
+        e3.stats.node_segment_count = 2;
+        store.commit_edit(e3, &[], &[]).unwrap();
+
+        let seg_dir = db_path.join("segments");
+        let live_v2 = seg_dir.join("seg_000002_nodes.seg");
+        let live_v3 = seg_dir.join("seg_000003_nodes.seg");
+        std::fs::write(&live_v2, b"live-v2").unwrap();
+        std::fs::write(&live_v3, b"live-v3").unwrap();
+
+        // Stale liveness input — checkpoints only; NO gc_manifests call.
+        store.index.set_referenced_segments(HashSet::from([2]));
+
+        let moved = store.gc_collect().unwrap();
+        store.gc_purge().unwrap();
+
+        assert!(
+            live_v3.exists(),
+            "DATA LOSS: gc_collect reclaimed seg_000003_nodes.seg, which the \
+             CURRENT published version (v{}) references (moved: {:?})",
+            store.current().version,
+            moved
+        );
+        assert_eq!(std::fs::read(&live_v3).unwrap(), b"live-v3");
+        assert!(live_v2.exists());
+        assert!(
+            moved.is_empty(),
+            "gc_collect moved live segment file(s): {:?}",
+            moved
+        );
+    }
+
+    /// The `gc_manifests` half of the fix, proven ACROSS A REOPEN (in-process the
+    /// `gc_collect` guard would mask it). `open_with_config` seeds
+    /// `next_segment_id` from `max(referenced_segments) + 1`, so a rebuild that
+    /// drops the current edit version's segment ids hands the next commit an id
+    /// whose `.seg` file is live — `File::create` then truncates it. That is the
+    /// RFD-74 R1 silent-overwrite shape, reached through GC.
+    #[test]
+    fn test_gc_manifests_persists_current_segments_across_reopen() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.rfdb");
+        let mut store = ManifestStore::create(&db_path).unwrap();
+        store.set_checkpoint_interval(2); // v2 is a checkpoint, v3 is an edit
+
+        let mut e2 = empty_edit(2, 1);
+        e2.added_node_segments.push(make_node_descriptor(2, 10));
+        e2.stats.total_nodes = 10;
+        e2.stats.node_segment_count = 1;
+        store.commit_edit(e2, &[], &[]).unwrap();
+
+        let mut e3 = empty_edit(3, 2);
+        e3.added_node_segments.push(make_node_descriptor(3, 10));
+        e3.stats.total_nodes = 20;
+        e3.stats.node_segment_count = 2;
+        store.commit_edit(e3, &[], &[]).unwrap();
+
+        store.gc_manifests(1).unwrap();
+        drop(store);
+
+        let reopened = ManifestStore::open(&db_path).unwrap();
+        assert_eq!(reopened.current().version, 3);
+        assert!(
+            reopened.index.referenced_segments.contains(&3),
+            "persisted referenced_segments dropped the current version's segment \
+             (got {:?})",
+            reopened.index.referenced_segments
+        );
+        assert_eq!(
+            reopened.next_segment_id(),
+            4,
+            "next_segment_id must not be seeded onto a live segment id"
+        );
+    }
+
+    /// A recoverable READ error must never escalate into permanent data loss.
+    /// `gc_manifests` rebuilt `referenced_segments` under `if let Ok(..)`, so an
+    /// unreadable retained manifest (transient EIO/EMFILE, a partially written
+    /// file) silently counted as "references nothing" — and the result OVERWRITES
+    /// the live set, whose very next use in `compact` / `reclaim_superseded_segments`
+    /// is `gc_collect()` then `gc_purge()`. One failed read, one permanent unlink.
+    #[test]
+    fn test_gc_manifests_fails_closed_on_unreadable_retained_manifest() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.rfdb");
+        let mut store = ManifestStore::create(&db_path).unwrap();
+        store.set_checkpoint_interval(2); // checkpoints at v2, v4
+
+        // v2 (checkpoint): adds seg 2.
+        let mut e2 = empty_edit(2, 1);
+        e2.added_node_segments.push(make_node_descriptor(2, 10));
+        e2.stats.total_nodes = 10;
+        e2.stats.node_segment_count = 1;
+        store.commit_edit(e2, &[], &[]).unwrap();
+
+        // v3 (edit): adds seg 3 and drops seg 2 — after this ONLY the retained v2
+        // snapshot references seg 2.
+        let mut e3 = empty_edit(3, 2);
+        e3.added_node_segments.push(make_node_descriptor(3, 10));
+        e3.removed_node_segment_ids = vec![2];
+        e3.stats.total_nodes = 10;
+        e3.stats.node_segment_count = 1;
+        store.commit_edit(e3, &[], &[]).unwrap();
+
+        // v4 (checkpoint): adds seg 4.
+        let mut e4 = empty_edit(4, 3);
+        e4.added_node_segments.push(make_node_descriptor(4, 10));
+        e4.stats.total_nodes = 20;
+        e4.stats.node_segment_count = 2;
+        store.commit_edit(e4, &[], &[]).unwrap();
+
+        let seg_dir = db_path.join("segments");
+        let snapshot_only = seg_dir.join("seg_000002_nodes.seg");
+        std::fs::write(&snapshot_only, b"live-v2").unwrap();
+        std::fs::write(seg_dir.join("seg_000003_nodes.seg"), b"live-v3").unwrap();
+        std::fs::write(seg_dir.join("seg_000004_nodes.seg"), b"live-v4").unwrap();
+
+        // The retained snapshot v2 becomes unreadable (truncated write / EIO).
+        std::fs::write(manifest_file_path(&db_path, 2), b"{ truncated").unwrap();
+
+        // keep_last=2 retains snapshots [2, 4]; the rebuild must hit v2 and refuse.
+        let result = store.gc_manifests(2);
+        assert!(
+            result.is_err(),
+            "gc_manifests must report the read error, not silently narrow the \
+             live set (returned {:?})",
+            result
+        );
+        assert!(
+            store.index.referenced_segments.contains(&2),
+            "referenced_segments was narrowed from an unreadable manifest \
+             (got {:?})",
+            store.index.referenced_segments
+        );
+
+        let moved = store.gc_collect().unwrap();
+        store.gc_purge().unwrap();
+        assert!(
+            snapshot_only.exists(),
+            "DATA LOSS: a transient manifest read error deleted seg_000002_nodes.seg, \
+             which the retained snapshot v2 references (gc_collect moved: {:?})",
+            moved
+        );
+        assert_eq!(std::fs::read(&snapshot_only).unwrap(), b"live-v2");
     }
 
     #[test]
