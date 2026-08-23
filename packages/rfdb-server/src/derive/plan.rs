@@ -1020,6 +1020,20 @@ fn positive_can_place_and_provides(
             });
             (all_bound, HashSet::new())
         }
+        // `is(Out, In)` is the one function whose OUTPUT is the FIRST position
+        // (IS_MODES [F,B]/[B,B], mirroring the reference's `Out is In` order): the value
+        // must be bound before the leg is placeable, and the receiving position is
+        // provided if free.
+        "is" => {
+            if args.len() < 2 {
+                return (true, HashSet::new());
+            }
+            if is_bound_or_const(&args[1], bound) {
+                (true, provides_if_free(&args[0], bound))
+            } else {
+                (false, HashSet::new())
+            }
+        }
         // Function builtins deriving ONE output from already-bound inputs (the
         // `method_suffix` family): every position except the LAST is an input that must be
         // bound before the leg is placeable; the last position is the output, provided if
@@ -1040,7 +1054,18 @@ fn positive_can_place_and_provides(
         | "method_suffix" | "last_segment" | "first_segment" | "replace_all" | "path_resolve"
         | "split" | "relative_import_resolve"
         | "edge_attr"
-        | "node_attr" => {
+        | "node_attr"
+        // The binary arithmetic functions have the same output-last shape: both operands
+        // are inputs that must be bound first, the result position is the output
+        // (ARITH3_MODES). Without this arm they would fall through to the `_` catch-all,
+        // which calls them "placeable anywhere, provides every free arg" — the planner
+        // would then schedule `add(X, 1, Y)` BEFORE the leg that binds `X` and the
+        // executor would reject the [Free, Bound, Free] pattern with E-PLAN-001.
+        | "add"
+        | "sub"
+        | "mul"
+        | "div"
+        | "mod" => {
             if args.is_empty() {
                 return (true, HashSet::new());
             }
@@ -1112,6 +1137,15 @@ fn is_filter_or_function(pred: &str) -> bool {
             | "string_contains"
             | "ends_with"
             | "concat"
+            // Integer arithmetic (`add`/`sub`/`mul`/`div`/`mod` and the degenerate `is`)
+            // derives its result from already-bound operands and reads no base relation —
+            // a function, exactly like `concat`, never a tuple-introducing generator.
+            | "add"
+            | "sub"
+            | "mul"
+            | "div"
+            | "mod"
+            | "is"
             | "str_lower"
             | "basename"
             | "strip_quotes"

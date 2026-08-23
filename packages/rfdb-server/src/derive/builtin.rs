@@ -1271,6 +1271,152 @@ fn eval_node_attr(view: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> Bu
     Ok(())
 }
 
+// ── Functions: integer arithmetic (add / sub / mul / div / mod / is) ──
+
+/// The INTEGER value of a bound argument, widened to `i128`.
+///
+/// Arithmetic is TYPED: only the two integer variants answer. A `Value::Id` is a node
+/// identity, not a number — this deliberately does NOT route through `Value::as_str` /
+/// `Value::as_f64` (the surfaces the comparison builtins use), because both would happily
+/// turn a node id into a number and let `add(NodeId, 1, Y)` produce arithmetic on
+/// identities. A `Value::Str` is not an integer either, even when its surface is all
+/// digits: the program parser types a literal at parse time, so `1` and `"1"` are distinct
+/// values (spec §5). `Value::Float`, `Value::Term`, and a `BigInt` whose magnitude does
+/// not fit `i128` are outside the arithmetic domain and answer `None` as well.
+fn bound_int(arg: &ArgValue) -> Option<i128> {
+    match arg.as_bound()? {
+        Value::Int(i) => Some(i128::from(*i)),
+        Value::BigInt(b) => big_int_to_i128(b),
+        Value::Id(_) | Value::Str(_) | Value::Float(_) | Value::Term(_) => None,
+    }
+}
+
+/// Widen a canonical `BigInt` payload (minimal two's-complement, big-endian) to `i128`,
+/// or `None` when it needs more than 16 bytes — the edge of the arithmetic domain.
+fn big_int_to_i128(bytes: &[u8]) -> Option<i128> {
+    if bytes.len() > 16 {
+        return None;
+    }
+    let fill = if bytes.first().is_some_and(|b| *b & 0x80 != 0) {
+        0xFF
+    } else {
+        0x00
+    };
+    let mut buf = [fill; 16];
+    buf[16 - bytes.len()..].copy_from_slice(bytes);
+    Some(i128::from_be_bytes(buf))
+}
+
+/// The integer twin of [`bind_or_check`]: the computed value either BINDS the output
+/// position (free/captured), passes existence (wildcard), or FILTERS on equality with an
+/// already-bound output.
+///
+/// The bound-output check compares VALUES, not string surfaces — a bound `"2"` (string)
+/// or a bound node id 2 never satisfies an output of the integer 2. That is the reference
+/// engine's rule: its `is` unifies the left side against an INTEGER term
+/// (`rofl-conformance/vendor/rofl-v0/src/engine.ts:463-467` via `unify`/`termEq`), and a
+/// v0 string term never equals a v0 integer term.
+///
+/// The produced value goes through [`Value::big_int`], so a result inside `i64` is an
+/// `Int` and a wider one is a canonical `BigInt` (invariant V1).
+fn bind_or_check_int(out: &mut Batch, spec: &ArgSpec, pos: usize, produced: i128) {
+    if spec.args[pos].mode() == ArgMode::Free {
+        match free_slot(&spec.args[pos]) {
+            Some(slot) => {
+                let width = spec.output_arity();
+                out.push(emit_row(width, &[(slot, Value::big_int(produced))]));
+            }
+            // Wildcard output column: pure existence of a computed value.
+            None => out.push_pass(),
+        }
+    } else if bound_int(&spec.args[pos]) == Some(produced) {
+        out.push_pass();
+    }
+}
+
+/// Shared body of the binary arithmetic functions `add`/`sub`/`mul`/`div`/`mod`
+/// (`Op(A, B, Out)`). Both operands are bound by the mode table, so a `None` from
+/// [`bound_int`] means "bound, but not an integer" — a literal-level coercion failure:
+/// one counted miss and NO row (spec §5), which is also the reference engine's quiet
+/// premise failure for a non-arithmetic leaf (`unify.ts:96-113` returns `null`, checked
+/// live: `p(a). p(1). b(X,Y) :- p(X), Y is X + 1.` yields only `X = 1, Y = 2`).
+///
+/// `op` returns `None` for a result that does not exist (division or remainder by zero)
+/// or does not fit `i128`. Both give NO row and NO miss: the operands were proper
+/// integers, so nothing failed to coerce — the premise simply does not hold. Zero divisor
+/// matches the reference exactly (`X / 0` and `X mod 0` return no rows there too). The
+/// `i128` ceiling is a deliberate divergence in the safe direction: the reference computes
+/// in IEEE doubles and silently returns a rounded, wrong integer past 2^53, whereas this
+/// engine refuses to produce a value it cannot represent exactly.
+fn eval_arith3(
+    out: &mut Batch,
+    spec: &ArgSpec,
+    op: fn(i128, i128) -> Option<i128>,
+) -> BuiltinResult<()> {
+    let (Some(a), Some(b)) = (bound_int(&spec.args[0]), bound_int(&spec.args[1])) else {
+        out.coercion_miss();
+        return Ok(());
+    };
+    let Some(produced) = op(a, b) else {
+        return Ok(());
+    };
+    bind_or_check_int(out, spec, 2, produced);
+    Ok(())
+}
+
+/// `add(A, B, Out)` — integer sum. Free arg2 binds it; bound arg2 filters on equality.
+fn eval_add(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    eval_arith3(out, spec, i128::checked_add)
+}
+
+/// `sub(A, B, Out)` — integer difference `A - B`. (The reference has no unary minus on a
+/// variable — `Y is -X` is a parse error there, `parser.ts:104-108` — so negation is
+/// written `sub(0, X, Y)`.)
+fn eval_sub(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    eval_arith3(out, spec, i128::checked_sub)
+}
+
+/// `mul(A, B, Out)` — integer product.
+fn eval_mul(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    eval_arith3(out, spec, i128::checked_mul)
+}
+
+/// `div(A, B, Out)` — integer quotient TRUNCATED TOWARD ZERO, matching the reference's
+/// `Math.trunc(l / r)` (`unify.ts:109`): `-7 / 3` is `-2`, not the floor `-3`. Rust's
+/// `checked_div` truncates the same way and additionally answers `None` for a zero
+/// divisor and for the one overflowing quotient `i128::MIN / -1`.
+fn eval_div(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    eval_arith3(out, spec, i128::checked_div)
+}
+
+/// `mod(A, B, Out)` — integer remainder whose SIGN FOLLOWS THE DIVIDEND, matching the
+/// reference's `l - r * Math.trunc(l / r)` (`unify.ts:110`): `-7 mod 3` is `-1`, not the
+/// Euclidean `2`. Rust's `checked_rem` is exactly that truncated remainder, and answers
+/// `None` for a zero divisor and for `i128::MIN % -1`.
+fn eval_mod(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    eval_arith3(out, spec, i128::checked_rem)
+}
+
+/// `is(Out, In)` — `Out` is the integer `In`.
+///
+/// The reference's `is` evaluates an arithmetic EXPRESSION on its right and unifies the
+/// integer result with its left (`engine.ts:463-467`). The derive dialect has no
+/// expression syntax, so a compound right side arrives already decomposed into
+/// `add`/`sub`/`mul`/`div`/`mod` legs and what is left for `is` is the degenerate case:
+/// a bare integer — a literal, or a variable bound to one. Free arg0 binds it; bound arg0
+/// equality-checks it (by VALUE, see [`bind_or_check_int`]).
+///
+/// A non-integer right side is a literal-level coercion failure: one counted miss, no row
+/// — the reference's quiet premise failure for `Y is a`.
+fn eval_is(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    let Some(v) = bound_int(&spec.args[1]) else {
+        out.coercion_miss();
+        return Ok(());
+    };
+    bind_or_check_int(out, spec, 0, v);
+    Ok(())
+}
+
 // ── Mode tables ────────────────────────────────────────────────────
 
 use ArgMode::{Bound as B, Free as F};
@@ -1314,6 +1460,17 @@ const STR_FN2_MODES: &[Mode] = &[Mode { args: &[B, F] }, Mode { args: &[B, B] }]
 /// `path_resolve/3` modes: both inputs bound; the output (last position) is free (bind)
 /// or bound (equality check).
 const CONCAT_MODES: &[Mode] = &[Mode { args: &[B, B, F] }, Mode { args: &[B, B, B] }];
+
+/// `add/3`/`sub/3`/`mul/3`/`div/3`/`mod/3` modes: both operands bound; the result (last
+/// position) is free (bind) or bound (equality check). The same shape as
+/// [`CONCAT_MODES`], kept separate because the domain is different — these three
+/// positions are typed INTEGERS, not §5 string surfaces.
+const ARITH3_MODES: &[Mode] = &[Mode { args: &[B, B, F] }, Mode { args: &[B, B, B] }];
+
+/// `is/2` modes: the value (arg1) must be bound; the receiving position (arg0) is free
+/// (bind) or bound (equality check). The [`STR_FN2_MODES`] discipline with the output on
+/// the LEFT, mirroring the reference's `Out is In` argument order.
+const IS_MODES: &[Mode] = &[Mode { args: &[F, B] }, Mode { args: &[B, B] }];
 
 /// `replace_all/4` modes: the three inputs (subject, pattern, replacement) bound; the
 /// output (last position) is free (bind) or bound (equality check) — the [`CONCAT_MODES`]
@@ -1468,6 +1625,48 @@ pub fn registry() -> Vec<BuiltinDef> {
             modes: CONCAT_MODES,
             kind: BuiltinKind::Function,
             eval: eval_concat,
+        },
+        BuiltinDef {
+            name: "add",
+            arity: 3,
+            modes: ARITH3_MODES,
+            kind: BuiltinKind::Function,
+            eval: eval_add,
+        },
+        BuiltinDef {
+            name: "sub",
+            arity: 3,
+            modes: ARITH3_MODES,
+            kind: BuiltinKind::Function,
+            eval: eval_sub,
+        },
+        BuiltinDef {
+            name: "mul",
+            arity: 3,
+            modes: ARITH3_MODES,
+            kind: BuiltinKind::Function,
+            eval: eval_mul,
+        },
+        BuiltinDef {
+            name: "div",
+            arity: 3,
+            modes: ARITH3_MODES,
+            kind: BuiltinKind::Function,
+            eval: eval_div,
+        },
+        BuiltinDef {
+            name: "mod",
+            arity: 3,
+            modes: ARITH3_MODES,
+            kind: BuiltinKind::Function,
+            eval: eval_mod,
+        },
+        BuiltinDef {
+            name: "is",
+            arity: 2,
+            modes: IS_MODES,
+            kind: BuiltinKind::Function,
+            eval: eval_is,
         },
         BuiltinDef {
             name: "str_lower",
@@ -3621,5 +3820,468 @@ mod tests {
         assert_eq!(facts.len(), 1, "only the metadata-carrying FUNCTION derives");
         assert_eq!(facts[0][0], Value::Id(id_of("f1")));
         assert_eq!(facts[0][1], s("42"), "number field surfaces as JSON text");
+    }
+
+    // ── integer arithmetic: add / sub / mul / div / mod / is ───────
+
+    /// Run a 3-ary arithmetic builtin with both operands bound as `i64` integers and a
+    /// FREE result; returns the produced integer, or `None` when the premise yielded no
+    /// row (division/remainder by zero, or an out-of-domain result).
+    fn free3(name: &str, a: i64, b: i64) -> Option<i64> {
+        let out = run(
+            name,
+            ArgSpec::new(vec![
+                ArgValue::Bound(Value::Int(a)),
+                ArgValue::Bound(Value::Int(b)),
+                ArgValue::Free { slot: 0 },
+            ]),
+        );
+        out.rows.first().map(|r| match &r[0] {
+            Value::Int(v) => *v,
+            other => panic!("{name} must produce a typed Int, got {other:?}"),
+        })
+    }
+
+    /// Same, but over arbitrary operand VALUES and returning the produced `Value` — used
+    /// for the type-discipline and width probes.
+    fn free3_val(name: &str, a: Value, b: Value) -> Batch {
+        run(
+            name,
+            ArgSpec::new(vec![
+                ArgValue::Bound(a),
+                ArgValue::Bound(b),
+                ArgValue::Free { slot: 0 },
+            ]),
+        )
+    }
+
+    #[test]
+    fn registry_has_the_arithmetic_builtins() {
+        for (name, arity) in [
+            ("add", 3),
+            ("sub", 3),
+            ("mul", 3),
+            ("div", 3),
+            ("mod", 3),
+            ("is", 2),
+        ] {
+            let def = lookup(name).unwrap_or_else(|| panic!("missing arithmetic builtin {name}"));
+            assert_eq!(def.arity, arity, "{name} arity");
+            assert_eq!(
+                def.kind,
+                BuiltinKind::Function,
+                "{name} derives its output from bound inputs, it never introduces tuples"
+            );
+        }
+    }
+
+    /// The reference engine's NINE arithmetic runs, reproduced value for value.
+    ///
+    /// Source of truth: `packages/rofl-conformance/vendor/rofl-v0` (rev 052a4c5), run
+    /// live over `n(7). n(10). n(-7). n(0).` with the nine rules recorded in
+    /// `run-migration/R14-dialect-decisions.md`. The derive dialect has no infix
+    /// expression syntax, so each `Y is <expr>` is written as its decomposition into
+    /// 3-ary legs; the VALUES must be identical.
+    #[test]
+    fn arithmetic_reproduces_the_reference_engine_run_for_run() {
+        const IN: [i64; 4] = [7, 10, -7, 0];
+
+        // v0: `plus(X, Y) :- n(X), Y is X + 1.`
+        //     ["X = -7, Y = -6", "X = 0, Y = 1", "X = 10, Y = 11", "X = 7, Y = 8"]
+        assert_eq!(
+            IN.map(|x| free3("add", x, 1)),
+            [Some(8), Some(11), Some(-6), Some(1)]
+        );
+
+        // v0: `minus(X, Y) :- n(X), Y is 0 - X.`  (v0 has no unary minus on a variable)
+        //     ["X = -7, Y = 7", "X = 0, Y = 0", "X = 10, Y = -10", "X = 7, Y = -7"]
+        assert_eq!(
+            IN.map(|x| free3("sub", 0, x)),
+            [Some(-7), Some(-10), Some(7), Some(0)]
+        );
+
+        // v0: `times(X, Y) :- n(X), Y is X * 3.`
+        //     ["X = -7, Y = -21", "X = 0, Y = 0", "X = 10, Y = 30", "X = 7, Y = 21"]
+        assert_eq!(
+            IN.map(|x| free3("mul", x, 3)),
+            [Some(21), Some(30), Some(-21), Some(0)]
+        );
+
+        // v0: `divv(X, Y) :- n(X), Y is X / 3.`
+        //     ["X = -7, Y = -2", "X = 0, Y = 0", "X = 10, Y = 3", "X = 7, Y = 2"]
+        // THE ANGLE: division TRUNCATES TOWARD ZERO. -7 / 3 is -2, NOT the floor -3.
+        assert_eq!(
+            IN.map(|x| free3("div", x, 3)),
+            [Some(2), Some(3), Some(-2), Some(0)]
+        );
+
+        // v0: `modd(X, Y) :- n(X), Y is X mod 3.`
+        //     ["X = -7, Y = -1", "X = 0, Y = 0", "X = 10, Y = 1", "X = 7, Y = 1"]
+        // THE ANGLE: the remainder's SIGN FOLLOWS THE DIVIDEND. -7 mod 3 is -1, NOT the
+        // Euclidean 2 and NOT the floor-mod 2.
+        assert_eq!(
+            IN.map(|x| free3("mod", x, 3)),
+            [Some(1), Some(1), Some(-1), Some(0)]
+        );
+
+        // v0: `dz(X, Y) :- n(X), Y is X / 0.`   -> []
+        // THE ANGLE: a zero divisor is NOT an error, it is a quiet premise failure.
+        assert_eq!(IN.map(|x| free3("div", x, 0)), [None, None, None, None]);
+
+        // v0: `mz(X, Y) :- n(X), Y is X mod 0.` -> []
+        assert_eq!(IN.map(|x| free3("mod", x, 0)), [None, None, None, None]);
+
+        // v0: `prec(X, Y) :- n(X), Y is X + 2 * 3.`
+        //     ["X = -7, Y = -1", "X = 0, Y = 6", "X = 10, Y = 16", "X = 7, Y = 13"]
+        // `*` binds tighter than `+`, so the decomposition multiplies FIRST.
+        let six = free3("mul", 2, 3).expect("2 * 3");
+        assert_eq!(six, 6);
+        assert_eq!(
+            IN.map(|x| free3("add", x, six)),
+            [Some(13), Some(16), Some(-1), Some(6)]
+        );
+
+        // v0: `paren(X, Y) :- n(X), Y is (X + 2) * 3.`
+        //     ["X = -7, Y = -15", "X = 0, Y = 6", "X = 10, Y = 36", "X = 7, Y = 27"]
+        assert_eq!(
+            IN.map(|x| free3("mul", free3("add", x, 2).expect("X + 2"), 3)),
+            [Some(27), Some(36), Some(-15), Some(6)]
+        );
+    }
+
+    /// Arithmetic is TYPED: an operand must be an integer. A node id is an identity and a
+    /// digit string is a string — neither is a number here, even though `Value::as_id` /
+    /// `Value::as_str` / `Value::as_f64` (the surfaces the comparison builtins ride) would
+    /// all happily coerce them. The reference agrees: `p(a). p(1). b(X,Y) :- p(X), Y is
+    /// X + 1.` yields only `X = 1, Y = 2` there (run live against rev 052a4c5).
+    #[test]
+    fn arithmetic_refuses_node_ids_strings_floats_and_terms() {
+        let term = Value::Term(Arc::new(
+            crate::datalog::TermBlob::new("f", vec![Value::Int(1)]).expect("canonical term"),
+        ));
+        for bad in [
+            Value::Id(7),      // a node id, NOT the integer 7
+            s("7"),            // an all-digit STRING, NOT the integer 7
+            s("a"),            // the reference's `p(a)` leaf
+            Value::Float(7.0), // v0 has no float syntax at all
+            term,
+        ] {
+            let left = free3_val("add", bad.clone(), Value::Int(1));
+            assert_eq!(left.rows.len(), 0, "{bad:?} must not be an operand");
+            assert_eq!(left.coercion_misses, 1, "{bad:?}: the miss is COUNTED, not silent");
+            let right = free3_val("add", Value::Int(1), bad.clone());
+            assert_eq!(right.rows.len(), 0, "{bad:?} must not be an operand (rhs)");
+            assert_eq!(right.coercion_misses, 1, "{bad:?}: counted on the rhs too");
+        }
+        // Non-vacuity control: the same shape with a real integer DOES produce a row, so
+        // the assertions above are discriminating and not a blanket "everything fails".
+        let ok = free3_val("add", Value::Int(7), Value::Int(1));
+        assert_eq!(ok.rows.len(), 1);
+        assert_eq!(ok.rows[0][0], Value::Int(8));
+        assert_eq!(ok.coercion_misses, 0);
+    }
+
+    /// The bound-output mode is an INTEGER equality check, not a string-surface one: the
+    /// reference unifies against an integer term, and a v0 string term never equals it.
+    #[test]
+    fn arithmetic_output_check_compares_integers_not_surfaces() {
+        let chk = |out: Value| {
+            run(
+                "add",
+                ArgSpec::new(vec![
+                    ArgValue::Bound(Value::Int(1)),
+                    ArgValue::Bound(Value::Int(1)),
+                    ArgValue::Bound(out),
+                ]),
+            )
+            .rows
+            .len()
+        };
+        assert_eq!(chk(Value::Int(2)), 1, "the integer 2 satisfies 1 + 1");
+        assert_eq!(chk(Value::Int(3)), 0, "3 does not");
+        assert_eq!(chk(s("2")), 0, "the STRING \"2\" is not the integer 2");
+        assert_eq!(chk(Value::Id(2)), 0, "node id 2 is not the integer 2");
+        assert_eq!(chk(Value::Float(2.0)), 0, "the float 2.0 is not the integer 2");
+    }
+
+    /// A wildcard result column is pure existence (the `concat`/`method_suffix`
+    /// discipline) — and a zero divisor still refuses under it.
+    #[test]
+    fn arithmetic_wildcard_output_is_pure_existence() {
+        let out = run(
+            "add",
+            ArgSpec::new(vec![
+                ArgValue::Bound(Value::Int(1)),
+                ArgValue::Bound(Value::Int(1)),
+                ArgValue::Wildcard,
+            ]),
+        );
+        assert_eq!(out.rows.len(), 1);
+        assert!(out.rows[0].is_empty(), "a wildcard captures no column");
+        let dz = run(
+            "div",
+            ArgSpec::new(vec![
+                ArgValue::Bound(Value::Int(1)),
+                ArgValue::Bound(Value::Int(0)),
+                ArgValue::Wildcard,
+            ]),
+        );
+        assert_eq!(dz.rows.len(), 0, "a zero divisor has no value to exist");
+    }
+
+    #[test]
+    fn arithmetic_free_operand_is_unsupported_mode() {
+        for name in ["add", "sub", "mul", "div", "mod"] {
+            let def = lookup(name).unwrap();
+            let spec = ArgSpec::new(vec![
+                ArgValue::Free { slot: 0 },
+                ArgValue::Bound(Value::Int(1)),
+                ArgValue::Free { slot: 1 },
+            ]);
+            let err = def.check_mode(&spec).unwrap_err();
+            assert_eq!(err.code.as_str(), "E-PLAN-001", "{name}");
+            assert!(
+                err.required_bindings.contains(&0),
+                "{name} must name the free operand"
+            );
+        }
+    }
+
+    /// Results stay canonical across the `i64` boundary (invariant V1), a `BigInt` is
+    /// accepted back as an operand, and the `i128` edge of the domain REFUSES instead of
+    /// wrapping or panicking.
+    #[test]
+    fn arithmetic_result_is_canonical_across_the_i64_boundary() {
+        let inside = free3_val("add", Value::Int(i64::MAX - 1), Value::Int(1));
+        assert_eq!(inside.rows[0][0], Value::Int(i64::MAX), "inside i64 → Int");
+
+        let over = free3_val("add", Value::Int(i64::MAX), Value::Int(1));
+        let big = over.rows[0][0].clone();
+        assert!(matches!(big, Value::BigInt(_)), "past i64 → BigInt (V1)");
+        assert_eq!(big.as_str(), "9223372036854775808", "exact, not rounded");
+
+        // …and that BigInt round-trips back in as an operand.
+        let back = free3_val("sub", big, Value::Int(1));
+        assert_eq!(back.rows[0][0], Value::Int(i64::MAX));
+
+        // The i128 ceiling: no row rather than a wrapped, wrong answer.
+        assert_eq!(
+            free3_val("add", Value::big_int(i128::MAX), Value::Int(1))
+                .rows
+                .len(),
+            0
+        );
+        // `i128::MIN / -1` has no i128 quotient — refuse, never panic.
+        assert_eq!(
+            free3_val("div", Value::big_int(i128::MIN), Value::Int(-1))
+                .rows
+                .len(),
+            0
+        );
+        assert_eq!(
+            free3_val("mod", Value::big_int(i128::MIN), Value::Int(-1))
+                .rows
+                .len(),
+            0
+        );
+    }
+
+    #[test]
+    fn is_binds_checks_and_stays_integer_typed() {
+        let bind = |v: Value| {
+            run(
+                "is",
+                ArgSpec::new(vec![ArgValue::Free { slot: 0 }, ArgValue::Bound(v)]),
+            )
+        };
+        assert_eq!(bind(Value::Int(7)).rows[0][0], Value::Int(7));
+        assert_eq!(bind(Value::Int(-7)).rows[0][0], Value::Int(-7));
+
+        let chk = |out: Value, src: Value| {
+            run(
+                "is",
+                ArgSpec::new(vec![ArgValue::Bound(out), ArgValue::Bound(src)]),
+            )
+            .rows
+            .len()
+        };
+        assert_eq!(chk(Value::Int(7), Value::Int(7)), 1);
+        assert_eq!(chk(Value::Int(8), Value::Int(7)), 0);
+        assert_eq!(chk(s("7"), Value::Int(7)), 0, "a string never `is` an integer");
+        assert_eq!(chk(Value::Id(7), Value::Int(7)), 0, "nor does a node id");
+
+        // A non-integer source: no row, one COUNTED miss — the reference's quiet failure.
+        for bad in [s("a"), s("7"), Value::Id(7), Value::Float(7.0)] {
+            let out = bind(bad.clone());
+            assert_eq!(out.rows.len(), 0, "{bad:?} is not an integer source");
+            assert_eq!(out.coercion_misses, 1, "{bad:?}: the miss is counted");
+        }
+
+        // A FREE source is not a supported mode — E-PLAN-001 naming position 1.
+        let err = lookup("is")
+            .unwrap()
+            .check_mode(&ArgSpec::new(vec![
+                ArgValue::Free { slot: 0 },
+                ArgValue::Free { slot: 1 },
+            ]))
+            .unwrap_err();
+        assert_eq!(err.code.as_str(), "E-PLAN-001");
+        assert!(err.required_bindings.contains(&1));
+    }
+
+    // ── rule-level: arithmetic through the full evaluate() entry ──
+
+    /// The headline the round is after: before this change `m(X, Y) :- n(X), add(X, 1, Y).`
+    /// returned ZERO rows (`add` was not a registered builtin, so the planner served it as
+    /// a legal EMPTY relation and the join collapsed). End-to-end through
+    /// parse → stratify → plan → fixpoint, with the reference's own inputs.
+    #[test]
+    fn rule_level_arithmetic_via_evaluate() {
+        use crate::datalog::EvalLimits;
+        use crate::derive::events::EventLog;
+        use crate::derive::evaluate;
+
+        let v = edge_attr_fixture();
+        let src = r#"m(X, Y) :- n(X), add(X, 1, Y).
+                     n(7).
+                     n(10).
+                     n(-7).
+                     n(0)."#;
+        let stats = Stats { total_nodes: 3, total_edges: 2, ..Default::default() };
+        let eval = evaluate(&v, src, stats, EvalLimits::none(), EventLog::discard())
+            .expect("evaluate");
+
+        let mut got: Vec<(i64, i64)> = eval
+            .facts("m")
+            .iter()
+            .map(|f| match (&f[0], &f[1]) {
+                (Value::Int(x), Value::Int(y)) => (*x, *y),
+                other => panic!("both columns must be typed Ints, got {other:?}"),
+            })
+            .collect();
+        got.sort_unstable();
+        assert_eq!(got, vec![(-7, -6), (0, 1), (7, 8), (10, 11)]);
+    }
+
+    /// The type discipline through the FULL engine, not just the builtin surface: a
+    /// `node(F, "CALL")` leg binds `F` to a `Value::Id`, and a node id is an identity, not
+    /// a number. The arithmetic leg must therefore derive NOTHING from it — while the very
+    /// same rule shape over a genuine integer derives its row (the non-vacuity control).
+    #[test]
+    fn rule_level_arithmetic_refuses_node_ids() {
+        use crate::datalog::EvalLimits;
+        use crate::derive::events::EventLog;
+        use crate::derive::evaluate;
+
+        let v = edge_attr_fixture();
+        let stats = Stats { total_nodes: 3, total_edges: 2, ..Default::default() };
+
+        let ids = evaluate(
+            &v,
+            r#"m(F, Y) :- node(F, "CALL"), add(F, 1, Y)."#,
+            stats.clone(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("evaluate");
+        assert!(
+            ids.facts("m").is_empty(),
+            "a node id must never be an arithmetic operand"
+        );
+
+        // Non-vacuity: the CALL nodes DO exist, so the empty result above is the
+        // arithmetic refusing, not the `node` leg finding nothing.
+        let control = evaluate(
+            &v,
+            r#"m(F) :- node(F, "CALL")."#,
+            stats.clone(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("evaluate");
+        assert_eq!(control.facts("m").len(), 2, "two CALL nodes are there");
+
+        // …and the same arithmetic leg over a real integer derives its row.
+        let ints = evaluate(
+            &v,
+            "m(X, Y) :- n(X), add(X, 1, Y).\n n(41).",
+            stats,
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("evaluate");
+        assert_eq!(ints.facts("m")[0][1], Value::Int(42));
+    }
+
+    /// A derived value feeding the JOIN KEY of a later leg, and the same rule reordered so
+    /// the arithmetic is written BEFORE the leg that binds its operand — the planner must
+    /// place it after (the `positive_can_place_and_provides` arm), not reject it.
+    #[test]
+    fn rule_level_arithmetic_output_is_a_join_key_in_any_leg_order() {
+        use crate::datalog::EvalLimits;
+        use crate::derive::events::EventLog;
+        use crate::derive::evaluate;
+
+        let v = edge_attr_fixture();
+        let stats = Stats { total_nodes: 3, total_edges: 2, ..Default::default() };
+        for src in [
+            r#"m(X, Z) :- n(X), add(X, 1, Y), t(Y, Z).
+               n(1).
+               n(2).
+               t(2, "hit")."#,
+            // Same rule, arithmetic written FIRST (operand not yet bound at that point).
+            r#"m(X, Z) :- add(X, 1, Y), n(X), t(Y, Z).
+               n(1).
+               n(2).
+               t(2, "hit")."#,
+        ] {
+            let eval = evaluate(&v, src, stats.clone(), EvalLimits::none(), EventLog::discard())
+                .expect("evaluate");
+            let facts = eval.facts("m");
+            assert_eq!(facts.len(), 1, "only 1 + 1 = 2 reaches t(2, _)");
+            assert_eq!(facts[0][0], Value::Int(1));
+            assert_eq!(facts[0][1], s("hit"));
+        }
+    }
+
+    /// The `boot.rofl` shape this round needs (`boot.rofl:19-20`): a stratum number that
+    /// CLIMBS through a recursive rule whose only progress is `+1`. In v0 that body leg is
+    /// `N is M + 1`; in the derive dialect it is `add(M, 1, N)`. The fixpoint must both
+    /// derive the whole chain and terminate.
+    #[test]
+    fn rule_level_stratum_climbing_recursion_via_evaluate() {
+        use crate::datalog::EvalLimits;
+        use crate::derive::events::EventLog;
+        use crate::derive::evaluate;
+
+        let v = edge_attr_fixture();
+        let src = r#"lvl(R, N) :- dep(R, Q), lvl(Q, M), add(M, 1, N).
+                     lvl(R, 0) :- edb(R).
+                     edb("a").
+                     dep("b", "a").
+                     dep("c", "b").
+                     dep("d", "c")."#;
+        let stats = Stats { total_nodes: 3, total_edges: 2, ..Default::default() };
+        let eval = evaluate(&v, src, stats, EvalLimits::none(), EventLog::discard())
+            .expect("evaluate");
+
+        let mut got: Vec<(String, i64)> = eval
+            .facts("lvl")
+            .iter()
+            .map(|f| match (&f[0], &f[1]) {
+                (Value::Str(r), Value::Int(n)) => (r.clone(), *n),
+                other => panic!("unexpected fact shape {other:?}"),
+            })
+            .collect();
+        got.sort_unstable();
+        assert_eq!(
+            got,
+            vec![
+                ("a".to_string(), 0),
+                ("b".to_string(), 1),
+                ("c".to_string(), 2),
+                ("d".to_string(), 3),
+            ]
+        );
     }
 }
