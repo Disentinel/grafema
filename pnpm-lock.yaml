@@ -328,6 +328,8 @@ importers:
 
   packages/rfdb-server: {}
 
+  packages/rofl-conformance: {}
+
   packages/types:
     devDependencies:
       typescript:

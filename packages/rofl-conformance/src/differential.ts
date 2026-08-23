@@ -9,7 +9,8 @@
 
 import { OracleEngine } from './oracle.ts';
 import { RfdbRofl, unprefix } from './adapter.ts';
-import { RfdbClient, RfdbError } from './rfdb-client.ts';
+import type { RfdbClient } from './rfdb-client.ts';
+import { RfdbError } from './rfdb-client.ts';
 import { UnsupportedFeature } from './translate.ts';
 import { v0FactSet, compareFactSets, witnessSound, gapSound } from './canonical.ts';
 import { generateProgram, type GeneratedProgram } from './generator.ts';

@@ -16,7 +16,8 @@ import { AssertionError } from 'node:assert';
 import { SCENARIOS, EXPECTED_SCENARIO_COUNT, type Ctx, type Scenario } from './scenarios.ts';
 import { OracleEngine } from './oracle.ts';
 import { RfdbRofl } from './adapter.ts';
-import { RfdbClient, RfdbError } from './rfdb-client.ts';
+import type { RfdbClient } from './rfdb-client.ts';
+import { RfdbError } from './rfdb-client.ts';
 import { UnsupportedFeature } from './translate.ts';
 import { HarnessGap, makeSeedContext, type SeedContext } from './differential.ts';
 

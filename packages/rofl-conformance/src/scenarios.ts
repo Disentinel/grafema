@@ -19,7 +19,6 @@ import { BOOT, SENSORS, COUNTER, TM, TM_DIV } from './fixtures.ts';
 /** Duck-typed engine surface: OracleEngine (sync) or RfdbRofl (async).
  *  Scenario code awaits every call, which is a no-op for sync values. */
 export type Engine = {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   [k: string]: any;
 };
 
