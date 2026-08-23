@@ -1692,31 +1692,19 @@ mod tests {
         }
     }
 
-    /// Every registered builtin must ALSO be known to the stratifier (the `BUILTINS` array
-    /// in stratify.rs) so it is never mistaken for a derived predicate — method_suffix was
-    /// once registered here but forgotten there (debug_assert panic). Pin the pairing for
-    /// the whole registry so a future builtin cannot repeat the miss.
-    #[test]
-    fn every_registered_builtin_is_extensional_for_the_stratifier() {
-        for def in registry() {
-            let args = (0..def.arity)
-                .map(|i| format!("V{i}"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let src = format!("p(V0) :- {}({args}).", def.name);
-            let prog =
-                crate::derive::parser_ext::parse_ext_program(&src).expect("probe rule parses");
-            let strat = crate::derive::stratify::stratify(&prog).expect("stratifies");
-            assert_eq!(
-                strat.strata.len(),
-                1,
-                "builtin `{}` must be extensional (one stratum, only `p` derived) — \
-                 is it missing from stratify.rs BUILTINS?",
-                def.name
-            );
-            assert_eq!(strat.strata[0].predicates, vec!["p".to_string()]);
-        }
-    }
+    // The registry↔consumer drift pin that lived here probed the STRATIFIER
+    // (`every_registered_builtin_is_extensional_for_the_stratifier`). The stratifier no
+    // longer keeps a predicate vocabulary at all (ROFL F2), so that probe now succeeds for
+    // EVERY string — registered builtin or nonsense — and the assertion had become a
+    // tautology. The drift risk itself did NOT disappear: the surviving vocabulary mirror
+    // is the PLANNER's (`plan.rs::BASE_RELATIONS` / `is_filter_or_function`, which decide
+    // `introduces_tuples` and therefore the E-PLAN-003 cross-join guard). The pin moved
+    // there, non-vacuously, as
+    // `plan.rs::every_registered_builtin_is_a_filter_or_base_relation_for_the_planner`
+    // (private items — it must live in plan.rs). The stratifier's *absence* of a
+    // vocabulary is itself pinned by `stratify.rs::stratifier_carries_no_predicate_vocabulary`,
+    // whose failure message carries the obligation to restore a stratifier-side pin if a
+    // vocabulary is ever reintroduced.
 
     #[test]
     fn arity_matches_mode_widths() {

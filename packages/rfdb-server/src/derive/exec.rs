@@ -1787,11 +1787,58 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         let mut out: Vec<BindRow> = Vec::new();
 
         if negated {
-            // Anti-join: every arg is bound (planner ordered bound-first). Build the
-            // fact-key set ONCE; each row is then an O(1) membership probe. (The per-row
-            // `values().any()` scan made every anti-join O(rows × facts).) NOT cached
-            // (Part A exclusion): the source relation can change between Δ-rounds, and
-            // the set borrows its keys from the relation store.
+            // Anti-join: every VARIABLE arg is bound (planner ordered bound-first).
+            //
+            // A WILDCARD position is EXISTENTIAL: `\+ p(X, _)` drops a row iff ANY
+            // fact matches on the non-wildcard columns, whatever the wildcard column
+            // holds. `bind_atom_args` returns `None` on a wildcard, and reading that
+            // `None` as "no match ⇒ row survives" made the whole negation silently
+            // vacuous (ROFL conformance F1, live-probed: `q0(X) :- p0(X), \+ p2(X, _).`
+            // returned every p0). Project both the fact keys and the per-row probe key
+            // onto the NON-wildcard positions instead; the wildcard-free case keeps the
+            // exact full-key set below (borrowed keys, no clones).
+            let atom_args = atom.args();
+            let wc_free: Vec<usize> = (0..atom_args.len())
+                .filter(|&i| !matches!(atom_args[i], Term::Wildcard))
+                .collect();
+            if wc_free.len() < atom_args.len() {
+                let keys: std::collections::HashSet<Vec<&Value>> = source
+                    .values()
+                    .filter(|f| f.key.len() == atom_args.len())
+                    .map(|f| wc_free.iter().map(|&i| &f.key[i]).collect())
+                    .collect();
+                return par_join_rows(&rows, self.cancel_ref(), |row, out| {
+                    let probe: Option<Vec<Value>> = wc_free
+                        .iter()
+                        .map(|&i| match &atom_args[i] {
+                            Term::Const(s) => Some(Value::from_term_const(s)),
+                            Term::Lit(v) => Some(v.clone()),
+                            Term::Var(v) => row.get(v).cloned(),
+                            // Unreachable: wc_free excludes wildcard positions.
+                            Term::Wildcard => None,
+                        })
+                        .collect();
+                    let present = match probe {
+                        Some(key) => {
+                            let borrowed: Vec<&Value> = key.iter().collect();
+                            keys.contains(&borrowed)
+                        }
+                        // A variable position unbound for this row (the planner
+                        // guarantees this does not happen for a safe rule): treated
+                        // as "no match" — the row survives, matching the wildcard-free
+                        // branch's behavior.
+                        None => false,
+                    };
+                    if !present {
+                        out.push(row.clone());
+                    }
+                });
+            }
+            // Wildcard-free: build the exact fact-key set ONCE; each row is then an O(1)
+            // membership probe. (The per-row `values().any()` scan made every anti-join
+            // O(rows × facts).) NOT cached (Part A exclusion): the source relation can
+            // change between Δ-rounds, and the set borrows its keys from the relation
+            // store.
             let keys: std::collections::HashSet<&[Value]> =
                 source.values().map(|f| f.key.as_ref()).collect();
             return par_join_rows(&rows, self.cancel_ref(), |row, out| {
@@ -1826,6 +1873,29 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         // scans, ~10.8 s per pack, for a join the (F)-keyed build-once index serves in
         // milliseconds.)
         let atom_args = atom.args();
+
+        // A VARIABLE-FREE positive leg (`k(_, _)`, `p("c1", _)`, `p1("c1","c2")`) is a
+        // NONEMPTINESS FILTER, not a generator: it captures nothing, so every fact it
+        // unifies with hands back the SAME row. Extending once per matching fact
+        // multiplied the intermediate by |matches| for an answer set that is unchanged
+        // (a `BindRow` carries no tag, and the head projection is set semantics over an
+        // idempotent tag), which is how a leading `edge(_, _)` turned a 50-row answer
+        // into 2500 materialized rows. Its truth is also ROW-INDEPENDENT — one scan
+        // decides it for the whole batch.
+        //
+        // This is the executor half of the planner's F3 exemption: `shares_no_binding`
+        // waves a leg through while the bound set is still EMPTY, on the premise that
+        // every leg placed so far multiplies the output by at most 1. A leg placed under
+        // an empty bound set can have no variable arguments (a free variable would BIND,
+        // making the set non-empty), so this branch is exactly what makes that premise
+        // true rather than merely asserted.
+        if atom_args.iter().all(|t| !matches!(t, Term::Var(_))) {
+            let matched = source
+                .values()
+                .any(|f| unify_atom(atom, &f.key, &BindRow::new()).is_some());
+            return if matched { rows } else { Vec::new() };
+        }
+
         let bound_positions: Vec<usize> = leg
             .pattern
             .iter()
@@ -1918,6 +1988,27 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             // (nothing exists to negate), so every row survives unchanged.
             return if negated { rows } else { Vec::new() };
         };
+
+        // ── Variable-free positive leg = ROW-INDEPENDENT nonemptiness filter ──
+        //
+        // Same invariant as [`Self::join_derived`]'s variable-free branch, for base
+        // relations and builtins: `edge(_, _, "CALLS")` / `node("id", "T")` capture
+        // nothing, so every tuple they produce yields the SAME row back. Their truth
+        // does not depend on the row at all, so ONE eval decides the whole batch —
+        // instead of |rows| evals each fanning out to |matches| duplicate rows (a
+        // leading `edge(_, _)` over a 50-edge store produced 50 rows where 1 is
+        // answer-equivalent, and the next generator then cross-extended that 50×).
+        // This is what makes the planner's F3 empty-bound-set exemption sound: a leg
+        // placed while nothing is bound yet cannot have a variable argument.
+        if !negated && atom.args().iter().all(|t| !matches!(t, Term::Var(_))) {
+            let (spec, _slot_vars) = resolve_arg_spec(atom, &BindRow::new());
+            let mut batch = Batch::new();
+            // An eval Err is a planning fault the planner already excluded; the safe
+            // reading is "no tuple", i.e. the filter rejects (never a crash).
+            let eval = def.eval;
+            let nonempty = eval(self.view, &mut batch, &spec).is_ok() && !batch.rows.is_empty();
+            return if nonempty { rows } else { Vec::new() };
+        }
 
         // ── Set-at-once anti-join (the function-has-contains shape) ──
         //
@@ -3779,9 +3870,315 @@ mod tests {
             BTreeSet::<String>::new(),
             "wildcard key column: no CALL name appears as a k VALUE"
         );
-        // (An ALL-wildcard leg `k(_, _)` is a pure cross-join and is rejected
-        // by the E-PLAN-003 guard before it could reach the empty-probe-key
-        // cross-extend branch — pinned by the guard's own tests.)
+        // (An ALL-wildcard positive leg `k(_, _)` is a nonemptiness filter: since
+        // the F3 filter-in-any-position fix it plans (a binding-free leg is never a
+        // Cartesian product) and set-semantics head projection dedups its rows —
+        // the same emptiness semantics its negated twin `\+ k(_, _)` gets in
+        // `ground_fact_probe_filters_in_any_position`.)
+    }
+
+    // ── ROFL conformance F1/F2/F3 regressions ───────────────────────
+
+    /// F1 (SOUNDNESS) — a WILDCARD inside a NEGATED derived/fact leg is
+    /// EXISTENTIAL: `\+ p2(X, _)` must drop a row iff ANY `p2(x, ·)` fact exists
+    /// for the row's `x`. The anti-join keys rows with `bind_atom_args`, which
+    /// returns `None` on a wildcard, and `None` is read as "no match ⇒ the row
+    /// survives" (exec.rs `join_derived`, negated branch) — so EVERY row survives
+    /// and the negation is silently vacuous. Unsound: `q0` returns `c1`, which is
+    /// NOT entailed (the `\+ p2(c1, _)` guard is satisfied by `p2("c1", "c9")`).
+    #[test]
+    fn negated_derived_leg_with_wildcard_is_existential() {
+        let v = FixtureStorageView::new(1);
+        let src = r#"
+            p0("c0"). p0("c1").
+            p2("c1", "c9").
+            q0(X) :- p0(X), \+ p2(X, _).
+        "#;
+        let eval = run(src, &v, Stats::default());
+        let got: std::collections::BTreeSet<String> = eval
+            .facts("q0")
+            .into_iter()
+            .map(|r| r[0].as_str())
+            .collect();
+        assert_eq!(
+            got,
+            std::collections::BTreeSet::from(["c0".to_string()]),
+            "\\+ p2(X, _) must be an existential anti-join: c1 has a p2 fact, only c0 survives"
+        );
+    }
+
+    /// F1 companion — the wildcard may sit in ANY position of a negated leg; the
+    /// anti-join is existential over the NON-wildcard columns, so `\+ p2(_, X)`
+    /// keys on the VALUE column.
+    #[test]
+    fn negated_derived_leg_wildcard_arrangements() {
+        let v = FixtureStorageView::new(1);
+        let src = r#"
+            p0("c0"). p0("c1"). p0("c9").
+            p2("c1", "c9").
+            qv(X) :- p0(X), \+ p2(_, X).
+        "#;
+        let eval = run(src, &v, Stats::default());
+        let got: std::collections::BTreeSet<String> = eval
+            .facts("qv")
+            .into_iter()
+            .map(|r| r[0].as_str())
+            .collect();
+        assert_eq!(
+            got,
+            std::collections::BTreeSet::from(["c0".to_string(), "c1".to_string()]),
+            "\\+ p2(_, X): only c9 appears as a p2 VALUE, so it is dropped"
+        );
+    }
+
+    /// F2 (AVAILABILITY), part 1 — a body literal over a predicate with NO facts
+    /// and NO rules is an EMPTY relation (standard datalog): the rule derives
+    /// nothing and evaluation TERMINATES with the correct empty result. On current
+    /// main `stratify` trips a `debug_assert!` on the unknown predicate
+    /// (stratify.rs `add_body_deps`: "body predicate 'p9' is neither derived,
+    /// materialize-linked, base, nor builtin"), which PANICS. In the server this
+    /// killed the connection thread, so the client saw no response at all — the
+    /// mysterious ">45 s hang". `debug_assert!` compiles out in release, so this
+    /// test only fires under `cfg(debug_assertions)`; `cargo test` uses the `test`
+    /// profile (unoptimized + debuginfo), where debug assertions are ON.
+    #[test]
+    fn unknown_predicate_leg_terminates_with_empty_result() {
+        let v = FixtureStorageView::new(1);
+        let src = r#"
+            p0("c0"). p0("c1").
+            q0(X) :- p0(X), p9(X).
+        "#;
+        let eval = run(src, &v, Stats::default());
+        assert!(
+            eval.facts("q0").is_empty(),
+            "q0 must be empty (p9 is an empty relation), got: {:?}",
+            eval.facts("q0")
+        );
+    }
+
+    /// F2 part 2 — the wall-clock deadline is a hard backstop on the same program
+    /// shape: an already-expired deadline aborts with the coded `E-EXEC-001`
+    /// instead of hanging or answering. On current main this test never reaches
+    /// the executor (the same `stratify` panic as part 1).
+    #[test]
+    fn unknown_predicate_leg_expired_deadline_aborts_with_e_exec_001() {
+        let v = FixtureStorageView::new(1);
+        let src = r#"
+            p0("c0"). p0("c1").
+            q0(X) :- p0(X), p9(X).
+        "#;
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let plans = plan_program(&rules, &strat, &Stats::default()).expect("plan");
+
+        let mut limits = EvalLimits::none();
+        // Already expired: the first fixpoint checkpoint must trip it.
+        limits.deadline = Some(Instant::now() - std::time::Duration::from_millis(1));
+        let exec = Executor::<BoolTag>::with_limits(&v, limits, DEFAULT_ITERATION_CAP);
+        let err = exec
+            .evaluate(&plans, &rules, &strat)
+            .expect_err("an expired deadline must abort the evaluation");
+        assert_eq!(err.code, ExecCode::LimitExceeded);
+        assert_eq!(err.code.as_str(), "E-EXEC-001");
+    }
+
+    /// F3 (PLANNER), exec side — a fully-ground body literal is a FILTER in any
+    /// position: present fact ⇒ pass-through, absent fact ⇒ empty result. Also
+    /// covers the variable-free NEGATED legs the same reorder false-rejects:
+    /// `\+ p3(_)` (nonempty relation ⇒ drop all) and `\+ p4(_)` over a predicate
+    /// with no facts and no rules (empty relation ⇒ vacuous, pass all). On current
+    /// main `shares_no_binding` sees an EMPTY bound set once the cost model orders
+    /// the cheap binding-free leg first and rejects the following generator with
+    /// E-PLAN-003.
+    #[test]
+    fn ground_fact_probe_filters_in_any_position() {
+        let v = FixtureStorageView::new(1);
+        let src = r#"
+            p0("c0"). p0("c1").
+            p1("c1", "c2").
+            p3("z").
+            qy(X) :- p0(X), p1("c1", "c2").
+            qn(X) :- p0(X), p1("c9", "c9").
+            qe(X) :- p0(X), \+ p3(_).
+            qf(X) :- p0(X), \+ p4(_).
+        "#;
+        let eval = run(src, &v, Stats::default());
+        let names = |pred: &str| -> std::collections::BTreeSet<String> {
+            eval.facts(pred)
+                .into_iter()
+                .map(|r| r[0].as_str())
+                .collect()
+        };
+        use std::collections::BTreeSet;
+        let all = BTreeSet::from(["c0".to_string(), "c1".to_string()]);
+        assert_eq!(
+            names("qy"),
+            all,
+            "present ground fact = pass-through filter"
+        );
+        assert_eq!(
+            names("qn"),
+            BTreeSet::<String>::new(),
+            "absent ground fact = the rule derives nothing"
+        );
+        assert_eq!(
+            names("qe"),
+            BTreeSet::<String>::new(),
+            "\\+ p3(_): p3 is nonempty, the emptiness anti-join drops every row"
+        );
+        assert_eq!(
+            names("qf"),
+            all,
+            "\\+ p4(_): p4 has no facts and no rules (empty relation), the negation is vacuous"
+        );
+    }
+
+    /// F3 behavior pin — an ALL-wildcard POSITIVE leg `k(_, _)` is a nonemptiness
+    /// filter: nonempty `k` passes rows through (set-semantics head projection
+    /// dedups the per-fact copies), and an unknown predicate (`km`: no facts, no
+    /// rules — an empty relation) filters everything.
+    #[test]
+    fn all_wildcard_positive_leg_is_a_nonemptiness_filter() {
+        let mut v = FixtureStorageView::new(1);
+        node(&mut v, "a", "CALL");
+        let src = r#"
+            k("a", "x"). k("a", "y").
+            name(N) :- node(C, "CALL"), attr(C, "name", N).
+            hit3(N) :- name(N), k(_, _).
+            hit4(N) :- name(N), km(_, _).
+        "#;
+        let eval = run(src, &v, Stats::default());
+        let names = |pred: &str| -> Vec<String> {
+            eval.facts(pred)
+                .into_iter()
+                .map(|r| r[0].as_str())
+                .collect()
+        };
+        assert_eq!(
+            names("hit3"),
+            vec!["a".to_string()],
+            "nonempty k passes, deduped"
+        );
+        assert!(names("hit4").is_empty(), "empty km filters everything");
+    }
+
+    /// F3 SAFETY BACKSTOP — a VARIABLE-FREE positive leg must be a row-independent
+    /// nonemptiness FILTER (fan-out ≤ 1), never a generator.
+    ///
+    /// This is the invariant the planner's empty-bound-set exemption rests on.
+    /// `shares_no_binding` waves a leg through while nothing is bound yet, on the
+    /// premise that everything placed before it multiplied the output by at most 1.
+    /// Only a variable-free leg can be placed under an empty bound set — but
+    /// evaluated as a CROSS-EXTEND such a leg emits one identical row per matching
+    /// fact, so the premise is false and the exemption admits a genuine Cartesian
+    /// product (a leading `edge(_, _)` over a 50-edge store gave 50 rows, and the
+    /// next generator cross-extended them to 2500 for a 50-row answer).
+    ///
+    /// `max_intermediate_results` counts exactly these per-clause rows
+    /// (`eval_clause` projects ONE tuple per surviving `BindRow`, before any dedup),
+    /// so a ceiling strictly between the answer size and the product observes the
+    /// fan-out directly — in EITHER leg order, since the product is symmetric.
+    #[test]
+    fn variable_free_leg_does_not_multiply_the_intermediate() {
+        const N: usize = 20;
+        let mut v = FixtureStorageView::new(1);
+        for i in 0..N {
+            node(&mut v, &format!("n{}", i), "CALL");
+            edge(&mut v, &format!("n{}", i), "n0", "CALLS");
+        }
+        let mut src = String::new();
+        for i in 0..N {
+            src.push_str(&format!("k(\"a\", \"x{}\").\n", i));
+        }
+        src.push_str(
+            r#"
+            nm(N) :- node(C, "CALL"), attr(C, "name", N).
+            qd(N) :- nm(N), k(_, _).
+            qb(N) :- nm(N), edge(_, _, "CALLS").
+        "#,
+        );
+        let prog = parse_ext_program(&src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let plans = plan_program(&rules, &strat, &Stats::default()).expect("plan");
+
+        // N answers per rule; the un-capped cross-extend materializes N × N = 400.
+        let mut limits = EvalLimits::none();
+        limits.max_intermediate_results = 100;
+        let exec = Executor::<BoolTag>::with_limits(&v, limits, DEFAULT_ITERATION_CAP);
+        let eval = exec
+            .evaluate(&plans, &rules, &strat)
+            .expect("a variable-free leg must not multiply the intermediate");
+
+        // …and the answer is unchanged by the fan-out cap.
+        let names = |pred: &str| -> std::collections::BTreeSet<String> {
+            eval.facts(pred)
+                .into_iter()
+                .map(|r| r[0].as_str())
+                .collect()
+        };
+        let expected: std::collections::BTreeSet<String> =
+            (0..N).map(|i| format!("n{}", i)).collect();
+        assert_eq!(
+            names("qd"),
+            expected,
+            "derived variable-free leg: answer intact"
+        );
+        assert_eq!(
+            names("qb"),
+            expected,
+            "base variable-free leg: answer intact"
+        );
+    }
+
+    /// Negation over an ARITY-MISMATCHED predicate is the exact COMPLEMENT of the
+    /// positive reading, not a second vacuous-negation bug.
+    ///
+    /// The F1 anti-join filters its key set by `f.key.len() == atom_args.len()`, so
+    /// `\+ p3(X, _)` against arity-3 `p3` facts passes every row. That is sound
+    /// because the POSITIVE reading of the same leg is empty: `unify_atom` rejects
+    /// on `atom.args().len() != fact_key.len()`, and `join_derived`'s index build
+    /// skips mismatched facts outright. The engine identifies relations by
+    /// name AND arity (standard datalog), so `p3/2` is a distinct, EMPTY relation —
+    /// empty positive ⇔ vacuous negation is exactly complementary, at every arity.
+    ///
+    /// Pinned as a pair: if either half is ever changed to match on name alone, this
+    /// test fails and forces the other half to change with it.
+    #[test]
+    fn arity_mismatched_leg_is_empty_positive_and_vacuous_negated() {
+        let v = FixtureStorageView::new(1);
+        let src = r#"
+            p0("c0"). p0("c1").
+            p3("c0", "y", "z"). p3("c1", "y", "z").
+            pos(X) :- p0(X), p3(X, _).
+            neg(X) :- p0(X), \+ p3(X, _).
+            ok3(X) :- p0(X), \+ p3(X, _, _).
+        "#;
+        let eval = run(src, &v, Stats::default());
+        let names = |pred: &str| -> std::collections::BTreeSet<String> {
+            eval.facts(pred)
+                .into_iter()
+                .map(|r| r[0].as_str())
+                .collect()
+        };
+        use std::collections::BTreeSet;
+        let all = BTreeSet::from(["c0".to_string(), "c1".to_string()]);
+        assert_eq!(
+            names("pos"),
+            BTreeSet::<String>::new(),
+            "p3/2 is a distinct EMPTY relation: the positive leg derives nothing"
+        );
+        assert_eq!(
+            names("neg"),
+            all,
+            "…so its negation is vacuous — the exact complement, not an unsound pass"
+        );
+        assert_eq!(
+            names("ok3"),
+            BTreeSet::<String>::new(),
+            "at the MATCHING arity the negation bites: every c has a p3/3 fact"
+        );
     }
 
     // ── W8 Part 1: external cancellation (`EvalLimits::cancelled`) ──

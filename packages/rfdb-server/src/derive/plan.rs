@@ -1504,6 +1504,24 @@ fn arg_pattern(atom: &Atom, bound: &HashSet<String>) -> Vec<ArgMode> {
 /// A ground atom (all constants) shares no *variable* but is not a cross-join — it is a
 /// constant probe — so it is exempt.
 fn shares_no_binding(atom: &Atom, bound: &HashSet<String>) -> bool {
+    if bound.is_empty() {
+        // NOTHING is bound yet, so this leg is the rule's FIRST generator, not a Cartesian
+        // product. Without this exemption a filter was only safe in the WRITTEN order:
+        // once the cost model reordered the cheap ground probe first, the generator that
+        // followed was falsely rejected with E-PLAN-003 (ROFL conformance F3, live-probed:
+        // `q0(X) :- p0(X), p1("c1","c2").`).
+        //
+        // Why the preceding legs cannot have multiplied: a leg placed while the bound set
+        // is still empty has NO VARIABLE ARGUMENT AT ALL — a free variable would have been
+        // bound by it, making the set non-empty, and a negated or function leg is not
+        // placeable until its variables are bound. The executor evaluates exactly that
+        // class as a ROW-INDEPENDENT nonemptiness filter with fan-out ≤ 1 (the
+        // variable-free branches of `join_derived` / `join_extensional`), so the premise
+        // is ENFORCED, not assumed — without it a leading `edge(_, _)` is a real
+        // generator and this exemption would admit a genuine Cartesian product. Pinned by
+        // `exec::tests::variable_free_leg_does_not_multiply_the_intermediate`.
+        return false;
+    }
     let vars: Vec<&String> = atom
         .args()
         .iter()
@@ -1792,6 +1810,77 @@ mod tests {
             .find(|l| l.literal.atom().predicate() == "edge")
             .expect("edge leg present");
         assert_eq!(edge_leg.join, JoinKind::MergeOnTotal);
+    }
+
+    // ── ground probe is a FILTER, safe in any position (ROFL F3) ────
+
+    /// F3 — a fully-ground body literal is a constant-probe FILTER (it binds
+    /// nothing and multiplies the output by at most 1), so it is safe in ANY
+    /// position. `shares_no_binding` exempts it only in the WRITTEN position:
+    /// once the cost model reorders the cheap ground probe FIRST, the following
+    /// generator sees an EMPTY bound set, `!vars.iter().any(|v| bound.contains(v))`
+    /// is vacuously true, and the leg is falsely rejected as a cross-join
+    /// (E-PLAN-003).
+    #[test]
+    fn ground_probe_leg_is_safe_in_any_position() {
+        let src = r#"
+            p0("c0"). p0("c1").
+            p1("c1", "c2").
+            q0(X) :- p0(X), p1("c1", "c2").
+        "#;
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        plan_program(&rules, &strat, &stats(100, 100))
+            .expect("a ground probe leg must never trip the E-PLAN-003 cross-join guard");
+    }
+
+    /// F3 companion — an all-bound NEGATED leg (`\+ p3(_)`: no variables at all)
+    /// is likewise a filter; when placed first it must not turn the following
+    /// generator into a "cross-join" (same falsely-empty bound set as above).
+    #[test]
+    fn negated_novar_leg_first_does_not_reject_generator() {
+        let src = r#"
+            p0("c0").
+            p3("z").
+            qe(X) :- p0(X), \+ p3(_).
+        "#;
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        plan_program(&rules, &strat, &stats(100, 100))
+            .expect("a variable-free negated leg must never trip the E-PLAN-003 cross-join guard");
+    }
+
+    // ── registry ↔ planner vocabulary pin ───────────────────────────
+
+    /// Successor to `builtin.rs::every_registered_builtin_is_extensional_for_the_stratifier`,
+    /// which went vacuous when the stratifier dropped its predicate vocabulary (ROFL F2):
+    /// a stratify probe now succeeds for EVERY string, so it could no longer catch drift.
+    /// The PLANNER still keeps a vocabulary, and it is load-bearing — a name in neither
+    /// [`BASE_RELATIONS`] nor [`is_filter_or_function`] is classified as tuple-introducing
+    /// (`introduces_tuples`), which is exactly what the E-PLAN-003 cross-join guard
+    /// polices and what the cost model sizes as a relation. A builtin registered in
+    /// `builtin::registry()` but forgotten here would therefore be mis-planned (the
+    /// `method_suffix` miss, one consumer over). Pin the whole registry against it.
+    #[test]
+    fn every_registered_builtin_is_a_filter_or_base_relation_for_the_planner() {
+        let known = |pred: &str| BASE_RELATIONS.contains(&pred) || is_filter_or_function(pred);
+        for def in crate::derive::builtin::registry() {
+            assert!(
+                known(def.name),
+                "builtin `{}` is in builtin::registry() but in neither plan.rs BASE_RELATIONS \
+                 nor is_filter_or_function — the planner would treat it as a tuple-introducing \
+                 generator (E-PLAN-003 guard + cost model)",
+                def.name
+            );
+        }
+        // Non-vacuity control: the predicate above is a real discriminator, NOT a
+        // tautology like the stratifier probe it replaces.
+        assert!(
+            !known("zzz_not_a_registered_builtin"),
+            "the drift check must reject an unknown predicate, otherwise it pins nothing"
+        );
     }
 
     // ── per-rule materialization guard ──────────────────────────────

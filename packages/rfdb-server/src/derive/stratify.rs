@@ -186,45 +186,16 @@ impl Stratification {
     }
 }
 
-/// Base relations served directly from storage column families (§3). Never strata.
-const BASE_RELATIONS: &[&str] = &["node", "type", "edge", "incoming", "attr"];
-
-/// Builtins shared with the query engine (filters / functions / generators). Never strata.
-/// Mirrors `crate::datalog::utils` placement table and `eval.rs` dispatch.
-const BUILTINS: &[&str] = &[
-    "neq",
-    "gt",
-    "lt",
-    "gte",
-    "lte",
-    "starts_with",
-    "not_starts_with",
-    "string_contains",
-    "method_suffix",
-    "ends_with",
-    "concat",
-    "str_lower",
-    "basename",
-    "strip_quotes",
-    "strip_prefix",
-    "strip_suffix",
-    "last_segment",
-    "first_segment",
-    "replace_all",
-    "path_resolve",
-    "split",
-    "relative_import_resolve",
-    "edge_attr",
-    "node_attr",
-    "path",
-    "parent_function",
-    "resolved_import",
-];
-
-/// True iff `pred` is a base relation or a builtin (i.e. NOT a derived predicate).
-fn is_extensional(pred: &str) -> bool {
-    BASE_RELATIONS.contains(&pred) || BUILTINS.contains(&pred)
-}
+// NOTE: the stratifier deliberately carries NO base-relation / builtin vocabulary. A body
+// predicate that is not derived and not materialize-linked contributes no dependency edge,
+// whatever it is — a base relation, a builtin, or a predicate with no facts and no rules
+// (a legal EMPTY relation; the planner classifies it and the executor serves it as empty).
+// A vocabulary mirror here once backed a `debug_assert!` that panicked on the empty-relation
+// case (ROFL conformance F2) and drifted against the builtin registry (method_suffix).
+// This absence is an INVARIANT, pinned by `stratifier_carries_no_predicate_vocabulary`
+// below: reintroducing a vocabulary here fails that test, and its message states the
+// obligation that comes with it (restore the registry↔stratifier pin, which now lives in
+// plan.rs as `every_registered_builtin_is_a_filter_or_base_relation_for_the_planner`).
 
 /// Extract the `@materialize(edge_type = "T")` edge type declared on an item, if any.
 ///
@@ -507,11 +478,14 @@ fn add_body_deps(
             continue;
         }
 
-        // 3. Otherwise it is a base relation or builtin — no dependency edge.
-        debug_assert!(
-            is_extensional(body_pred) || derived.contains(body_pred),
-            "body predicate '{body_pred}' is neither derived, materialize-linked, base, nor builtin"
-        );
+        // 3. Otherwise it is a base relation, a builtin, or a predicate with NO facts
+        //    and NO rules — no dependency edge in every case. An unknown predicate is a
+        //    legal EMPTY relation (standard datalog semantics), NOT an internal error:
+        //    it is reachable from user input, and the executor already serves it as
+        //    empty (`join_extensional` yields no rows for a positive leg, passes every
+        //    row for a negated one). A `debug_assert!` here panicked on that input in
+        //    debug builds — the conformance harness's debug-built server killed the
+        //    connection thread and the client hung past the 30 s deadline (ROFL F2).
     }
 }
 
@@ -735,6 +709,38 @@ mod tests {
         strat
             .stratum_of(pred)
             .unwrap_or_else(|| panic!("predicate '{pred}' not found in any stratum"))
+    }
+
+    /// INVARIANT (ROFL F2): the stratifier carries NO predicate vocabulary. Every body
+    /// predicate that is not derived and not materialize-linked is extensional to it —
+    /// base relation, builtin, or a predicate with no facts and no rules (a legal EMPTY
+    /// relation), indistinguishably. The vocabulary mirror that used to live here backed a
+    /// `debug_assert!` that PANICKED on the empty-relation case; the panic was reachable
+    /// from client program text and killed the connection thread in debug builds.
+    ///
+    /// If this test ever fails, a vocabulary has been reintroduced — and with it the
+    /// obligation the old `builtin.rs::every_registered_builtin_is_extensional_for_the_stratifier`
+    /// discharged: pin `builtin::registry()` against the new vocabulary, and make sure an
+    /// unknown predicate still stratifies as an empty relation instead of being rejected.
+    #[test]
+    fn stratifier_carries_no_predicate_vocabulary() {
+        // A name that is in no registry, no base-relation list and no builtin table.
+        let src = r#"q(X) :- node(X, "CALL"), zzz_not_a_registered_builtin(X)."#;
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect(
+            "an unknown predicate is a legal EMPTY relation, not a stratification error — \
+             has the stratifier regained a predicate vocabulary?",
+        );
+        assert_eq!(
+            strat.strata.len(),
+            1,
+            "the unknown predicate must contribute no dependency edge and no stratum"
+        );
+        assert_eq!(strat.strata[0].predicates, vec!["q".to_string()]);
+        assert!(
+            strat.stratum_of("zzz_not_a_registered_builtin").is_none(),
+            "an unknown body predicate is extensional, never a stratum"
+        );
     }
 
     #[test]
