@@ -2,15 +2,57 @@
 // harness architecture rests on, with evidence in assertions.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startServer, type ServerHandle } from '../src/rfdb-server.ts';
+import * as fs from 'node:fs';
+import {
+  startServer,
+  checkBinaryFreshness,
+  formatFreshnessRefusal,
+  ALLOW_STALE_ENV,
+  DEFAULT_BINARY,
+  type ServerHandle,
+} from '../src/rfdb-server.ts';
 import { RfdbClient, RfdbError } from '../src/rfdb-client.ts';
 import { RfdbRofl } from '../src/adapter.ts';
+
+/**
+ * Which server to smoke: this checkout's own debug build, or an explicit override —
+ * the same need `run.ts --rfdb` serves when the build lives in another CARGO_TARGET_DIR.
+ */
+const BINARY = process.env.ROFL_CONFORMANCE_RFDB ?? DEFAULT_BINARY;
+
+/**
+ * A checkout with no usable server binary is not a failing engine, and reporting it
+ * as thirteen red tests teaches the reader to ignore this file — after which a REAL
+ * red one goes unread too. So these live tests skip themselves, carrying the same
+ * refusal text a measurement run prints. A measurement run (`run.ts`) still refuses
+ * hard: a number is only ever about a binary that provably came from these sources.
+ *
+ * Decided before any test is registered, because `node:test` reads `skip` then.
+ */
+function liveSkipReason(): string | null {
+  if (!fs.existsSync(BINARY)) {
+    return `SKIPPING LIVE TESTS: no rfdb-server at ${BINARY}\n  build one: cd packages/rfdb-server && cargo build\n  or point these tests at a build: ROFL_CONFORMANCE_RFDB=<path> node --test ...`;
+  }
+  if (process.env[ALLOW_STALE_ENV] === '1') return null;
+  const verdict = checkBinaryFreshness(BINARY);
+  if (verdict.reason === 'fresh') return null;
+  return `SKIPPING LIVE TESTS: this binary cannot be measured against.\n${formatFreshnessRefusal(verdict)}`;
+}
+
+const SKIP_LIVE = liveSkipReason();
+if (SKIP_LIVE !== null) console.error(SKIP_LIVE);
+
+/** A test that needs a real server behind it. */
+function live(name: string, fn: () => Promise<void> | void): void {
+  test(name, { skip: SKIP_LIVE ?? false }, fn);
+}
 
 let server: ServerHandle;
 let client: RfdbClient;
 
 before(async () => {
-  server = await startServer();
+  if (SKIP_LIVE !== null) return;
+  server = await startServer(BINARY);
   client = await RfdbClient.connect(server.socketPath);
   const hello = await client.hello();
   assert.equal(hello.protocolVersion, 3);
@@ -22,14 +64,14 @@ after(() => {
   server?.stop();
 });
 
-test('recursive anc/parent over program-text EDB: 3 facts, hoisted rule first', async () => {
+live('recursive anc/parent over program-text EDB: 3 facts, hoisted rule first', async () => {
   const src = 'anc(X, Y) :- parent(X, Y).\nanc(X, Y) :- parent(X, Z), anc(Z, Y).\nparent("a", "b").\nparent("b", "c").\n';
   const rows = await client.executeDatalog(src);
   const tuples = rows.map((b) => `${b['X']},${b['Y']}`).sort();
   assert.deepEqual(tuples, ['a,b', 'a,c', 'b,c']);
 });
 
-test('PIN: executeDatalog DOES echo ground facts of the target predicate (mixed EDB/IDB)', async () => {
+live('PIN: executeDatalog DOES echo ground facts of the target predicate (mixed EDB/IDB)', async () => {
   const src = 'p0(X) :- p1(X).\np0("c0").\np1("c1").\n';
   const rows = await client.executeDatalog(src);
   const vals = rows.map((b) => b['X']).sort();
@@ -38,7 +80,7 @@ test('PIN: executeDatalog DOES echo ground facts of the target predicate (mixed 
   assert.deepEqual(vals, ['c0', 'c1']);
 });
 
-test('PIN: "first rule head" includes FACTS — unhoisted program answers the first fact relation', async () => {
+live('PIN: "first rule head" includes FACTS — unhoisted program answers the first fact relation', async () => {
   const src = 'parent("a", "b").\nanc(X, Y) :- parent(X, Y).\n';
   const rows = await client.executeDatalog(src);
   // target became `parent` (const head → no bindings)
@@ -46,7 +88,7 @@ test('PIN: "first rule head" includes FACTS — unhoisted program answers the fi
   assert.deepEqual(rows[0], {});
 });
 
-test('E-PLAN-003 fires on a disconnected body (structural guard, empty graph)', async () => {
+live('E-PLAN-003 fires on a disconnected body (structural guard, empty graph)', async () => {
   const src = 'q0(X, Y) :- p0(X), p1(Y).\np0("c0").\np1("c1").\n';
   await assert.rejects(
     () => client.executeDatalog(src),
@@ -54,7 +96,7 @@ test('E-PLAN-003 fires on a disconnected body (structural guard, empty graph)', 
   );
 });
 
-test('explainDatalogFact witness shape: ruleAstHash (64-hex) + positive body facts', async () => {
+live('explainDatalogFact witness shape: ruleAstHash (64-hex) + positive body facts', async () => {
   const src = 'anc(X, Y) :- parent(X, Y).\nanc(X, Y) :- parent(X, Z), anc(Z, Y).\nparent("a", "b").\nparent("b", "c").\n';
   const w = await client.explainDatalogFact(src, 'anc', ['a', 'c']);
   assert.ok(w !== null);
@@ -68,7 +110,7 @@ test('explainDatalogFact witness shape: ruleAstHash (64-hex) + positive body fac
   assert.equal(none, null);
 });
 
-test('explainDatalogGap witness shape: flat satisfied-prefix + first failing premise', async () => {
+live('explainDatalogGap witness shape: flat satisfied-prefix + first failing premise', async () => {
   const src = 'anc(X, Y) :- parent(X, Y).\nparent("a", "b").\n';
   const g = await client.explainDatalogGap(src, 'anc', ['b', 'a']);
   assert.ok(g !== null);
@@ -77,7 +119,7 @@ test('explainDatalogGap witness shape: flat satisfied-prefix + first failing pre
   assert.ok(Array.isArray(g!.satisfied));
 });
 
-test('PIN (F1 fixed): raw negated wildcard is existential — no adapter projection needed', async () => {
+live('PIN (F1 fixed): raw negated wildcard is existential — no adapter projection needed', async () => {
   // the exact live probe that discovered F1: pre-fix the engine returned
   // {c0, c1}; the fix makes \+ p2(X, _) an existential anti-join → {c0}
   const raw = 'q0(X) :- p0(X), \\+ p2(X, _).\np0("c0").\np0("c1").\np2("c1", "c9").\n';
@@ -90,7 +132,7 @@ test('PIN (F1 fixed): raw negated wildcard is existential — no adapter project
   assert.deepEqual(q.rows.map((r) => r.text), ['X = c0']);
 });
 
-test('PIN (F2 fixed): a body literal over an unknown predicate terminates with the correct empty result', async () => {
+live('PIN (F2 fixed): a body literal over an unknown predicate terminates with the correct empty result', async () => {
   // the exact live probe that discovered F2: pre-fix no response in >45s
   // (debug-build stratify panic killed the connection thread)
   const pos = 'q0(X) :- p0(X), p9(X).\np0("c0").\n';
@@ -101,7 +143,7 @@ test('PIN (F2 fixed): a body literal over an unknown predicate terminates with t
   assert.deepEqual(rows.map((b) => b['X']), ['c0']);
 });
 
-test('PIN (F3 fixed): a fully-ground body literal is a filter, safe after planner reordering', async () => {
+live('PIN (F3 fixed): a fully-ground body literal is a filter, safe after planner reordering', async () => {
   // the exact live probe that discovered F3: pre-fix E-PLAN-003 after the
   // planner placed the ground probe first
   const present = 'q0(X) :- p0(X), p1("c1", "c2").\np0("c0").\np1("c1", "c2").\n';
@@ -110,7 +152,7 @@ test('PIN (F3 fixed): a fully-ground body literal is a filter, safe after planne
   assert.deepEqual(await client.executeDatalog(absent), []);
 });
 
-test('adapter end-to-end: TC rows in exact v0 rendering', async () => {
+live('adapter end-to-end: TC rows in exact v0 rendering', async () => {
   const adapter = new RfdbRofl(client);
   adapter.load('edge(a, b). edge(b, c). edge(c, d).\npath(X, Y) :- edge(X, Y).\npath(X, Y) :- edge(X, Z), path(Z, Y).');
   const rows = (await adapter.query('path(X, Y)')).rows.map((x) => x.text);
@@ -128,7 +170,7 @@ test('adapter end-to-end: TC rows in exact v0 rendering', async () => {
 // cross-engine agreement pin. Only a WILDCARD head is a real refusal, and the
 // last assertion holds the engine to that — the one thing an anchored citation
 // cannot prove is an ABSENCE, so it is probed live.
-test('adapter end-to-end: constant head arguments agree with v0, wildcard heads do not', async () => {
+live('adapter end-to-end: constant head arguments agree with v0, wildcard heads do not', async () => {
   // (1) atom constant in the first head position
   const a = new RfdbRofl(client);
   a.load('p0(a, m).\np0(b, n).\nc0(k, Y) :- p0(X, Y).');
@@ -173,7 +215,7 @@ test('adapter end-to-end: constant head arguments agree with v0, wildcard heads 
 // repeated position receives the same value. The expected rows below are the
 // vendored v0's OWN answers, measured on the same three programs (in v0's own
 // row order), so this test is a cross-engine agreement pin, not a self-check.
-test('adapter end-to-end: repeated head variable agrees with v0 row-for-row', async () => {
+live('adapter end-to-end: repeated head variable agrees with v0 row-for-row', async () => {
   // (1) repeat of the FIRST premise column
   const a = new RfdbRofl(client);
   a.load('p0(a, m).\np0(b, n).\nq0(X, X) :- p0(X, Y).');

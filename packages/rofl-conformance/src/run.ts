@@ -8,7 +8,7 @@
 //  the ТЗ protocol forbids running against editable expectations)
 
 import { execSync } from 'node:child_process';
-import { startServer, DEFAULT_BINARY } from './rfdb-server.ts';
+import { startServer, StaleBinaryError, DEFAULT_BINARY, type ServerHandle } from './rfdb-server.ts';
 import { RfdbClient } from './rfdb-client.ts';
 import { runTier0, makeSeedContext, HarnessGap, type Tier0Summary } from './differential.ts';
 import { runOracleSelfCheck, runSubject, type ScenarioResult } from './suite-runner.ts';
@@ -42,7 +42,21 @@ async function main(): Promise<number> {
   }
 
   console.log(`[run] starting rfdb-server (${BINARY})`);
-  const server = await startServer(BINARY);
+  let server: ServerHandle;
+  try {
+    server = await startServer(BINARY);
+  } catch (e) {
+    // A binary that cannot be measured against is an ABORT (3), like the
+    // pre-registration gate above — the same class of "this run must not
+    // happen at all". Exit 1 is reserved for a run that DID happen and found
+    // divergences, and conflating the two makes a refusal look like a result.
+    if (e instanceof StaleBinaryError) {
+      console.error(`ABORT: ${e.message}`);
+      return 3;
+    }
+    console.error(`ABORT: cannot start rfdb-server: ${(e as Error).message}`);
+    return 3;
+  }
   let exitCode = 0;
   try {
     const client = await RfdbClient.connect(server.socketPath);

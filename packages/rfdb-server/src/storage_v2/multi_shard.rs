@@ -97,18 +97,24 @@ impl DatabaseConfig {
     /// truncates the target to zero BEFORE writing the new bytes, so a crash or power cut
     /// anywhere in that window leaves `db_config.json` present but empty or half-written —
     /// and [`Self::read_from`] then fails to parse it, which makes the whole database
-    /// refuse to open. Measured, not assumed: a reader racing the old writer observed a
-    /// torn file on 7445 of 10997 reads; the same reader against this writer observed 0 of
-    /// 956183 (see `a_crash_mid_write_never_leaves_a_torn_db_config`).
+    /// refuse to open. Measured, not assumed: a reader racing the old writer observes a
+    /// torn file on a large fraction of its reads, and against this writer on none of them
+    /// (see `a_crash_mid_write_never_leaves_a_torn_db_config`). The exact ratio is a
+    /// property of the machine and the scheduler on the day, not of the code, so the test
+    /// asserts the invariant — zero torn observations — and no run-specific count is
+    /// quoted here as if it were reproducible.
     ///
-    /// All four steps are load-bearing:
+    /// All four steps are load-bearing, and each is held to that by an armed fault in
+    /// `the_config_write_fsyncs_the_file_and_then_the_directory`:
     /// - the temp file absorbs every partial state, so the target is never torn;
     /// - `sync_all` puts the new bytes on stable storage BEFORE the rename publishes them,
     ///   otherwise the rename could survive a crash while the content it points at does not;
     /// - `rename` is a single atomic syscall on POSIX — a reader sees the old file or the
     ///   new one, never a mixture;
     /// - `fsync_dir` makes the rename itself durable; without it the directory entry can be
-    ///   lost in a crash and the update silently reverts.
+    ///   lost in a crash and the update silently reverts. On Linux only: [`fsync_dir`] is a
+    ///   documented no-op on other platforms (pre-existing platform fork), so there the
+    ///   rename's own durability is whatever the filesystem gives.
     ///
     /// Follows the existing exemplar in this crate,
     /// [`crate::storage_v2::manifest`]'s `atomic_write_json`, using this module's own
@@ -117,17 +123,118 @@ impl DatabaseConfig {
         use std::io::Write as _;
 
         let path = db_path.join("db_config.json");
-        let temp_path = path.with_extension("tmp");
+        // A temp name unique to this process AND this call. A shared `db_config.tmp` makes
+        // the atomicity conditional on there being exactly one writer: two writers in the
+        // same directory interleave create/write/rename on the SAME temp file, and the
+        // target can then be published from bytes neither of them finished writing
+        // (measured on the shared name: thousands of torn reads; on the unique name: none
+        // — `two_concurrent_writers_never_publish_a_torn_config`). Today an engine-wide
+        // write lock and the directory flock make that latent rather than live; the name
+        // closes it here instead of resting on a lock owned somewhere else.
+        let temp_path = db_path.join(format!(
+            "db_config.{}.{}.tmp",
+            std::process::id(),
+            CONFIG_TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        ));
 
         let json = serde_json::to_vec_pretty(self)?;
-        {
-            let mut file = std::fs::File::create(&temp_path)?;
-            file.write_all(&json)?;
-            file.sync_all()?;
+        let publish = || -> Result<()> {
+            {
+                let mut file = std::fs::File::create(&temp_path)?;
+                file.write_all(&json)?;
+                sync_config_file(&file, &temp_path)?;
+            }
+            std::fs::rename(&temp_path, &path)?;
+            sync_config_dir(db_path)
+        };
+
+        let result = publish();
+        if result.is_err() {
+            // The name is ours alone, so no other writer is waiting on this file and an
+            // abandoned temp would sit there forever. Best-effort removal on the error
+            // path; a real crash unwinds nothing and leaves one behind, which is inert —
+            // `read_from` reads `db_config.json` by name and never enumerates the
+            // directory (`a_leftover_temp_file_from_a_crashed_write_is_harmless`).
+            let _ = std::fs::remove_file(&temp_path);
         }
-        std::fs::rename(&temp_path, &path)?;
-        fsync_dir(db_path)?;
-        Ok(())
+        result
+    }
+}
+
+/// Per-call counter behind the unique `db_config.*.tmp` name. Process id alone is not
+/// enough: two threads of ONE process would collide on it.
+static CONFIG_TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// `File::sync_all` for the config write, with a test-only fault seam.
+///
+/// The seam is what makes the step testable at all. Deleting `sync_all` changes nothing
+/// observable on a machine that never loses power, so a correctness-only suite stays green
+/// while the write quietly stops being durable — exactly the regression this module's doc
+/// claims cannot happen. Armed (see [`config_fault`]), the step becomes an observable
+/// event: if the call is gone, the armed fault never fires, `write_to` returns `Ok`, and
+/// the test fails. Mirrors `manifest.rs`'s `fault::maybe_fail`.
+fn sync_config_file(file: &std::fs::File, path: &Path) -> Result<()> {
+    #[cfg(test)]
+    config_fault::maybe_fail(config_fault::Step::SyncFile, path)?;
+    #[cfg(not(test))]
+    let _ = path;
+    file.sync_all()?;
+    Ok(())
+}
+
+/// The directory fsync that publishes the rename, with the same test-only fault seam.
+/// Wraps [`fsync_dir`] rather than instrumenting it, so the seam is scoped to the config
+/// write and cannot perturb the module's other fsync callers.
+fn sync_config_dir(db_path: &Path) -> Result<()> {
+    #[cfg(test)]
+    config_fault::maybe_fail(config_fault::Step::FsyncDir, db_path)?;
+    fsync_dir(db_path)
+}
+
+/// Test-only fault injection for the two durability steps of [`DatabaseConfig::write_to`].
+///
+/// Thread-local and one-shot, like `manifest.rs`'s `fault` module: arming affects only the
+/// arming thread, and the first matching step consumes the arm.
+#[cfg(test)]
+mod config_fault {
+    use super::{GraphError, Result};
+    use std::cell::Cell;
+    use std::path::Path;
+
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub(super) enum Step {
+        /// `sync_all` on the temp file, before the rename.
+        SyncFile,
+        /// `fsync` on the database directory, after the rename.
+        FsyncDir,
+    }
+
+    thread_local! {
+        static ARMED: Cell<Option<Step>> = const { Cell::new(None) };
+    }
+
+    /// The next occurrence of `step` on this thread fails with a simulated I/O error.
+    pub(super) fn arm(step: Step) {
+        ARMED.with(|c| c.set(Some(step)));
+    }
+
+    /// Disarm whatever is pending on this thread.
+    pub(super) fn clear() {
+        ARMED.with(|c| c.set(None));
+    }
+
+    pub(super) fn maybe_fail(step: Step, path: &Path) -> Result<()> {
+        ARMED.with(|c| {
+            if c.get() == Some(step) {
+                c.set(None);
+                return Err(GraphError::InvalidFormat(format!(
+                    "injected {:?} fault while writing {}",
+                    step,
+                    path.display()
+                )));
+            }
+            Ok(())
+        })
     }
 }
 
@@ -309,12 +416,36 @@ impl MultiShardStore {
     ///
     /// Does NOT create ManifestStore — caller manages that separately.
     pub fn create(db_path: &Path, shard_count: u16) -> Result<Self> {
+        Self::create_with_flags(
+            db_path,
+            shard_count,
+            crate::derive::RuleSource::default(),
+            false,
+        )
+    }
+
+    /// Create a new multi-shard database on disk, carrying the durable flags into the
+    /// FIRST and ONLY config write.
+    ///
+    /// [`Self::create`] is this with the default flags — a genuinely new database. The
+    /// split exists for `clear_durable`, which rebuilds the skeleton of a database that
+    /// ALREADY has flags. Writing a default config there and correcting it with a second
+    /// write leaves a window in which the database on disk is a different database (text
+    /// rules, no ROFL marker): a crash inside that window demotes it permanently, and an
+    /// I/O error on the second write does the same while the in-memory engine still
+    /// reports the old flags. One write, one state, no window.
+    pub fn create_with_flags(
+        db_path: &Path,
+        shard_count: u16,
+        rule_source: crate::derive::RuleSource,
+        rofl_mode: bool,
+    ) -> Result<Self> {
         assert!(shard_count > 0, "shard_count must be > 0");
 
         let config = DatabaseConfig {
             shard_count,
-            rule_source: crate::derive::RuleSource::default(),
-            rofl_mode: false,
+            rule_source,
+            rofl_mode,
         };
         config.write_to(db_path)?;
 
@@ -4536,7 +4667,9 @@ mod tests {
         let loaded = DatabaseConfig::read_from(dir.path()).unwrap().unwrap();
         assert_eq!(loaded, config, "the settings must be intact after the crash");
 
-        // Recovery: the next write goes through and replaces the stale temp file.
+        // Recovery: the next write goes through regardless of the stale temp file, and
+        // does NOT reuse its name — the temp name is unique per writer, so a crashed
+        // writer's residue is never picked up as the next writer's scratch space.
         let next = DatabaseConfig {
             shard_count: 4,
             rule_source: crate::derive::RuleSource::Text,
@@ -4544,10 +4677,215 @@ mod tests {
         };
         next.write_to(dir.path()).unwrap();
         assert_eq!(DatabaseConfig::read_from(dir.path()).unwrap().unwrap(), next);
-        assert!(
-            !dir.path().join("db_config.tmp").exists(),
-            "a completed write must consume the temp file, not leave it behind"
+
+        // The residue is inert, not consumed: `read_from` addresses `db_config.json` by
+        // name and never enumerates the directory, so a leftover file changes no answer.
+        // (It is inert, so it is left alone rather than swept: a sweep would race a
+        // concurrent writer's live temp file and break ITS rename.)
+        std::fs::write(dir.path().join("db_config.stale-writer.tmp"), "{\n  \"shard_c").unwrap();
+        assert_eq!(
+            DatabaseConfig::read_from(dir.path()).unwrap().unwrap(),
+            next,
+            "a leftover temp file must not change what the database reads back"
         );
+        let third = DatabaseConfig {
+            shard_count: 4,
+            rule_source: crate::derive::RuleSource::Store,
+            rofl_mode: true,
+        };
+        third.write_to(dir.path()).unwrap();
+        assert_eq!(
+            DatabaseConfig::read_from(dir.path()).unwrap().unwrap(),
+            third,
+            "and must not block the next write either"
+        );
+    }
+
+    /// The two DURABILITY steps of the atomic write — `sync_all` on the temp file and the
+    /// directory fsync after the rename — are otherwise untestable: removing them changes
+    /// nothing observable on a machine that never loses power, so the suite would stay
+    /// green while `write_to` quietly stopped being crash-safe. An armed fault makes each
+    /// step an observable event. Delete the call and the armed fault never fires, the
+    /// write returns `Ok`, and this test fails. That is the whole point of it.
+    #[test]
+    fn the_config_write_fsyncs_the_file_and_then_the_directory() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let original = DatabaseConfig {
+            shard_count: 4,
+            rule_source: crate::derive::RuleSource::Store,
+            rofl_mode: true,
+        };
+        original.write_to(dir.path()).unwrap();
+
+        let next = DatabaseConfig {
+            shard_count: 4,
+            rule_source: crate::derive::RuleSource::Text,
+            rofl_mode: false,
+        };
+
+        // 1. The file fsync happens, and it happens BEFORE the rename: when it fails, the
+        //    target still holds the previous config — nothing was published.
+        config_fault::arm(config_fault::Step::SyncFile);
+        let err = next.write_to(dir.path()).unwrap_err();
+        config_fault::clear();
+        assert!(
+            format!("{err}").contains("SyncFile"),
+            "expected the injected file-fsync fault, got: {err}"
+        );
+        assert_eq!(
+            DatabaseConfig::read_from(dir.path()).unwrap().unwrap(),
+            original,
+            "a failure before the rename must leave the previous config in place"
+        );
+        assert_eq!(
+            leftover_temp_files(dir.path()),
+            0,
+            "the failed write must clean up its own temp file"
+        );
+
+        // 2. The directory fsync happens, and it happens AFTER the rename: when it fails,
+        //    the new config is already the target's content and the error is still raised.
+        config_fault::arm(config_fault::Step::FsyncDir);
+        let err = next.write_to(dir.path()).unwrap_err();
+        config_fault::clear();
+        assert!(
+            format!("{err}").contains("FsyncDir"),
+            "expected the injected directory-fsync fault, got: {err}"
+        );
+        assert_eq!(
+            DatabaseConfig::read_from(dir.path()).unwrap().unwrap(),
+            next,
+            "the rename precedes the directory fsync, so the new config is published"
+        );
+
+        // 3. Disarmed, the same write succeeds — the fault seam is inert by default.
+        config_fault::clear();
+        original.write_to(dir.path()).unwrap();
+        assert_eq!(
+            DatabaseConfig::read_from(dir.path()).unwrap().unwrap(),
+            original
+        );
+    }
+
+    fn leftover_temp_files(db_path: &Path) -> usize {
+        std::fs::read_dir(db_path)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                name.starts_with("db_config.") && name.ends_with(".tmp")
+            })
+            .count()
+    }
+
+    /// TWO writers in one directory. The temp file is the whole atomicity argument, so a
+    /// SHARED temp name makes that argument conditional on there being only one writer:
+    /// writer A's `create` truncates the file writer B is mid-`write_all` on, and whoever
+    /// renames first publishes bytes nobody finished writing. With a per-writer name the
+    /// two never touch the same scratch file.
+    ///
+    /// A real discriminator: against a fixed `db_config.tmp` this reader observes torn
+    /// configs (thousands, in the measured probe); against the unique name it observes
+    /// none. The count is scheduler-dependent, the zero is not.
+    #[test]
+    fn two_concurrent_writers_never_publish_a_torn_config() {
+        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+        use std::sync::Arc;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().to_path_buf();
+
+        let reflexive = DatabaseConfig {
+            shard_count: 4,
+            rule_source: crate::derive::RuleSource::Store,
+            rofl_mode: true,
+        };
+        reflexive.write_to(&db_path).unwrap();
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let torn = Arc::new(AtomicU64::new(0));
+        let observations = Arc::new(AtomicU64::new(0));
+
+        let reader = {
+            let db_path = db_path.clone();
+            let stop = stop.clone();
+            let torn = torn.clone();
+            let observations = observations.clone();
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    observations.fetch_add(1, Ordering::Relaxed);
+                    if DatabaseConfig::read_from(&db_path).is_err() {
+                        torn.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            })
+        };
+
+        let writers: Vec<_> = (0..2u16)
+            .map(|w| {
+                let db_path = db_path.clone();
+                std::thread::spawn(move || {
+                    let config = DatabaseConfig {
+                        shard_count: 4,
+                        rule_source: if w == 0 {
+                            crate::derive::RuleSource::Store
+                        } else {
+                            crate::derive::RuleSource::Text
+                        },
+                        rofl_mode: true,
+                    };
+                    for _ in 0..1500 {
+                        config.write_to(&db_path).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for w in writers {
+            w.join().unwrap();
+        }
+        stop.store(true, Ordering::Relaxed);
+        reader.join().unwrap();
+
+        let observed = observations.load(Ordering::Relaxed);
+        assert!(observed > 0, "the reader never ran — the test proves nothing");
+        assert_eq!(
+            torn.load(Ordering::Relaxed),
+            0,
+            "config observed torn after {observed} reads with two writers — the temp file \
+             name must not be shared between writers"
+        );
+        // Whichever writer renamed last, the published config is one of theirs, whole.
+        let final_config = DatabaseConfig::read_from(&db_path).unwrap().unwrap();
+        assert_eq!(final_config.shard_count, 4);
+        assert!(final_config.rofl_mode);
+    }
+
+    /// The flags a caller passes to `create_with_flags` are in the FIRST config write —
+    /// there is no default-then-correct window for a crash to land in. Proven by the file
+    /// on disk, not by the returned handle.
+    #[test]
+    fn create_with_flags_writes_them_in_the_first_config_write() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = MultiShardStore::create_with_flags(
+            dir.path(),
+            4,
+            crate::derive::RuleSource::Store,
+            true,
+        )
+        .unwrap();
+        drop(store);
+
+        let on_disk = DatabaseConfig::read_from(dir.path()).unwrap().unwrap();
+        assert_eq!(on_disk.shard_count, 4);
+        assert_eq!(on_disk.rule_source, crate::derive::RuleSource::Store);
+        assert!(on_disk.rofl_mode, "the ROFL marker must be in the first write");
+
+        // And a plain `create` is still a genuinely new, default database.
+        let plain_dir = tempfile::TempDir::new().unwrap();
+        MultiShardStore::create(plain_dir.path(), 4).unwrap();
+        let plain = DatabaseConfig::read_from(plain_dir.path()).unwrap().unwrap();
+        assert_eq!(plain.rule_source, crate::derive::RuleSource::default());
+        assert!(!plain.rofl_mode);
     }
 
     #[test]

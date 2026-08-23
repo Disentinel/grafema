@@ -327,9 +327,29 @@ impl GraphEngineV2 {
     ///
     /// Uses `ResourceManager::auto_tune()` to determine shard count
     /// based on available RAM and CPU cores.
+    ///
+    /// Refuses, WITHOUT WRITING ANYTHING, if a database already lives at the path. The
+    /// order used to be the other way round: `MultiShardStore::create` overwrote
+    /// `db_config.json` with a fresh default, and only the following `ManifestStore::create`
+    /// noticed the database and returned "Database already exists at path". The caller got
+    /// an error and believed nothing had happened, while the existing database had just
+    /// lost its durable flags — its rule source and its ROFL marker — and came back on the
+    /// next open as an ordinary text-mode database. Reachable in production, not a thought
+    /// experiment: `DatabaseManager::new` starts with an EMPTY map and never scans the disk,
+    /// and `create_database` checks only that map, so after a server restart an ordinary
+    /// `createDatabase("foo")` over an existing `foo.rfdb` lands exactly here.
+    ///
+    /// Both authorities are checked, because either one alone leaves a hole: `current.json`
+    /// is the manifest's own existence marker, and `db_config.json` is the file the server
+    /// itself uses to recognise a v2 database (`DatabaseManager::create_default_from_path`).
     pub fn create<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
         std::fs::create_dir_all(path)?;
+        if path.join("current.json").exists() || path.join("db_config.json").exists() {
+            return Err(crate::error::GraphError::InvalidFormat(
+                "Database already exists at path".to_string(),
+            ));
+        }
         let profile = ResourceManager::auto_tune();
         let store = MultiShardStore::create(path, profile.shard_count)?;
         let manifest = ManifestStore::create(path)?;
@@ -1550,10 +1570,15 @@ impl GraphEngineV2 {
     /// the shard count the file already carries (never re-deriving it from the runtime
     /// profile, which can differ from the value this database was created with).
     ///
-    /// Writes EVERY durable flag the engine caches, not only the one a caller just changed.
-    /// That is what makes it safe to call after `MultiShardStore::create` has overwritten
-    /// the file with a fresh default config: a helper that restored the rule source alone
-    /// would let [`Self::clear_durable`] silently drop the ROFL marker.
+    /// Writes EVERY durable flag the engine caches, not only the one a caller just changed:
+    /// a helper that persisted one flag would silently drop the others whenever the file it
+    /// read was not the one this engine last wrote. Read-modify-WRITE through the atomic
+    /// [`crate::storage_v2::multi_shard::DatabaseConfig::write_to`], so a crash mid-call
+    /// leaves the previous config whole rather than a half-written one.
+    ///
+    /// Not what [`Self::clear_durable`] uses: recreating a store and then correcting its
+    /// config would be two writes with a demoted database in between. The flags go into
+    /// that write directly (`MultiShardStore::create_with_flags`).
     fn persist_durable_flags(&self, path: &Path) -> Result<()> {
         let mut config = crate::storage_v2::multi_shard::DatabaseConfig::read_from(path)?
             .ok_or_else(|| {
@@ -1595,10 +1620,15 @@ impl GraphEngineV2 {
     /// database that fails to open with an explicit error — the documented manual
     /// fallback (`rm -rf <db>.rfdb`) recovers; clear never silently resurrects data.
     ///
-    /// Every DURABLE FLAG survives: step 3's `MultiShardStore::create` rewrites
-    /// `db_config.json` from scratch, so the rule source and the ROFL marker are
-    /// re-persisted afterwards ([`Self::persist_durable_flags`]). Clearing the DATA must
-    /// never change what the database IS.
+    /// Every DURABLE FLAG survives, and survives WITHOUT A WINDOW: step 3 rewrites
+    /// `db_config.json` from scratch, so the rule source and the ROFL marker are handed to
+    /// that write itself (`MultiShardStore::create_with_flags`) instead of being restored
+    /// by a second write afterwards. The difference is a crash point: between a default
+    /// config and its correction the database on disk IS an ordinary text-mode database,
+    /// and a crash — or an I/O error on the second write — made that permanent. Clearing
+    /// the DATA must never change what the database IS, at any instant, not just at the
+    /// end. The shard count comes from the same file for the same reason: it describes the
+    /// data on disk, not this machine's tuning profile.
     ///
     /// So do the reflected RULES (step 0 lifts them out, step 4 puts them back). The flag
     /// alone is not enough: a store-mode database whose rules were wiped keeps answering,
@@ -1656,19 +1686,31 @@ impl GraphEngineV2 {
         let fresh_manifest = ManifestStore::create(&path)?;
 
         // ── 3. Drop the data trees (now orphaned) and recreate the shard skeleton. ──
+        // The shard count comes from the FILE, not from this process's tuning profile:
+        // it is a property of the data layout on disk that `MultiShardStore::open` reads
+        // back, and re-deriving it from `cached_profile` would silently reshard the
+        // database whenever the clear runs on a machine with different RAM or cores.
+        // Read before the recreate, which overwrites the config.
+        let on_disk_shards = crate::storage_v2::multi_shard::DatabaseConfig::read_from(&path)?
+            .map(|c| c.shard_count);
+        let shard_count = on_disk_shards.unwrap_or(self.cached_profile.shard_count);
         let _ = std::fs::remove_dir_all(path.join("segments"));
         let _ = std::fs::remove_dir_all(path.join("gc"));
         let _ = std::fs::remove_dir_all(path.join(crate::derive::pin_sidecar::SIDECAR_DIR));
-        let shard_count = self.cached_profile.shard_count;
-        let fresh_store = MultiShardStore::create(&path, shard_count)?;
+        // The durable flags go INTO that first config write. Writing a default config here
+        // and correcting it afterwards was a window, not a nicety: between the two writes
+        // the database on disk was an ordinary text-mode, non-ROFL database, so a crash
+        // there demoted it permanently — and an I/O error on the second write did the same
+        // while this engine went on reporting the old flags in memory. One write, one state.
+        let fresh_store = MultiShardStore::create_with_flags(
+            &path,
+            shard_count,
+            self.rule_source,
+            self.rofl_mode,
+        )?;
 
         self.store = fresh_store;
         self.manifest = std::sync::Mutex::new(fresh_manifest);
-        // `MultiShardStore::create` just OVERWROTE `db_config.json` with a default config —
-        // which would silently demote a reflexive database to text mode and strip its ROFL
-        // marker, i.e. clearing the DATA would change the PROGRAM and the MODE. Re-persist
-        // every durable flag we were opened with.
-        self.persist_durable_flags(&path)?;
 
         // ── 4. Put the PROGRAM back (step 0). ──
         if !reflected.is_empty() {
@@ -6687,11 +6729,13 @@ mod tests {
     /// survives `clear_durable`.
     ///
     /// The clear is the trap this test exists for. `clear_durable` rebuilds the shard
-    /// skeleton through `MultiShardStore::create`, which writes a FRESH DEFAULT
-    /// `db_config.json` over the live one — so without the re-persist of every durable flag
-    /// afterwards, wiping the DATA would silently demote a ROFL database to an ordinary
-    /// one. Verified to fail before the fix: with the clear restoring only the rule source,
-    /// this test panics with `db_config.json lost the marker during clear_durable`.
+    /// skeleton, and that rewrites `db_config.json` — so unless the durable flags go into
+    /// that write (`MultiShardStore::create_with_flags`), wiping the DATA silently demotes
+    /// a ROFL database to an ordinary one. Verified to fail before the fix: with the clear
+    /// restoring only the rule source, this test panics with `db_config.json lost the
+    /// marker during clear_durable`. That the flags reach disk with no window in between
+    /// is a separate property, held by
+    /// `no_instant_of_clear_leaves_a_demoted_database_on_disk`.
     ///
     /// Note which assertion catches it. The IN-MEMORY `rofl_mode()` still reads `true`
     /// right after the clear even when the bug is present — the engine field was never
@@ -6757,6 +6801,147 @@ mod tests {
             .expect("config present");
         assert_eq!(on_disk.rule_source, crate::derive::RuleSource::Store);
         assert!(on_disk.rofl_mode);
+    }
+
+    /// A REFUSED create must not have written anything.
+    ///
+    /// `create` over an existing database used to write first and refuse second:
+    /// `MultiShardStore::create` overwrote `db_config.json` with a fresh default, and only
+    /// then did `ManifestStore::create` report "Database already exists at path". The
+    /// caller saw an error — and the database it did not create had just lost its rule
+    /// source, its ROFL marker AND its shard count (replaced by this machine's auto-tuned
+    /// number, over data laid out for the old one). The next process to open it got an
+    /// ordinary text-mode database.
+    ///
+    /// The assertion is on the FILE BYTES, not on the flags: "nothing was written" is the
+    /// property, and any future field gets it for free.
+    #[test]
+    fn a_refused_create_over_an_existing_database_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let mut engine = GraphEngineV2::create(dir.path()).expect("create");
+            engine
+                .set_rule_source(crate::derive::RuleSource::Store)
+                .expect("set rule source");
+            engine.enable_rofl_mode().expect("enable rofl");
+        }
+        let config_path = dir.path().join("db_config.json");
+        let before = std::fs::read(&config_path).expect("config before");
+
+        let err = match GraphEngineV2::create(dir.path()) {
+            Ok(_) => panic!("create over an existing database must fail"),
+            Err(e) => e,
+        };
+        assert!(
+            format!("{err}").contains("already exists"),
+            "expected an already-exists refusal, got: {err}"
+        );
+
+        let after = std::fs::read(&config_path).expect("config after");
+        assert_eq!(
+            before, after,
+            "the refused create rewrote db_config.json — the database it refused to create \
+             just lost its durable flags"
+        );
+
+        // And the database still IS what it was, to the next process that opens it.
+        let engine = GraphEngineV2::open(dir.path()).expect("reopen after the refused create");
+        assert_eq!(engine.rule_source(), crate::derive::RuleSource::Store);
+        assert!(engine.rofl_mode());
+    }
+
+    /// There is no INSTANT during `clear_durable` at which the database on disk is a
+    /// demoted one.
+    ///
+    /// A reader thread polling `db_config.json` for the whole clear stands in for a crash:
+    /// whatever it can observe on disk at some instant is exactly what a power cut at that
+    /// instant would have left behind. The clear used to recreate the shard skeleton with a
+    /// DEFAULT config and correct it with a second write afterwards — a window (16 shard
+    /// directories wide) in which the persisted database was text-mode and non-ROFL. The
+    /// end state was right, so an end-state assertion could not see it.
+    #[test]
+    fn no_instant_of_clear_leaves_a_demoted_database_on_disk() {
+        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+        use std::sync::Arc;
+
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().to_path_buf();
+        let mut engine = GraphEngineV2::create(&db_path).expect("create");
+        engine
+            .set_rule_source(crate::derive::RuleSource::Store)
+            .expect("set rule source");
+        engine.enable_rofl_mode().expect("enable rofl");
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let demoted = Arc::new(AtomicU64::new(0));
+        let observations = Arc::new(AtomicU64::new(0));
+        let reader = {
+            let db_path = db_path.clone();
+            let stop = stop.clone();
+            let demoted = demoted.clone();
+            let observations = observations.clone();
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    if let Ok(Some(c)) =
+                        crate::storage_v2::multi_shard::DatabaseConfig::read_from(&db_path)
+                    {
+                        observations.fetch_add(1, Ordering::Relaxed);
+                        if !c.rofl_mode || c.rule_source != crate::derive::RuleSource::Store {
+                            demoted.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                }
+            })
+        };
+
+        engine.clear_durable().expect("clear");
+        stop.store(true, Ordering::Relaxed);
+        reader.join().unwrap();
+
+        let observed = observations.load(Ordering::Relaxed);
+        assert!(observed > 0, "the reader never ran — the test proves nothing");
+        assert_eq!(
+            demoted.load(Ordering::Relaxed),
+            0,
+            "the persisted config was a demoted database at some instant during clear \
+             ({observed} observations) — a crash there is permanent"
+        );
+    }
+
+    /// The shard count survives a clear, and it survives it as a property of the DATA, not
+    /// of the machine running the clear.
+    ///
+    /// `clear_durable` took the count from the runtime tuning profile, which is derived
+    /// from this host's RAM and cores. On a different machine — or after a resource
+    /// re-check — clearing a 16-shard database would silently rebuild it with a different
+    /// shard count, i.e. reshard it. The file it was created with is the authority.
+    #[test]
+    fn clear_durable_keeps_the_shard_count_of_the_database_not_of_the_machine() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = GraphEngineV2::create(dir.path()).expect("create");
+        let created_with = crate::storage_v2::multi_shard::DatabaseConfig::read_from(dir.path())
+            .expect("read config")
+            .expect("config present")
+            .shard_count;
+
+        // Stand in for "the clear runs on a machine that tunes differently".
+        engine.cached_profile.shard_count = created_with + 1;
+        engine.clear_durable().expect("clear");
+
+        let after = crate::storage_v2::multi_shard::DatabaseConfig::read_from(dir.path())
+            .expect("read config")
+            .expect("config present")
+            .shard_count;
+        assert_eq!(
+            after, created_with,
+            "clear resharded the database from the runtime profile ({} -> {})",
+            created_with,
+            engine.cached_profile.shard_count
+        );
+        // …and the reopened database agrees with the file.
+        drop(engine);
+        let reopened = GraphEngineV2::open(dir.path()).expect("reopen after clear");
+        assert_eq!(reopened.store.shard_count(), created_with);
     }
 
     /// A REAL old config file — the exact JSON the previous build wrote, with no ROFL
