@@ -71,6 +71,14 @@ pub struct PredicateCount {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum EventKind {
+    /// A stored rule reflection was SKIPPED while assembling the program from the store
+    /// (`RuleSource::Store`). Emitted before the fixpoint, one per skipped reflection —
+    /// the decoder never takes a healthy rule down with a broken neighbour, and a skip is
+    /// never silent. `detail` is the decoder's diagnostic verbatim.
+    ReflectSkipped {
+        /// The decoder's diagnostic (`rule <id>: …`).
+        detail: String,
+    },
     /// A run started. Carries the count of strata and the total number of planned rule
     /// clauses — the bracket-open for the whole evaluation.
     RunBegin {
@@ -354,6 +362,12 @@ impl EventLog {
                 self.io_failed = true;
             }
         }
+    }
+
+    /// A stored reflection was skipped while assembling the program from the store.
+    #[inline]
+    pub fn reflect_skipped(&mut self, detail: &str) {
+        self.emit_with(|| EventKind::ReflectSkipped { detail: detail.to_string() });
     }
 
     /// Run begin (brackets the evaluation).

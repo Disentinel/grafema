@@ -71,7 +71,7 @@ use materialize::{
     collect_materialize_node_specs, collect_materialize_specs, MaterializeError,
     MaterializeSpec, NodeMaterializeSpec,
 };
-use parser_ext::{parse_ext_program, ExtParseError};
+use parser_ext::{parse_ext_program, ExtParseError, ExtProgram};
 use plan::PlanError;
 use storage_glue::StorageView;
 use stratify::{stratify, StratError};
@@ -104,6 +104,10 @@ pub enum EvalError {
     /// bound to two semirings or two arities. Raised after parse, before the fixpoint, so a
     /// malformed program aborts before any derivation or commit.
     Binding(BindingConflict),
+    /// The rules-as-data layer rejected the request (`E-REFLECT-…`): a term Projection T
+    /// cannot encode, a stored reflection that will not decode, or a path that is
+    /// unavailable while the rules live in the store.
+    Reflect(crate::derive::reflect::ReflectError),
 }
 
 impl EvalError {
@@ -117,6 +121,7 @@ impl EvalError {
             EvalError::Exec(e) => e.code.as_str(),
             EvalError::Materialize(e) => e.code,
             EvalError::Binding(e) => e.code,
+            EvalError::Reflect(e) => e.code,
         }
     }
 }
@@ -130,6 +135,7 @@ impl std::fmt::Display for EvalError {
             EvalError::Exec(e) => write!(f, "exec: {e}"),
             EvalError::Materialize(e) => write!(f, "materialize: {e}"),
             EvalError::Binding(e) => write!(f, "binding: {e}"),
+            EvalError::Reflect(e) => write!(f, "reflect: {e}"),
         }
     }
 }
@@ -166,6 +172,81 @@ impl From<BindingConflict> for EvalError {
         EvalError::Binding(e)
     }
 }
+impl From<crate::derive::reflect::ReflectError> for EvalError {
+    fn from(e: crate::derive::reflect::ReflectError) -> Self {
+        EvalError::Reflect(e)
+    }
+}
+
+// ── Where the rules come from ──────────────────────────────────────
+
+/// The origin of the rules the executor runs.
+///
+/// This is the whole point of Projection T: a rule is either program TEXT handed to an
+/// eval entry, or a set of FACTS in the store. It is a property of the DATABASE, not of a
+/// request — a database created reflexive stays reflexive across restarts (persisted in
+/// `db_config.json`), because otherwise one client could ask for text-mode answers on a
+/// graph whose rules only exist as facts and get a silently empty result.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuleSource {
+    /// Rules come from the program text handed to the entry. The historical behavior and
+    /// the default for every database that predates the flag.
+    #[default]
+    Text,
+    /// Rules come from the STORE ([`crate::derive::reflect`]). The `source` argument is
+    /// NOT the program — at most a target selector.
+    Store,
+}
+
+impl RuleSource {
+    /// A stable one-bit discriminant for cache/pin keys. Mixing it in is what stops a
+    /// text-mode result being served to a store-mode request off the same key (the
+    /// program text degenerates in store mode, so the text hash alone collides).
+    pub fn key_bit(self) -> u64 {
+        match self {
+            RuleSource::Text => 0,
+            RuleSource::Store => 1,
+        }
+    }
+}
+
+/// Assemble the program to run: parse the text, or decode Projection T out of the store.
+///
+/// Returns the program together with the decoder's skipped-reflection diagnostics (empty
+/// in text mode). The diagnostics are deliberately NOT an error: the reference skips a
+/// broken reflection and keeps going (`vendor/rofl-v0/src/reflect.ts:200-213`), and a
+/// healthy rule must not be taken down by a broken neighbour. They are handed to the
+/// caller so they can never be lost silently.
+pub(crate) fn program_for(
+    view: &dyn StorageView,
+    source: &str,
+    mode: RuleSource,
+) -> Result<(ExtProgram, Vec<String>), EvalError> {
+    match mode {
+        RuleSource::Text => Ok((parse_ext_program(source)?, Vec::new())),
+        RuleSource::Store => {
+            let decoded = crate::derive::reflect::program_from_store(view);
+            Ok((decoded.program, decoded.diagnostics))
+        }
+    }
+}
+
+/// Refuse a path that cannot be served while the rules live in the store.
+///
+/// Used by every `@materialize` write-back entry: Projection T carries no annotations
+/// (neither does the reference's), so a write-back in store mode would find zero
+/// directives and commit NOTHING while reporting success — a silent data loss. A typed
+/// `E-REFLECT-003` refusal is the only honest answer until annotation reflection lands.
+pub(crate) fn refuse_in_store_mode(mode: RuleSource, what: &str) -> Result<(), EvalError> {
+    if mode == RuleSource::Store {
+        return Err(EvalError::Reflect(crate::derive::reflect::ReflectError::mode(format!(
+            "{what} is unavailable while rules come from the store: Projection T carries no \
+             annotations, so the write-back would silently commit nothing"
+        ))));
+    }
+    Ok(())
+}
 
 /// Evaluate a derive program against a [`StorageView`] — THE single eval entry (I8).
 ///
@@ -191,8 +272,22 @@ pub(crate) fn evaluate(
     limits: EvalLimits,
     events: EventLog,
 ) -> Result<Evaluation, EvalError> {
+    evaluate_in(view, source, RuleSource::Text, stats, limits, events)
+}
+
+/// [`evaluate`] with the rule origin named explicitly ([`RuleSource`]). In
+/// [`RuleSource::Store`] the `source` argument is not the program: the rules are decoded
+/// from Projection T and the text is ignored.
+pub(crate) fn evaluate_in(
+    view: &dyn StorageView,
+    source: &str,
+    mode: RuleSource,
+    stats: Stats,
+    limits: EvalLimits,
+    events: EventLog,
+) -> Result<Evaluation, EvalError> {
     let (evaluation, _specs, _node_specs) =
-        evaluate_with_materialize(view, source, stats, limits, events)?;
+        evaluate_with_materialize_shared_in(view, source, mode, stats, limits, events, None)?;
     Ok(evaluation)
 }
 
@@ -233,7 +328,41 @@ pub(crate) fn evaluate_with_materialize_shared(
     events: EventLog,
     shared: Option<&crate::derive::exec::SharedIndexCaches>,
 ) -> Result<(Evaluation, Vec<MaterializeSpec>, Vec<NodeMaterializeSpec>), EvalError> {
-    let program = parse_ext_program(source)?;
+    evaluate_with_materialize_shared_in(
+        view,
+        source,
+        RuleSource::Text,
+        stats,
+        limits,
+        events,
+        shared,
+    )
+}
+
+/// [`evaluate_with_materialize_shared`] with the rule origin named explicitly.
+///
+/// This is THE single eval pipeline (I8); the two named wrappers above only pin
+/// [`RuleSource::Text`]. The ONLY difference store mode makes is where the `ExtProgram`
+/// comes from ([`program_for`]) — everything downstream (binding gate, stratification,
+/// catalog, planning, fixpoint) is byte-identical, which is exactly what makes a
+/// text-vs-store differential meaningful.
+///
+/// Decoder diagnostics are emitted into `events` before the fixpoint, so a skipped
+/// reflection is recorded on the same trace the answer is (never silently dropped).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn evaluate_with_materialize_shared_in(
+    view: &dyn StorageView,
+    source: &str,
+    mode: RuleSource,
+    stats: Stats,
+    limits: EvalLimits,
+    mut events: EventLog,
+    shared: Option<&crate::derive::exec::SharedIndexCaches>,
+) -> Result<(Evaluation, Vec<MaterializeSpec>, Vec<NodeMaterializeSpec>), EvalError> {
+    let (program, diagnostics) = program_for(view, source, mode)?;
+    for d in &diagnostics {
+        events.reflect_skipped(d);
+    }
     // §9.3 binding gate: pin one (semiring_id, arity) per predicate before any derivation,
     // so a malformed program aborts before the fixpoint and before any commit. Uniform
     // `BoolTag` at this gate (the executor is monomorphic); the table also seeds the diff()

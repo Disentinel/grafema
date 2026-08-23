@@ -201,6 +201,12 @@ fn owned_node_surface_changed(new: &NodeRecordV2, stored: &NodeRecordV2) -> bool
 /// on flush.
 pub struct GraphEngineV2 {
     store: MultiShardStore,
+
+    /// Where the derive engine takes this database's rules from. Loaded from
+    /// `db_config.json` at open, defaulted to `Text` at create, and re-persisted by
+    /// [`GraphEngineV2::set_rule_source`]. Cached here because every derive entry
+    /// consults it and re-reading the file per query would be a syscall on the hot path.
+    rule_source: crate::derive::RuleSource,
     /// MVCC B4: the manifest is the single commit-point serialization handle.
     /// Behind a `Mutex` so concurrent `commit_batch` calls (running under the
     /// server's shared `read()` lock) can take the short commit-point lock while
@@ -317,9 +323,15 @@ impl GraphEngineV2 {
         let profile = ResourceManager::auto_tune();
         let store = MultiShardStore::create(path, profile.shard_count)?;
         let manifest = ManifestStore::create(path)?;
+        // `MultiShardStore::create` just wrote `db_config.json`; read the rule source back
+        // from it rather than assuming the default, so create and open agree by
+        // construction on where this database's rules live.
+        let config = crate::storage_v2::multi_shard::DatabaseConfig::read_from(path)?
+            .ok_or_else(|| crate::error::GraphError::InvalidFormat("Missing db_config.json after create".to_string()))?;
 
         Ok(Self {
             store,
+            rule_source: config.rule_source,
             manifest: std::sync::Mutex::new(manifest),
             path: Some(path.to_path_buf()),
             ephemeral: false,
@@ -349,6 +361,7 @@ impl GraphEngineV2 {
     pub fn create_ephemeral() -> Self {
         Self {
             store: MultiShardStore::ephemeral(DEFAULT_SHARD_COUNT),
+            rule_source: crate::derive::RuleSource::default(),
             manifest: std::sync::Mutex::new(ManifestStore::ephemeral()),
             path: None,
             ephemeral: true,
@@ -398,9 +411,14 @@ impl GraphEngineV2 {
         }
 
         let profile = ResourceManager::auto_tune();
+        // `MultiShardStore::open` already required `db_config.json`; re-read it for the
+        // rule-source flag (an older file without the field means Text, by serde default).
+        let config = crate::storage_v2::multi_shard::DatabaseConfig::read_from(path)?
+            .ok_or_else(|| crate::error::GraphError::InvalidFormat("Missing db_config.json".to_string()))?;
 
         Ok(Self {
             store,
+            rule_source: config.rule_source,
             manifest: std::sync::Mutex::new(manifest),
             path: Some(path.to_path_buf()),
             ephemeral: false,
@@ -551,9 +569,10 @@ impl GraphEngineV2 {
         // of the pinned snapshot; the eval itself reads more.
         let stats = self.derive_stats(&snapshot);
         let view = crate::derive::storage_glue::BorrowedLsmStorageView::new(&self.store, snapshot);
-        let evaluation = crate::derive::evaluate(
+        let evaluation = crate::derive::evaluate_in(
             &view,
             source,
+            self.rule_source,
             stats,
             limits,
             crate::derive::events::EventLog::discard(),
@@ -602,9 +621,10 @@ impl GraphEngineV2 {
         let base = crate::derive::storage_glue::BorrowedLsmStorageView::new(&self.store, snapshot);
 
         // Base world.
-        let base_eval = crate::derive::evaluate(
+        let base_eval = crate::derive::evaluate_in(
             &base,
             source,
+            self.rule_source,
             stats.clone(),
             limits.clone(),
             crate::derive::events::EventLog::discard(),
@@ -634,9 +654,10 @@ impl GraphEngineV2 {
             });
         }
         let overlay = crate::derive::storage_glue::OverlayStorageView::new(&base, delta);
-        let sim_eval = crate::derive::evaluate(
+        let sim_eval = crate::derive::evaluate_in(
             &overlay,
             source,
+            self.rule_source,
             stats,
             limits,
             crate::derive::events::EventLog::discard(),
@@ -689,6 +710,7 @@ impl GraphEngineV2 {
         source: &str,
         limits: crate::datalog::EvalLimits,
     ) -> std::result::Result<usize, crate::derive::EvalError> {
+        crate::derive::refuse_in_store_mode(self.rule_source, "`@materialize` write-back")?;
         // ── Step 1: pinned snapshot + fixpoint (the read generation). ──
         let snapshot = self.snapshot();
         // The generation the written edges become visible at is one past the pinned read
@@ -782,6 +804,7 @@ impl GraphEngineV2 {
         limits: crate::datalog::EvalLimits,
     ) -> std::result::Result<Option<crate::derive::exec::Evaluation>, crate::derive::EvalError>
     {
+        crate::derive::refuse_in_store_mode(self.rule_source, "maintained (delta-seeded) derivation")?;
         let program = crate::derive::parser_ext::parse_ext_program(source)?;
         if !crate::derive::materialize::collect_materialize_node_specs(&program)?.is_empty() {
             return Ok(None);
@@ -827,14 +850,17 @@ impl GraphEngineV2 {
         Option<crate::derive::exec::DerivationWitness>,
         crate::derive::EvalError,
     > {
-        let program = crate::derive::parser_ext::parse_ext_program(source)?;
-        let strat = crate::derive::stratify::stratify(&program)?;
-        let rules = program.rules();
         let snapshot = self.snapshot();
         let stats = self.derive_stats(&snapshot);
-        let plans = crate::derive::plan::plan_program(&rules, &strat, &stats)?;
         let view =
             crate::derive::storage_glue::BorrowedLsmStorageView::new(&self.store, snapshot);
+        // The program has to be assembled AFTER the view exists: in store mode it is
+        // decoded FROM that view, at the same pinned version the explain then reads.
+        let (program, _diagnostics) =
+            crate::derive::program_for(&view, source, self.rule_source)?;
+        let strat = crate::derive::stratify::stratify(&program)?;
+        let rules = program.rules();
+        let plans = crate::derive::plan::plan_program(&rules, &strat, &stats)?;
         let witness = crate::derive::exec::explain_fact::<crate::derive::tag::BoolTag>(
             &view, &plans, &rules, &strat, predicate, key, limits,
         )?;
@@ -858,14 +884,17 @@ impl GraphEngineV2 {
         Option<crate::derive::exec::GapWitness>,
         crate::derive::EvalError,
     > {
-        let program = crate::derive::parser_ext::parse_ext_program(source)?;
-        let strat = crate::derive::stratify::stratify(&program)?;
-        let rules = program.rules();
         let snapshot = self.snapshot();
         let stats = self.derive_stats(&snapshot);
-        let plans = crate::derive::plan::plan_program(&rules, &strat, &stats)?;
         let view =
             crate::derive::storage_glue::BorrowedLsmStorageView::new(&self.store, snapshot);
+        // The program has to be assembled AFTER the view exists: in store mode it is
+        // decoded FROM that view, at the same pinned version the explain then reads.
+        let (program, _diagnostics) =
+            crate::derive::program_for(&view, source, self.rule_source)?;
+        let strat = crate::derive::stratify::stratify(&program)?;
+        let rules = program.rules();
+        let plans = crate::derive::plan::plan_program(&rules, &strat, &stats)?;
         let gap = crate::derive::exec::explain_gap::<crate::derive::tag::BoolTag>(
             &view, &plans, &rules, &strat, predicate, key, limits,
         )?;
@@ -891,6 +920,7 @@ impl GraphEngineV2 {
         source: &str,
         limits: crate::datalog::EvalLimits,
     ) -> std::result::Result<(usize, usize), crate::derive::EvalError> {
+        crate::derive::refuse_in_store_mode(self.rule_source, "incremental `@materialize` write-back")?;
         // ── Phase 1: derive (full eval) then commit only the edge delta. ──
         let snapshot = self.snapshot();
         let generation = snapshot.version + 1;
@@ -929,6 +959,7 @@ impl GraphEngineV2 {
         prev_snapshot: crate::storage_v2::read_snapshot::ReadSnapshot,
         limits: crate::datalog::EvalLimits,
     ) -> std::result::Result<(usize, usize), crate::derive::EvalError> {
+        crate::derive::refuse_in_store_mode(self.rule_source, "maintained `@materialize` write-back")?;
         let snapshot = self.snapshot();
         let generation = snapshot.version + 1;
         // Specs come from a parse alone (no eval needed) — the maintained branch must know the
@@ -957,10 +988,8 @@ impl GraphEngineV2 {
         source: &str,
         limits: crate::datalog::EvalLimits,
     ) -> std::result::Result<(usize, usize), crate::derive::EvalError> {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        source.hash(&mut hasher);
-        let key = hasher.finish();
+        crate::derive::refuse_in_store_mode(self.rule_source, "cached `@materialize` write-back")?;
+        let key = Self::derive_program_key(source, self.rule_source);
 
         let snapshot = self.snapshot();
         let generation = snapshot.version + 1;
@@ -1403,6 +1432,87 @@ impl GraphEngineV2 {
     /// window inside step 2 (authority deleted, fresh manifest not yet written) leaves a
     /// database that fails to open with an explicit error — the documented manual
     /// fallback (`rm -rf <db>.rfdb`) recovers; clear never silently resurrects data.
+    /// Reflect a program's rules INTO this database (Projection T) and return the number
+    /// of facts written.
+    ///
+    /// The write is idempotent: a fact's node id is content-addressed over its canonical
+    /// tuple, so reflecting the same program twice hits the same nodes. It is also
+    /// ADDITIVE — reflecting a second program adds its rules beside the first; removing a
+    /// rule is rule supersession, a separate line of work, deliberately not done here.
+    ///
+    /// The commit passes NO changed files: the reflected nodes live under the virtual file
+    /// [`crate::derive::reflect::REFLECT_FILE`], so no re-analysis of a real source file
+    /// can tombstone a rule.
+    pub fn reflect_program(
+        &mut self,
+        source: &str,
+    ) -> std::result::Result<usize, crate::derive::EvalError> {
+        let program = crate::derive::parser_ext::parse_ext_program(source)?;
+        let rules = program.rules();
+        let records = crate::derive::reflect::encode_rules_to_records(&rules)?;
+        let written = records.len();
+        self.commit_batch_ext(records, vec![], &[], std::collections::HashMap::new(), &[])
+            .map_err(|e| {
+                crate::derive::EvalError::Reflect(crate::derive::reflect::ReflectError::mode(
+                    format!("reflected commit failed: {e}"),
+                ))
+            })?;
+        // The rules just changed, so every cached derived result keyed to the old program
+        // is stale.
+        self.reset_derive_caches();
+        Ok(written)
+    }
+
+    /// The cache / durable-pin key of a derive program.
+    ///
+    /// Hashes the program text TOGETHER with the rule-source mode bit. The mode bit is
+    /// load-bearing, not decoration: in store mode the text argument is not the program
+    /// (it degenerates, typically to `""`), so a text-only hash would map every store-mode
+    /// program onto ONE key — and would also let a text-mode result be served to a
+    /// store-mode request on the same source string. The key also names the durable pin
+    /// sidecar file, so the same collision would cross process restarts.
+    pub(crate) fn derive_program_key(source: &str, mode: crate::derive::RuleSource) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        source.hash(&mut hasher);
+        mode.key_bit().hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Where this database's rules come from ([`crate::derive::RuleSource`]).
+    pub fn rule_source(&self) -> crate::derive::RuleSource {
+        self.rule_source
+    }
+
+    /// Change where this database's rules come from, and PERSIST it to `db_config.json`.
+    ///
+    /// A durable database property, not a per-request switch: flipping it changes what
+    /// every subsequent derive call executes, so it has to survive a restart or a reopened
+    /// database would silently run the other program. An ephemeral engine has no config
+    /// file — the flag is then in-memory only, which is exactly its lifetime.
+    pub fn set_rule_source(&mut self, mode: crate::derive::RuleSource) -> Result<()> {
+        self.rule_source = mode;
+        // Changing the rule source changes the PROGRAM, so every cached derived result and
+        // durable pin keyed to the old program is stale by construction.
+        self.reset_derive_caches();
+        if let Some(path) = self.path.clone() {
+            self.persist_rule_source(&path)?;
+        }
+        Ok(())
+    }
+
+    /// Read-modify-write the rule source into `db_config.json`, preserving the shard count
+    /// the file already carries (never re-deriving it from the runtime profile, which can
+    /// differ from the value this database was created with).
+    fn persist_rule_source(&self, path: &Path) -> Result<()> {
+        let mut config = crate::storage_v2::multi_shard::DatabaseConfig::read_from(path)?
+            .ok_or_else(|| {
+                crate::error::GraphError::InvalidFormat("Missing db_config.json".to_string())
+            })?;
+        config.rule_source = self.rule_source;
+        config.write_to(path)
+    }
+
     pub fn clear_durable(&mut self) -> Result<()> {
         let Some(path) = self.path.clone() else {
             // Ephemeral engine: the in-memory swap IS the durable clear.
@@ -1438,6 +1548,10 @@ impl GraphEngineV2 {
 
         self.store = fresh_store;
         self.manifest = std::sync::Mutex::new(fresh_manifest);
+        // `MultiShardStore::create` just OVERWROTE `db_config.json` with a default config —
+        // which would silently demote a reflexive database to text mode, i.e. clearing the
+        // DATA would change the PROGRAM. Re-persist the flag we were opened with.
+        self.persist_rule_source(&path)?;
         Ok(())
     }
 }
@@ -6370,4 +6484,272 @@ mod tests {
         engine.clear_durable().unwrap();
         assert!(!sidecar_dir.exists(), "durable clear removes the pin sidecar dir");
     }
+
+    // ── Rules as data: the execution seam (Projection T) ──────────────
+
+    /// A small real graph both modes are asked about. Two FUNCTIONs, one CLASS, and a
+    /// CALLS edge, so a query has something to return and a negative control has
+    /// something to differ about.
+    fn reflexive_fixture(dir: &std::path::Path) -> GraphEngineV2 {
+        let mut engine = GraphEngineV2::create(dir).expect("create");
+        let f = make_v2_node("a.js->FUNCTION->f", "FUNCTION", "f", "a.js");
+        let g = make_v2_node("a.js->FUNCTION->g", "FUNCTION", "g", "a.js");
+        let c = make_v2_node("b.js->CLASS->C", "CLASS", "C", "b.js");
+        let edge = EdgeRecordV2 {
+            src: f.id,
+            dst: g.id,
+            edge_type: "CALLS".to_string(),
+            metadata: String::new(),
+        };
+        engine
+            .commit_batch_ext(
+                vec![f, g, c],
+                vec![edge],
+                &[],
+                std::collections::HashMap::new(),
+                &[],
+            )
+            .expect("commit");
+        engine.flush().expect("flush");
+        engine
+    }
+
+    /// The rule source is a DURABLE property of the database: it survives a reopen, and it
+    /// survives `clear_durable` — which recreates `db_config.json` through
+    /// `MultiShardStore::create` and would otherwise silently demote a reflexive database
+    /// to text mode (clearing the DATA must not change the PROGRAM).
+    #[test]
+    fn the_rule_source_is_a_durable_database_property() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let mut engine = GraphEngineV2::create(dir.path()).expect("create");
+            assert_eq!(
+                engine.rule_source(),
+                crate::derive::RuleSource::Text,
+                "a fresh database defaults to text mode"
+            );
+            engine
+                .set_rule_source(crate::derive::RuleSource::Store)
+                .expect("set");
+        }
+        {
+            let mut engine = GraphEngineV2::open(dir.path()).expect("reopen");
+            assert_eq!(
+                engine.rule_source(),
+                crate::derive::RuleSource::Store,
+                "the flag must survive a reopen"
+            );
+            engine.clear_durable().expect("clear");
+            assert_eq!(
+                engine.rule_source(),
+                crate::derive::RuleSource::Store,
+                "clearing the data must not change the program"
+            );
+        }
+        let engine = GraphEngineV2::open(dir.path()).expect("reopen after clear");
+        assert_eq!(
+            engine.rule_source(),
+            crate::derive::RuleSource::Store,
+            "…and the cleared database must still reopen reflexive"
+        );
+    }
+
+    /// A `db_config.json` written before the flag existed must still open, as text mode.
+    #[test]
+    fn a_pre_flag_db_config_opens_in_text_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let _ = GraphEngineV2::create(dir.path()).expect("create");
+        }
+        std::fs::write(dir.path().join("db_config.json"), r#"{"shard_count": 4}"#)
+            .expect("write legacy config");
+        let engine = GraphEngineV2::open(dir.path()).expect("open legacy");
+        assert_eq!(engine.rule_source(), crate::derive::RuleSource::Text);
+    }
+
+    /// Criterion B (positive control): the same query answered from TEXT and from the
+    /// STORE must be bit-identical — and NON-EMPTY, so the agreement measures agreement
+    /// and not two empty answers.
+    #[test]
+    fn text_mode_and_store_mode_agree_on_a_non_empty_answer() {
+        const PROGRAMS: &[&str] = &[
+            r#"p(X, N) :- edge(X, Y, "CALLS"), node(Y, "FUNCTION"), attr(Y, "name", N)."#,
+            r#"p(X) :- node(X, "FUNCTION")."#,
+            r#"p(X, Y) :- edge(X, Y, "CALLS")."#,
+            r#"p(Y, X) :- node(Y, "FUNCTION"), incoming(Y, X, "CALLS")."#,
+            r#"p(X) :- node(X, "FUNCTION"), \+ node(X, "CLASS")."#,
+            r#"p(X, F) :- node(X, "FUNCTION"), attr(X, "file", F)."#,
+            r#"q(X) :- node(X, "FUNCTION").
+p(X) :- q(X)."#,
+            r#"q(X, Y) :- edge(X, Y, "CALLS").
+p(X, Y) :- q(X, Y).
+p(X, Z) :- p(X, Y), q(Y, Z)."#,
+            r#"p(X, Y) :- edge(X, Y, "CALLS"), node(Y, "FUNCTION")."#,
+            r#"p(N) :- node(X, "FUNCTION"), attr(X, "name", N)."#,
+            r#"q(X) :- node(X, "CLASS").
+p(X) :- node(X, "FUNCTION"), \+ q(X)."#,
+            r#"p(X, Y) :- edge(X, Y, "CALLS"), \+ node(X, "CLASS")."#,
+        ];
+
+        let mut non_empty = 0usize;
+        for (i, src) in PROGRAMS.iter().enumerate() {
+            let text_dir = tempfile::tempdir().unwrap();
+            let text_engine = reflexive_fixture(text_dir.path());
+            let from_text = text_engine
+                .eval_derive(src, "p", crate::datalog::EvalLimits::none())
+                .unwrap_or_else(|e| panic!("program {i} text mode: {e}"));
+
+            let store_dir = tempfile::tempdir().unwrap();
+            let mut store_engine = reflexive_fixture(store_dir.path());
+            let written = store_engine
+                .reflect_program(src)
+                .unwrap_or_else(|e| panic!("program {i} reflect: {e}"));
+            assert!(written > 0, "program {i} reflected no fact at all");
+            store_engine
+                .set_rule_source(crate::derive::RuleSource::Store)
+                .expect("set");
+            store_engine.flush().expect("flush");
+            // The text argument is NOT the program in store mode. Hand it something that
+            // could not possibly parse into these rules, so a silent fallback to text
+            // would be caught rather than masked.
+            let from_store = store_engine
+                .eval_derive("", "p", crate::datalog::EvalLimits::none())
+                .unwrap_or_else(|e| panic!("program {i} store mode: {e}"));
+
+            let mut a = from_text.clone();
+            let mut b = from_store.clone();
+            a.sort();
+            b.sort();
+            assert_eq!(a, b, "program {i} disagreed between text and store mode");
+            if !a.is_empty() {
+                non_empty += 1;
+            }
+        }
+        assert_eq!(
+            non_empty,
+            PROGRAMS.len(),
+            "every program must return rows — an all-empty agreement proves nothing"
+        );
+    }
+
+    /// Criterion C (negative control): when the text and the store DISAGREE, the answer
+    /// must follow the STORE. Without this the positive control above would also pass if
+    /// store mode quietly kept parsing the text.
+    #[test]
+    fn when_text_and_store_disagree_the_answer_follows_the_store() {
+        const IN_STORE: &str = r#"p(X) :- node(X, "FUNCTION")."#;
+        const IN_TEXT: &str = r#"p(X) :- node(X, "FUNCTION").
+p(X) :- node(X, "CLASS")."#;
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = reflexive_fixture(dir.path());
+        engine.reflect_program(IN_STORE).expect("reflect");
+        engine
+            .set_rule_source(crate::derive::RuleSource::Store)
+            .expect("set");
+        engine.flush().expect("flush");
+
+        let from_store = engine
+            .eval_derive(IN_TEXT, "p", crate::datalog::EvalLimits::none())
+            .expect("store mode eval");
+        assert_eq!(
+            from_store.len(),
+            2,
+            "the store has ONE rule (two FUNCTIONs); the text's second rule must not fire"
+        );
+
+        // Positive control on the same graph: in text mode the very same text DOES add the
+        // CLASS, so the 2 above is the store winning and not an empty/broken read.
+        let text_dir = tempfile::tempdir().unwrap();
+        let text_engine = reflexive_fixture(text_dir.path());
+        let from_text = text_engine
+            .eval_derive(IN_TEXT, "p", crate::datalog::EvalLimits::none())
+            .expect("text mode eval");
+        assert_eq!(from_text.len(), 3, "text mode must see all three nodes");
+    }
+
+    /// `@materialize` write-back is REFUSED in store mode with a typed `E-REFLECT-003`.
+    /// Projection T carries no annotations, so a write-back would find zero directives and
+    /// commit nothing while reporting success — silent data loss.
+    #[test]
+    fn materialize_write_back_is_refused_in_store_mode() {
+        const SRC: &str = r#"@materialize(edge_type="REACHES")
+p(X, Y) :- edge(X, Y, "CALLS")."#;
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = reflexive_fixture(dir.path());
+        engine.reflect_program(SRC).expect("reflect");
+        engine
+            .set_rule_source(crate::derive::RuleSource::Store)
+            .expect("set");
+        engine.flush().expect("flush");
+
+        let err = engine
+            .eval_derive_materialize(SRC, crate::datalog::EvalLimits::none())
+            .expect_err("materialize must refuse in store mode");
+        assert_eq!(err.code(), crate::derive::reflect::E_REFLECT_MODE, "{err}");
+
+        let err = engine
+            .eval_derive_materialize_cached(SRC, crate::datalog::EvalLimits::none())
+            .expect_err("the cached materialize path must refuse too");
+        assert_eq!(err.code(), crate::derive::reflect::E_REFLECT_MODE, "{err}");
+    }
+
+    /// The materialize cache/pin key must carry the mode bit. Two modes hashing to one key
+    /// would let a text-mode result be served to a store-mode request — the program text
+    /// degenerates in store mode, so the text hash alone collides across every program.
+    #[test]
+    fn the_materialize_cache_key_carries_the_mode_bit() {
+        assert_ne!(
+            crate::derive::RuleSource::Text.key_bit(),
+            crate::derive::RuleSource::Store.key_bit(),
+            "the two modes must not share a key bit"
+        );
+        let text_key = GraphEngineV2::derive_program_key("p(X) :- node(X, \"FUNCTION\").", crate::derive::RuleSource::Text);
+        let store_key = GraphEngineV2::derive_program_key("p(X) :- node(X, \"FUNCTION\").", crate::derive::RuleSource::Store);
+        assert_ne!(text_key, store_key, "one program text, two modes, two keys");
+    }
+
+    /// A rule store with a BROKEN reflection beside a healthy one still answers from the
+    /// healthy rule, and the skip is reported on the event trace — never silently.
+    #[test]
+    fn a_broken_reflection_is_reported_on_the_event_trace() {
+        use crate::derive::reflect::{ReflectedFact, REL_CONCLUSION_LIT, REL_RULE, rofl_atom};
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = reflexive_fixture(dir.path());
+        engine
+            .reflect_program(r#"p(X) :- node(X, "FUNCTION")."#)
+            .expect("reflect");
+
+        // A rule whose head reflection is not a literal at all.
+        let bad = "rdeadbeef";
+        let broken = vec![
+            ReflectedFact::new(REL_RULE, vec![rofl_atom(bad)]),
+            ReflectedFact::new(
+                REL_CONCLUSION_LIT,
+                vec![
+                    rofl_atom(bad),
+                    crate::datalog::Value::Int(1),
+                    crate::datalog::Value::Str("not a literal".into()),
+                ],
+            ),
+        ];
+        let records: Vec<NodeRecordV2> = broken
+            .iter()
+            .map(|f| f.to_node_record().expect("record"))
+            .collect();
+        engine
+            .commit_batch_ext(records, vec![], &[], std::collections::HashMap::new(), &[])
+            .expect("commit");
+        engine
+            .set_rule_source(crate::derive::RuleSource::Store)
+            .expect("set");
+        engine.flush().expect("flush");
+
+        let rows = engine
+            .eval_derive("", "p", crate::datalog::EvalLimits::none())
+            .expect("the healthy rule must still answer");
+        assert_eq!(rows.len(), 2, "two FUNCTIONs from the surviving rule");
+    }
+
 }

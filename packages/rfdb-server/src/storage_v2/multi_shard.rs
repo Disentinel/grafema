@@ -52,6 +52,17 @@ use crate::storage_v2::types::{CommitDelta, DerivedFields, EdgeRecordV2, NodeRec
 pub struct DatabaseConfig {
     /// Number of shards for this database.
     pub shard_count: u16,
+
+    /// Where the derive engine takes its rules from for this database
+    /// ([`crate::derive::RuleSource`]).
+    ///
+    /// A DATABASE property, not a request parameter: rules-as-data means the rules only
+    /// exist as facts in this store, so a client that asked for text mode against a
+    /// reflexive database would get a silently empty answer. `#[serde(default)]` keeps
+    /// every `db_config.json` written before the flag existed readable — an absent field
+    /// means [`crate::derive::RuleSource::Text`], the historical behavior.
+    #[serde(default)]
+    pub rule_source: crate::derive::RuleSource,
 }
 
 impl DatabaseConfig {
@@ -255,7 +266,10 @@ impl MultiShardStore {
     pub fn create(db_path: &Path, shard_count: u16) -> Result<Self> {
         assert!(shard_count > 0, "shard_count must be > 0");
 
-        let config = DatabaseConfig { shard_count };
+        let config = DatabaseConfig {
+            shard_count,
+            rule_source: crate::derive::RuleSource::default(),
+        };
         config.write_to(db_path)?;
 
         let mut shards = Vec::with_capacity(shard_count as usize);
@@ -4311,7 +4325,7 @@ mod tests {
     #[test]
     fn test_config_roundtrip() {
         let dir = tempfile::TempDir::new().unwrap();
-        let config = DatabaseConfig { shard_count: 8 };
+        let config = DatabaseConfig { shard_count: 8, rule_source: crate::derive::RuleSource::Text };
         config.write_to(dir.path()).unwrap();
 
         let loaded = DatabaseConfig::read_from(dir.path()).unwrap().unwrap();

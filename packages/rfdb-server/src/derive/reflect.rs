@@ -108,6 +108,13 @@ impl ReflectError {
     fn new(code: &'static str, detail: impl Into<String>) -> Self {
         ReflectError { code, detail: detail.into() }
     }
+
+    /// An [`E_REFLECT_MODE`] refusal: the requested path is unavailable while the rules
+    /// live in the store. The sanctioned constructor for the mode gate, so every refusal
+    /// carries the same code.
+    pub fn mode(detail: impl Into<String>) -> Self {
+        ReflectError::new(E_REFLECT_MODE, detail)
+    }
 }
 
 impl std::fmt::Display for ReflectError {
@@ -284,7 +291,7 @@ fn hex_decode(s: &str) -> Option<Vec<u8>> {
 // ── Reification: rule AST → reified term ───────────────────────────
 
 /// A ROFL atom (kind `a` in the reference): a zero-arity term.
-fn rofl_atom(name: &str) -> Value {
+pub fn rofl_atom(name: &str) -> Value {
     Value::Term(std::sync::Arc::new(TermBlob { functor: name.to_string(), args: Box::new([]) }))
 }
 
