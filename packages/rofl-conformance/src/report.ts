@@ -43,6 +43,31 @@ export interface Report {
     divergences: object[];
     witnessChecks: { passed: number; failed: number };
     whynotChecks: { passed: number; failed: number };
+    /** The rules-from-store pass. Present ONLY when `--rules-from-store` ran it; a run
+     *  without the flag omits the key entirely, so its report bytes are the same bytes it
+     *  produced before the pass existed. */
+    store?: {
+      seeds: number;
+      /** Seeds Projection T carried whole — the denominator of the two agreement counts. */
+      seedsMeasured: number;
+      /** Seeds whose fresh database answered the same selectors with ZERO rows before
+       *  reflection, and seeds where the server read the mode back as 'store'. Both are
+       *  the anti-silence controls: without them an agreement of two empty answers would
+       *  read as agreement. */
+      emptyStoreControlsPassed: number;
+      storeModeConfirmed: number;
+      agreeWithText: number;
+      agreeWithOracle: number;
+      reflectedFactsTotal: number;
+      /** Refused ON THE MERITS. Its own category, never a divergence. */
+      unreflectable: object[];
+      /** The E-code the deliberately-unreflectable control produced, which is what makes
+       *  an `unreflectable: []` a measured zero instead of a door that refuses nothing. */
+      refusalControlCode: string;
+      divergences: object[];
+      witnessChecks: { passed: number; failed: number };
+      whynotChecks: { passed: number; failed: number };
+    };
   };
   tier1: ScenarioResult[];
   expectedVsFound: ExpectedVsFound[];
@@ -134,6 +159,20 @@ export function joinExpectations(tier1: ScenarioResult[], tier0: Tier0Summary): 
     match: tier0.divergences.length === 0 && tier0.witnessFailed === 0 && tier0.whynotFailed === 0,
     note: `${tier0.seedsRun} seeds with no translator normalization for F1/F2/F3 (translate.ts workarounds removed; engine fixes regression-pinned in exec.rs/plan.rs/stratify.rs)`,
   });
+  // Only when the second pass actually ran: an absent row is honest about a question
+  // nobody asked, whereas a row reading "0/0 agree" would look like a measurement.
+  if (tier0.store) {
+    const st = tier0.store;
+    const measured = st.seedsRun - st.unreflectable.length;
+    const clean = st.agreeWithText === measured && st.agreeWithOracle === measured && st.divergences.length === 0;
+    out.push({
+      claim: 'exp_rules_from_store_agrees',
+      expected: 'green',
+      found: clean ? 'green' : `agreeText:${st.agreeWithText}/${measured},agreeOracle:${st.agreeWithOracle}/${measured},divergences:${st.divergences.length}`,
+      match: clean,
+      note: `${measured} of ${st.seedsRun} seeds carried whole by Projection T (${st.unreflectable.length} refused on the merits, refusal control ${st.refusalControlCode}); ${st.reflectedFactsTotal} rule-facts written; each seed's answer taken from a fresh database whose SAME selectors returned 0 rows before reflection`,
+    });
+  }
   return out;
 }
 
@@ -158,6 +197,32 @@ export function buildReport(
       })),
       witnessChecks: { passed: tier0.witnessChecked - tier0.witnessFailed, failed: tier0.witnessFailed },
       whynotChecks: { passed: tier0.whynotChecked - tier0.whynotFailed, failed: tier0.whynotFailed },
+      ...(tier0.store
+        ? {
+          store: {
+            seeds: tier0.store.seedsRun,
+            seedsMeasured: tier0.store.seedsRun - tier0.store.unreflectable.length,
+            agreeWithText: tier0.store.agreeWithText,
+            agreeWithOracle: tier0.store.agreeWithOracle,
+            reflectedFactsTotal: tier0.store.reflectedFactsTotal,
+            emptyStoreControlsPassed: tier0.store.emptyStoreControlsPassed,
+            storeModeConfirmed: tier0.store.storeModeConfirmed,
+            unreflectable: tier0.store.unreflectable.map((u) => ({
+              seed: u.seed, ecode: u.unreflectable, detail: u.unreflectableDetail, program: u.program,
+            })),
+            refusalControlCode: tier0.store.refusalControlCode,
+            divergences: tier0.store.divergences.map((d) => ({
+              seed: d.seed, program: d.program,
+              reflectedFacts: d.reflectedFacts, modeConfirmed: d.modeConfirmed, emptyStoreRows: d.emptyStoreRows,
+              diffVsText: d.diffVsText, diffVsOracle: d.diffVsOracle,
+              witnessFailed: d.witnessFailed, whynotFailed: d.whynotFailed,
+              v0Set: d.v0Set, textSet: d.textSet, storeSet: d.storeSet,
+            })),
+            witnessChecks: { passed: tier0.store.witnessChecked - tier0.store.witnessFailed, failed: tier0.store.witnessFailed },
+            whynotChecks: { passed: tier0.store.whynotChecked - tier0.store.whynotFailed, failed: tier0.store.whynotFailed },
+          },
+        }
+        : {}),
     },
     tier1,
     expectedVsFound: joinExpectations(tier1, tier0),
@@ -209,6 +274,33 @@ export function writeReports(report: Report): { jsonPath: string; mdPath: string
     lines.push(JSON.stringify(report.tier0.divergences, null, 2));
     lines.push('```');
     lines.push('');
+  }
+  const st = report.tier0.store;
+  if (st) {
+    lines.push('## Tier-0 rules-from-store — the same seeds answered with the rules read out of the database');
+    lines.push('');
+    lines.push(`- seeds run: **${st.seeds}**; carried whole by Projection T: **${st.seedsMeasured}**; refused on the merits (not reflectable, NOT a divergence): **${st.seeds - st.seedsMeasured}** — the refusal path is live, a deliberately unreflectable control program came back \`${st.refusalControlCode}\``);
+    lines.push(`- **same answer with rules from the store as with rules from the text: ${st.agreeWithText} / ${st.seedsMeasured}**`);
+    lines.push(`- same answer as the ROFL v0 oracle: **${st.agreeWithOracle} / ${st.seedsMeasured}**`);
+    lines.push(`- rule-facts written by reflection: **${st.reflectedFactsTotal}**`);
+    lines.push(`- why witness spot-checks: **${st.witnessChecks.passed} passed / ${st.witnessChecks.failed} failed**; whynot gap spot-checks: **${st.whynotChecks.passed} passed / ${st.whynotChecks.failed} failed** — the same checks the text pass runs, so the explain surface is measured out of the store too`);
+    lines.push(`- anti-silence controls passed: **${st.emptyStoreControlsPassed} / ${st.seeds}** seeds answered ZERO rows to the same selectors before anything was reflected, and **${st.storeModeConfirmed} / ${st.seedsMeasured}** had the server read the rule source back as \`store\` before being asked`);
+    lines.push('- anti-silence: each seed gets a FRESH database, and before anything is reflected the very selectors used to ask the questions are run against it in store mode and must return zero rows. A seed whose reflection wrote no facts, whose mode did not read back `store`, or whose answer after reflection is empty, stops the run as a harness gap instead of counting as agreement — two silences are not a match.');
+    lines.push('');
+    if (st.unreflectable.length > 0) {
+      lines.push('### Not reflectable (refused on the merits — their own category)');
+      lines.push('```json');
+      lines.push(JSON.stringify(st.unreflectable, null, 2));
+      lines.push('```');
+      lines.push('');
+    }
+    if (st.divergences.length > 0) {
+      lines.push('### STORE DIVERGENCES (rules from the store answered differently)');
+      lines.push('```json');
+      lines.push(JSON.stringify(st.divergences, null, 2));
+      lines.push('```');
+      lines.push('');
+    }
   }
   lines.push('## Tier-1 — the 29 v0 tests + boot.rofl');
   lines.push('');

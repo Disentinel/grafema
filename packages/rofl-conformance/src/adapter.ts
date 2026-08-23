@@ -10,7 +10,7 @@ import { parseProgram, parseLiteral, type Clause, type Lit } from './neutral.ts'
 import { ParseError } from '../vendor/rofl-v0/src/parser.ts';
 import { mkf, unify, resolve, canonTerm, varsOf, isGround, type Term, type Subst } from '../vendor/rofl-v0/src/unify.ts';
 import {
-  translate, renderSource, renderDumpSource, checkLitMeta, checkLitTerms,
+  translate, renderSource, renderDumpSource, renderStoreSelector, checkLitMeta, checkLitTerms,
   wireToCanon, canonToTerm, constToWireKey,
   UnsupportedFeature, USER_PREFIX, type Translation,
 } from './translate.ts';
@@ -25,18 +25,50 @@ export function unprefix(pred: string): string {
   return pred.startsWith(USER_PREFIX) ? pred.slice(USER_PREFIX.length) : pred;
 }
 
+/** Where the engine takes the rules from while this adapter is asking questions.
+ *
+ *  `'text'` is the historical behaviour and the default everywhere: the whole program
+ *  rides along with each request. `'store'` means the program was written into the
+ *  database as facts (Projection T) and the request carries only a relation name — see
+ *  {@link RfdbRofl.reflectIntoStore} and `renderStoreSelector`. */
+export type AdapterRuleSource = 'text' | 'store';
+
 export class RfdbRofl {
   private client: RfdbClient;
   private clauses: Clause[] = [];
   private translation: Translation | null = null;
+  private ruleSource: AdapterRuleSource;
   diagnostics: string[] = [];
 
-  constructor(client: RfdbClient, opts: { naive?: boolean } = {}) {
+  constructor(client: RfdbClient, opts: { naive?: boolean; ruleSource?: AdapterRuleSource } = {}) {
     if (opts.naive) {
       throw new UnsupportedFeature('dialect:untranslatable',
         'naive evaluation mode is a v0 engine-internal toggle; RFDB has a single evaluation mode (v0 modes agree on fact sets, LIMITS.md:48 ⟦and seminaive agree on results⟧)');
     }
     this.client = client;
+    this.ruleSource = opts.ruleSource ?? 'text';
+  }
+
+  /** Write this adapter's translated program into the OPEN database as facts (Projection T)
+   *  and return how many facts were written.
+   *
+   *  The whole program goes, rules and ground facts alike: a fact is a bodyless rule, and
+   *  the decoder hands one back as an unconditional fact, so an EDB tuple survives the round
+   *  trip exactly like a rule does. Reflecting only the rules would leave the store able to
+   *  derive nothing and would answer every later question with an empty set.
+   *
+   *  The count is the CALLER'S POSITIVE CONTROL and has to be checked against zero. Nothing
+   *  else in the store-mode path can tell "the program never arrived" from "the program
+   *  arrived and derives nothing": both answer empty. A program Projection T refuses to carry
+   *  whole arrives as an `RfdbError` carrying an `E-REFLECT-…` code — a refusal on the
+   *  merits, which is a category of its own and NOT a disagreement between engines. */
+  async reflectIntoStore(): Promise<number> {
+    return await this.client.reflectProgram(renderSource(this.t()));
+  }
+
+  /** Which rule source this adapter builds its requests for. */
+  get mode(): AdapterRuleSource {
+    return this.ruleSource;
   }
 
   static fromSnapshot(_json: string, _opts: { naive?: boolean } = {}): RfdbRofl {
@@ -63,7 +95,7 @@ export class RfdbRofl {
   private guardOpts(opts: { who?: string; budget?: number }, what: string): void {
     if (opts.budget !== undefined) {
       throw new UnsupportedFeature('missing:holes',
-        `${what} with an evaluation budget: v0 commits partial results + hole/2 facts on exhaustion (engine.ts:188-198 ⟦this.store.add(V.hole, MAIN⟧); RFDB aborts without committing (E-codes, engine_v2.rs:681-684 ⟦stays intact (abort-no-commit)⟧) — the known policy contradiction, ТЗ P1 mandates holes`);
+        `${what} with an evaluation budget: v0 commits partial results + hole/2 facts on exhaustion (engine.ts:188-198 ⟦this.store.add(V.hole, MAIN⟧); RFDB aborts without committing (E-codes, engine_v2.rs:749-750 ⟦stays intact (abort-no-commit)⟧) — the known policy contradiction, ТЗ P1 mandates holes`);
     }
     if (opts.who !== undefined) {
       throw new UnsupportedFeature('missing:rules-as-data',
@@ -134,6 +166,7 @@ export class RfdbRofl {
    *  for it (first-rule-head contract), and the program's own ground facts are
    *  unioned in (dedup) — correct whether or not the derive path echoes EDB. */
   async dumpRel(rel: string): Promise<string[][]> {
+    if (this.ruleSource === 'store') return await this.dumpRelFromStore(rel);
     const t = this.t();
     const seen = new Set<string>();
     const out: string[][] = [];
@@ -154,6 +187,53 @@ export class RfdbRofl {
       if (!seen.has(key)) { seen.add(key); out.push(tuple); }
     }
     return out;
+  }
+
+  /** Full extension of one original relation with the rules coming from the STORE.
+   *
+   *  The request is a bare selector — a relation name and its arity, no rules, no facts
+   *  (`renderStoreSelector`). Everything in the answer therefore had to be decoded out of
+   *  Projection T, which is the point of the measurement.
+   *
+   *  The program's own ground facts are DELIBERATELY not unioned in here, and that is the
+   *  one real difference from the text-mode path above. In text mode the union is a
+   *  correctness hedge against the derive path not echoing EDB; in store mode it would be a
+   *  fake: a store that had lost every EDB tuple would still hand back a complete-looking
+   *  extension assembled locally, and the comparison against the oracle would pass on facts
+   *  that never came out of the database. The store answers for the whole relation or the
+   *  seed reports a disagreement. */
+  private async dumpRelFromStore(rel: string): Promise<string[][]> {
+    const sel = renderStoreSelector(this.t(), rel);
+    if (sel === null) return [];
+    const rows = await this.client.executeDatalog(sel.source);
+    const seen = new Set<string>();
+    const out: string[][] = [];
+    for (const b of rows) {
+      const tuple = bindingsToTuple(b, sel.headVars).map(wireToCanon);
+      const key = tuple.join('\x00');
+      if (!seen.has(key)) { seen.add(key); out.push(tuple); }
+    }
+    return out;
+  }
+
+  /** The `source` an explain request carries, per rule source.
+   *
+   *  In text mode it is the program, as it always was. In store mode the engine assembles
+   *  the program from the pinned view and never looks at the text
+   *  (`engine_v2.rs:902-905` ⟦decoded FROM that view⟧), so what goes on
+   *  the wire is the same rule-less, fact-less selector the fact-set queries use. Sending
+   *  the program text instead would still work — and would destroy the evidence, because a
+   *  witness returned for a request that carries the rules proves nothing about where the
+   *  engine read them. An empty string is not an option either: an empty source is the
+   *  protocol's shorthand for the bundled `depends.dl` pack. */
+  private explainSource(rel: string): string {
+    if (this.ruleSource === 'text') return renderSource(this.t());
+    const sel = renderStoreSelector(this.t(), rel);
+    if (sel === null) {
+      throw new UnsupportedFeature('dialect:untranslatable',
+        `store-mode explain for '${rel}': the program never mentions the relation, so there is no arity to select on`);
+    }
+    return sel.source;
   }
 
   async dumpAll(): Promise<Map<string, string[][]>> {
@@ -215,9 +295,8 @@ export class RfdbRofl {
       throw new Error('whyWitness needs a ground literal');
     }
     this.checkQueryLit(lit, `why '${text.trim()}'`);
-    const t = this.t();
     const key = lit.args.map(constToWireKey);
-    const witness = await this.client.explainDatalogFact(renderSource(t), USER_PREFIX + lit.rel, key);
+    const witness = await this.client.explainDatalogFact(this.explainSource(lit.rel), USER_PREFIX + lit.rel, key);
     return { witness, factLine: `${lit.rel}(${lit.args.map(canonTerm).join(',')})` };
   }
 
@@ -227,9 +306,8 @@ export class RfdbRofl {
       throw new Error('whynotWitness needs a ground literal');
     }
     this.checkQueryLit(lit, `whynot '${text.trim()}'`);
-    const t = this.t();
     const key = lit.args.map(constToWireKey);
-    const witness = await this.client.explainDatalogGap(renderSource(t), USER_PREFIX + lit.rel, key);
+    const witness = await this.client.explainDatalogGap(this.explainSource(lit.rel), USER_PREFIX + lit.rel, key);
     return { witness, factLine: `${lit.rel}(${lit.args.map(canonTerm).join(',')})` };
   }
 

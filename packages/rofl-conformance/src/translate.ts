@@ -155,7 +155,7 @@ export function canonToTerm(s: string): Term {
 }
 
 /** Checked ground constant → its wire form for an `explain` key (the READ
- *  direction of the protocol's value surface, rfdb_server.rs:3202-3213
+ *  direction of the protocol's value surface, rfdb_server.rs:3363
  *  ⟦resolves the bare-decimal ambiguity⟧): an
  *  atom is its bare name, an integer is `~int:N` (live-probed R15/P1f). */
 export function constToWireKey(t: Term): string {
@@ -452,6 +452,39 @@ export function renderDumpSource(t: Translation, rel: string): { source: string;
   const vars = Array.from({ length: arity }, (_, i) => `V${i}`);
   const dumpRule = `xdump(${vars.join(', ')}) :- ${PFX}${rel}(${vars.join(', ')}).`;
   return { source: dumpRule + '\n' + renderSource(t), headVars: vars };
+}
+
+/** Render the STORE-MODE selector for one rel: a bare query literal, carrying
+ *  NO rules and NO facts.
+ *
+ *  In store mode the engine ignores the request text as a program and decodes the rules
+ *  out of Projection T (`derive/mod.rs:289-291` ⟦the rules are decoded⟧); the text is
+ *  read for one thing only — naming the relation the answer is about
+ *  (`rfdb_server.rs:3034-3043` ⟦if let Ok(program) = parse_program(source)⟧: a source with no rules falls through to `parse_query`
+ *  and targets the first literal's atom).
+ *
+ *  That is why this is a bare literal rather than {@link renderDumpSource}'s program,
+ *  and the difference is the measurement, not a matter of taste:
+ *
+ *  • `renderDumpSource` leads with `xdump(V…) :- u_rel(V…).`, a rule that exists ONLY in
+ *    the request text. Nothing reflects it, so in store mode `xdump` has no rule and the
+ *    engine answers EMPTY, with no error attached (live-probed: 0 rows against a store
+ *    that answers the bare selector with the full extension). One `xdump` name would
+ *    also have to carry every arity in the program at once.
+ *  • A bare selector carries no premises at all, so if the store were NOT consulted the
+ *    answer could only be empty. A full, correct extension coming back out of a request
+ *    holding no rules and no facts is itself the evidence that the rules came from the
+ *    store — which is what makes the per-seed empty-store control (same selector,
+ *    nothing reflected yet ⇒ zero rows) a discriminator rather than a formality.
+ *
+ *  Returns null for a rel the program never mentions (no arity to project), matching
+ *  {@link renderDumpSource}. Head vars are positional, so one `bindingsToTuple` decoding
+ *  serves both modes. */
+export function renderStoreSelector(t: Translation, rel: string): { source: string; headVars: string[] } | null {
+  if (!t.relArity.has(rel)) return null;
+  const arity = t.relArity.get(rel)!;
+  const vars = Array.from({ length: arity }, (_, i) => `V${i}`);
+  return { source: `${PFX}${rel}(${vars.join(', ')})`, headVars: vars };
 }
 
 export const USER_PREFIX = PFX;

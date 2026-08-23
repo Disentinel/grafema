@@ -114,10 +114,10 @@ export class RfdbClient {
   }
 
   /** Execute a derive program; returns rows of variable bindings for the FIRST
-   *  rule head's predicate (rfdb_server.rs:2949-2951 ⟦Some(program.rules()[0].head().clone())⟧ — callers hoist the wanted
+   *  rule head's predicate (rfdb_server.rs:3034-3037 ⟦Some(program.rules()[0].head().clone())⟧ — callers hoist the wanted
    *  predicate's first rule to the top). explain is ALWAYS false: explain=true
    *  silently reroutes to the legacy v1 query engine
-   *  (rfdb_server.rs:2907 ⟦if derive_engine_enabled() && !explain⟧). */
+   *  (rfdb_server.rs:3033 ⟦if derive_engine_enabled() && !explain⟧). */
   async executeDatalog(source: string): Promise<Record<string, string>[]> {
     const r = (await this.call({ cmd: 'executeDatalog', source, explain: false })) as { [k: string]: MpValue };
     if (typeof r['error'] === 'string') throw new RfdbError(r['error']);
@@ -174,4 +174,47 @@ export class RfdbClient {
     if (!('ruleSource' in r)) throw new Error(`unexpected setRuleSource response: ${JSON.stringify(r)}`);
     return r['ruleSource'] as 'text' | 'store';
   }
+
+  /** Create a database. `ephemeral` keeps it out of the server's data directory.
+   *
+   *  Reflection is ADDITIVE and has no retraction (`engine_v2.rs:1454-1456`
+   *  ⟦rule is rule supersession⟧), and the rule source is a property of the
+   *  DATABASE — so a store-mode measurement over many programs needs one database per
+   *  program, or program N+1 executes program N's rules as well as its own. */
+  async createDatabase(name: string, ephemeral = false): Promise<void> {
+    const r = (await this.call({ cmd: 'createDatabase', name, ephemeral })) as { [k: string]: MpValue };
+    if (typeof r['error'] === 'string') throw new RfdbError(r['error']);
+    if (r['ok'] !== true) throw new Error(`unexpected createDatabase response: ${JSON.stringify(r)}`);
+  }
+
+  /** Open a database as this SESSION's current one; returns its node count.
+   *
+   *  Current-database is per connection, so a second client can drive per-seed databases
+   *  while the first keeps answering off the server's default database, untouched. */
+  async openDatabase(name: string, mode = 'rw'): Promise<number> {
+    const r = (await this.call({ cmd: 'openDatabase', name, mode })) as { [k: string]: MpValue };
+    if (typeof r['error'] === 'string') throw new RfdbError(r['error']);
+    if (r['ok'] !== true) throw new Error(`unexpected openDatabase response: ${JSON.stringify(r)}`);
+    return (r['nodeCount'] as number) ?? 0;
+  }
+
+  /** Names of the databases the server currently holds.
+   *
+   *  Closing the last connection to an EPHEMERAL database removes it
+   *  (`rfdb_server.rs:2872-2879` ⟦Cleanup ephemeral database if no connections remain⟧), so this is
+   *  how a caller proves its per-seed databases went away instead of piling up behind it. */
+  async listDatabases(): Promise<string[]> {
+    const r = (await this.call({ cmd: 'listDatabases' })) as { [k: string]: MpValue };
+    if (typeof r['error'] === 'string') throw new RfdbError(r['error']);
+    const dbs = r['databases'];
+    if (!Array.isArray(dbs)) throw new Error(`unexpected listDatabases response: ${JSON.stringify(r)}`);
+    return dbs.map((d) => (d as { [k: string]: MpValue })['name'] as string);
+  }
+
+  async closeDatabase(): Promise<void> {
+    const r = (await this.call({ cmd: 'closeDatabase' })) as { [k: string]: MpValue };
+    if (typeof r['error'] === 'string') throw new RfdbError(r['error']);
+    if (r['ok'] !== true) throw new Error(`unexpected closeDatabase response: ${JSON.stringify(r)}`);
+  }
+
 }
