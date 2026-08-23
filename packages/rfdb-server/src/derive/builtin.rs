@@ -2139,6 +2139,10 @@ mod tests {
         fn scan_edge_metadata_by_type(&self, edge_type: &str) -> Vec<(u128, u128, String)> {
             self.inner.scan_edge_metadata_by_type(edge_type)
         }
+
+        fn reflected_facts(&self) -> Vec<(u128, String)> {
+            self.inner.reflected_facts()
+        }
     }
 
     fn counting_view() -> CountingView {

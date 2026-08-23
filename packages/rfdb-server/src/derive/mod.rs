@@ -42,6 +42,7 @@ pub mod value;
 pub mod canon;
 pub mod catalog;
 pub mod storage_glue;
+pub mod reflect;
 pub mod parser_ext;
 pub mod stratify;
 pub mod builtin;

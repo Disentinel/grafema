@@ -389,6 +389,17 @@ pub(crate) trait StorageView: Sync {
     /// disagree: for every `(s, d, b)` yielded, `edge_metadata(s, d, edge_type) ==
     /// Some(b)`; edges absent here have `None` (no metadata) at this generation.
     fn scan_edge_metadata_by_type(&self, edge_type: &str) -> Vec<(u128, u128, String)>;
+
+    /// The reflected rule store: every live `$rofl/reflect` record at this generation as
+    /// `(id, metadata_blob)` — the ONLY door onto rules-as-data
+    /// ([`crate::derive::reflect`]).
+    ///
+    /// It is a separate door on purpose. Reflected facts live in the same node space as
+    /// ordinary graph nodes, so every base-relation read point above (`node/2`, typed
+    /// scans, the bound-id lookup, the attr generator) filters them out; a program can
+    /// neither observe nor join against its own rules through the ordinary vocabulary.
+    /// A view with no reflected records yields an empty vec.
+    fn reflected_facts(&self) -> Vec<(u128, String)>;
 }
 
 // ── Real impl over a version-pinned ReadSnapshot ───────────────────
@@ -427,12 +438,26 @@ impl LsmStorageView {
 // methods. The logic lives in these free helpers so the two views never drift in
 // what they surface (one source of truth for the real read path).
 
+/// Is this node type the reserved reflected-rule store?
+///
+/// Rules live as ordinary `storage_v2` nodes ([`crate::derive::reflect`]), so without an
+/// explicit guard a program would find its own reflection in `node/2` and `attr/3` — it
+/// could join against, count, and (through `@materialize`) rewrite the rules that are
+/// deriving it. Every base-relation read point below drops the reserved type; the only
+/// door onto it is [`StorageView::reflected_facts`].
+#[inline]
+fn is_reflected_type(node_type: &str) -> bool {
+    node_type == crate::derive::reflect::REFLECT_NODE_TYPE
+}
+
 /// Collect a snapshot's live node rows (deduped, tombstone-filtered by the public
-/// snapshot path) sorted by id.
+/// snapshot path) sorted by id. Reserved reflected-rule records are dropped: `node/2`
+/// must have exactly the rows it would have if the rules were still program text.
 fn snapshot_node_rows_by_id(store: &MultiShardStore, snapshot: &ReadSnapshot) -> Vec<Row> {
     let mut rows: Vec<Row> = store
         .find_nodes_at(snapshot, None, None)
         .into_iter()
+        .filter(|r| !is_reflected_type(&r.node_type))
         .map(|r| {
             Row::Node(NodeRow {
                 id: r.id,
@@ -479,10 +504,16 @@ fn snapshot_sorted_run(
     }
 }
 
+/// Typed scan, with the reserved reflected type served as EMPTY (never as its rows) — a
+/// program that names `$rofl/reflect` outright gets nothing, not its own rules.
 fn snapshot_scan_nodes_by_type(store: &MultiShardStore, snapshot: &ReadSnapshot, ty: &str) -> Vec<NodeRow> {
+    if is_reflected_type(ty) {
+        return Vec::new();
+    }
     store
         .find_nodes_at(snapshot, Some(ty), None)
         .into_iter()
+        .filter(|r| !is_reflected_type(&r.node_type))
         .map(|r| NodeRow {
             id: r.id,
             node_type: r.node_type,
@@ -602,13 +633,19 @@ fn snapshot_scan_edge_metadata(
         .collect()
 }
 
+/// Bound-id point lookup. A reflected-rule record resolves to `None`: holding a rule's id
+/// (it could be learned from a `@materialize`d derived edge, or guessed) must not become a
+/// back door onto the rule vocabulary the base relations refuse.
 fn snapshot_get_node(store: &MultiShardStore, snapshot: &ReadSnapshot, id: u128) -> Option<NodeRow> {
-    store.get_node_at(snapshot, id).map(|r| NodeRow {
-        id: r.id,
-        node_type: r.node_type,
-        name: r.name,
-        file: r.file,
-    })
+    store
+        .get_node_at(snapshot, id)
+        .filter(|r| !is_reflected_type(&r.node_type))
+        .map(|r| NodeRow {
+            id: r.id,
+            node_type: r.node_type,
+            name: r.name,
+            file: r.file,
+        })
 }
 
 /// Attribute value-generator over the snapshot-pinned attr index. The key→filter mapping is
@@ -623,6 +660,12 @@ fn snapshot_nodes_by_attr(
     key: &str,
     value: &str,
 ) -> Vec<NodeRow> {
+    // The reserved reflected type is not an addressable attribute value: `attr(X, "type",
+    // "$rofl/reflect")` yields nothing rather than enumerating the rule store.
+    if key == "type" && is_reflected_type(value) {
+        return Vec::new();
+    }
+
     // Map the attr key onto the storage filter slots exactly as the query engine's `attr_to_query` does.
     let mut node_type: Option<&str> = None;
     let mut file: Option<&str> = None;
@@ -654,6 +697,26 @@ fn snapshot_nodes_by_attr(
         .collect();
     rows.sort_by(|a, b| a.id.cmp(&b.id));
     rows
+}
+
+/// Collect the snapshot's live reflected-rule records as `(id, metadata_blob)`.
+///
+/// Reads the reserved node type through the SAME snapshot-pinned typed scan the base
+/// relations use — the isolation is in what the base relations drop, not in a second
+/// storage path. A record with an empty blob carries no tuple and is skipped here (it can
+/// never decode into a fact).
+fn snapshot_reflected_facts(
+    store: &MultiShardStore,
+    snapshot: &ReadSnapshot,
+) -> Vec<(u128, String)> {
+    store
+        .find_nodes_at(snapshot, Some(crate::derive::reflect::REFLECT_NODE_TYPE), None)
+        .into_iter()
+        .filter_map(|r| {
+            let blob = store.get_node_at(snapshot, r.id).map(|n| n.metadata).unwrap_or_default();
+            if blob.is_empty() { None } else { Some((r.id, blob)) }
+        })
+        .collect()
 }
 
 impl StorageView for LsmStorageView {
@@ -706,6 +769,10 @@ impl StorageView for LsmStorageView {
 
     fn scan_edge_metadata_by_type(&self, edge_type: &str) -> Vec<(u128, u128, String)> {
         snapshot_scan_edge_metadata(&self.store, &self.snapshot, edge_type)
+    }
+
+    fn reflected_facts(&self) -> Vec<(u128, String)> {
+        snapshot_reflected_facts(&self.store, &self.snapshot)
     }
 }
 
@@ -782,6 +849,10 @@ impl<'a> StorageView for BorrowedLsmStorageView<'a> {
 
     fn scan_edge_metadata_by_type(&self, edge_type: &str) -> Vec<(u128, u128, String)> {
         snapshot_scan_edge_metadata(self.store, &self.snapshot, edge_type)
+    }
+
+    fn reflected_facts(&self) -> Vec<(u128, String)> {
+        snapshot_reflected_facts(self.store, &self.snapshot)
     }
 }
 
@@ -871,8 +942,14 @@ impl StorageView for FixtureStorageView {
     fn sorted_run(&self, rel: Relation, order: SortOrder) -> Box<dyn Iterator<Item = Row> + '_> {
         let rows: Vec<Row> = match (rel, order) {
             (Relation::Nodes, SortOrder::NodeById) => {
-                // BTreeMap by id → already in NodeById order.
-                self.nodes.values().cloned().map(Row::Node).collect()
+                // BTreeMap by id → already in NodeById order. Reserved reflected-rule
+                // records are dropped here for the same reason the real view drops them.
+                self.nodes
+                    .values()
+                    .filter(|n| !is_reflected_type(&n.node_type))
+                    .cloned()
+                    .map(Row::Node)
+                    .collect()
             }
             (Relation::Edges, SortOrder::EdgeSrcTypeDst) => {
                 // Keyed by (src, type, dst) → already in EdgeSrcTypeDst order.
@@ -890,12 +967,15 @@ impl StorageView for FixtureStorageView {
     }
 
     fn scan_nodes_by_type(&self, ty: &str) -> Box<dyn Iterator<Item = NodeRow> + '_> {
-        let rows: Vec<NodeRow> = self
-            .nodes
-            .values()
-            .filter(|n| n.node_type == ty)
-            .cloned()
-            .collect();
+        let rows: Vec<NodeRow> = if is_reflected_type(ty) {
+            Vec::new()
+        } else {
+            self.nodes
+                .values()
+                .filter(|n| n.node_type == ty && !is_reflected_type(&n.node_type))
+                .cloned()
+                .collect()
+        };
         Box::new(rows.into_iter())
     }
 
@@ -934,7 +1014,7 @@ impl StorageView for FixtureStorageView {
     }
 
     fn get_node(&self, id: u128) -> Option<NodeRow> {
-        self.nodes.get(&id).cloned()
+        self.nodes.get(&id).filter(|n| !is_reflected_type(&n.node_type)).cloned()
     }
 
     fn nodes_by_attr(&self, key: &str, value: &str) -> Vec<NodeRow> {
@@ -942,8 +1022,12 @@ impl StorageView for FixtureStorageView {
         // (id/type/name/file); it mirrors the real index for those keys and yields nothing
         // for keys outside that surface (e.g. metadata keys), consistent with the Gate A row
         // surface. Rows come back ascending by id (BTreeMap iteration order).
+        if key == "type" && is_reflected_type(value) {
+            return Vec::new();
+        }
         self.nodes
             .values()
+            .filter(|n| !is_reflected_type(&n.node_type))
             .filter(|n| match key {
                 "name" => n.name == value,
                 "file" => n.file == value,
@@ -976,6 +1060,16 @@ impl StorageView for FixtureStorageView {
             .iter()
             .filter(|((_, ty, _), _)| ty == edge_type)
             .map(|((src, _, dst), blob)| (*src, *dst, blob.clone()))
+            .collect()
+    }
+
+    fn reflected_facts(&self) -> Vec<(u128, String)> {
+        // The fixture's reflected store is whatever nodes a test put under the reserved
+        // type WITH a metadata blob — same rule as the real impl.
+        self.nodes
+            .values()
+            .filter(|n| n.node_type == crate::derive::reflect::REFLECT_NODE_TYPE)
+            .filter_map(|n| self.node_meta.get(&n.id).map(|b| (n.id, b.clone())))
             .collect()
     }
 }
@@ -1103,6 +1197,19 @@ impl<'a> StorageView for OverlayStorageView<'a> {
         for (s, d, b) in self.delta.scan_edge_metadata_by_type(edge_type) {
             if !base_keys.contains(&(s, d)) {
                 out.push((s, d, b));
+            }
+        }
+        out
+    }
+
+    fn reflected_facts(&self) -> Vec<(u128, String)> {
+        // Same base-first precedence as every other overlay read: a hypothetical world may
+        // ADD reflected facts, never hide committed ones.
+        let mut out = self.base.reflected_facts();
+        let base_ids: std::collections::HashSet<u128> = out.iter().map(|(id, _)| *id).collect();
+        for (id, b) in self.delta.reflected_facts() {
+            if !base_ids.contains(&id) {
+                out.push((id, b));
             }
         }
         out

@@ -5004,6 +5004,10 @@ mod tests {
             fn scan_edge_metadata_by_type(&self, edge_type: &str) -> Vec<(u128, u128, String)> {
                 self.inner.scan_edge_metadata_by_type(edge_type)
             }
+
+            fn reflected_facts(&self) -> Vec<(u128, String)> {
+                self.inner.reflected_facts()
+            }
         }
 
         // ≥ BUILD_ONCE_MIN_ROWS rows must reach the final leg so it takes the
@@ -6176,6 +6180,10 @@ mod tests {
         fn scan_edge_metadata_by_type(&self, edge_type: &str) -> Vec<(u128, u128, String)> {
             self.inner.scan_edge_metadata_by_type(edge_type)
         }
+
+        fn reflected_facts(&self) -> Vec<(u128, String)> {
+            self.inner.reflected_facts()
+        }
     }
 
     /// Wraps a fixture view and counts the TOTAL number of base rows the run touches across
@@ -6256,6 +6264,10 @@ mod tests {
             let rows = self.inner.scan_edge_metadata_by_type(edge_type);
             self.bump(rows.len());
             rows
+        }
+
+        fn reflected_facts(&self) -> Vec<(u128, String)> {
+            self.inner.reflected_facts()
         }
     }
 
