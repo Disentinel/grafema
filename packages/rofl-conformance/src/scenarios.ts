@@ -4,7 +4,8 @@
 // PASS 1 self-check) and the subject (RfdbRofl adapter, PASS 2 verdicts); the
 // only sanctioned re-point is the two phase2 differential scenarios, which by
 // design substitute "naive ≡ seminaive" with "v0 ≡ RFDB" in subject mode (the
-// naive flag is engine-internal and not fact-set-observable, LIMITS.md:48).
+// naive flag is engine-internal and not fact-set-observable,
+// LIMITS.md:48 ⟦and seminaive agree on results⟧).
 
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';

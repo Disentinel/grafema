@@ -68,7 +68,7 @@ export interface WhyNode {
   children: WhyNode[];
 }
 
-/** Parse v0 why() text (api.ts:250-277 grammar: 2-space indents; node lines
+/** Parse v0 why() text (api.ts:250-277 ⟦private renderWhy(ev: Evaluation⟧ grammar: 2-space indents; node lines
  *  are `<key>  <= <ruleId> @tick <N>` | `<key> [axiom]` | `<key> [past tick]`
  *  | `<key> [cycle]` | `not <key> [finite failure]` | `<desc> [builtin]`;
  *  a neg premise may be followed by an inlined whynot demo indented +2). */
@@ -144,7 +144,8 @@ export function gapToTree(fact: string, g: GapWitness, unprefix: (pred: string) 
 
 /** Witness soundness: every positive body fact of the RFDB witness must be in
  *  the v0 canonical fact set (witness EXISTENCE + body ⊆ facts — deliberately
- *  NOT tree identity: v0 keeps only the first witness, store.ts:127). */
+ *  NOT tree identity: v0 keeps only the first witness, store.ts:127
+ *  ⟦if (!this.witnesses.has(key)) this.witnesses.set(key, w);⟧). */
 export function witnessSound(w: FactWitness, v0Facts: Set<string>, unprefix: (pred: string) => string): { sound: boolean; missing: string[] } {
   const missing: string[] = [];
   for (const b of w.body) {

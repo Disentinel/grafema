@@ -128,6 +128,38 @@ test('repeated head var next to a distinct var, arity 3', () => {
   assert.match(renderSource(tr), /u_u0\(V0, V1, V0\) :- u_p0\(V0, V1\)\./);
 });
 
+test('constant head arguments translate — probed on both engines', () => {
+  // A head CONSTANT is ground, so v0's safety test passes and no demand mode is
+  // involved; the refusal that used to cover this case was false. Probed on
+  // eleven shapes, RFDB and v0 agree tuple-for-tuple; e.g. `c0(k, Y) :- p0(X, Y).`
+  // over p0(a, m). p0(b, n). answers (k,m),(k,n) on both.
+  assert.match(renderSource(okT('p0(c0, c1).\nc0(k, Y) :- p0(X, Y).')),
+    /u_c0\("k", V0\) :- u_p0\(V1, V0\)\./);
+  // constant in the LAST position, and in the only position
+  assert.match(renderSource(okT('p0(c0, c1).\nc1(X, k) :- p0(X, Y).')),
+    /u_c1\(V0, "k"\) :- u_p0\(V0, V1\)\./);
+  assert.match(renderSource(okT('p0(c0, c1).\nc2(k) :- p0(X, Y).')),
+    /u_c2\("k"\) :- u_p0\(V0, V1\)\./);
+  // a v0 INTEGER stays a BARE numeric literal in the head, as it does elsewhere
+  assert.match(renderSource(okT('p0(c0, c1).\nc3(7, Y) :- p0(X, Y).')),
+    /u_c3\(7, V0\) :- u_p0\(V1, V0\)\./);
+  // constant beside a REPEATED variable, arity 3
+  assert.match(renderSource(okT('p0(c0, c1).\nc4(k, Y, Y) :- p0(X, Y).')),
+    /u_c4\("k", V0, V0\) :- u_p0\(V1, V0\)\./);
+  // a wholly constant head over a variable body still translates
+  assert.match(renderSource(okT('p0(c0, c1).\nc5(k, z) :- p0(X, Y).')),
+    /u_c5\("k", "z"\) :- u_p0\(V0, V1\)\./);
+});
+
+test('a WILDCARD head argument is still refused → missing:demand-mode', () => {
+  // The one genuine sub-case: the rule is unsafe, v0 demand-unfolds it and
+  // answers with an unbound variable term (X = ?X), RFDB rejects (E-EXEC-004).
+  const r = t('p0(c0, c1).\nw0(_, Y) :- p0(X, Y).');
+  assert.equal(r.ok, false);
+  assert.equal((r as { code: string }).code, 'missing:demand-mode');
+  assert.match((r as { detail: string }).detail, /WILDCARD/);
+});
+
 test('rejects unsafe negation vars → missing:demand-mode', () => {
   const r = t('p0(c0).\np2(c1, c2).\nq0(X) :- p0(X), not p2(X, Y).');
   assert.equal(r.ok, false);

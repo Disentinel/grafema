@@ -63,7 +63,7 @@ export class RfdbRofl {
   private guardOpts(opts: { who?: string; budget?: number }, what: string): void {
     if (opts.budget !== undefined) {
       throw new UnsupportedFeature('missing:holes',
-        `${what} with an evaluation budget: v0 commits partial results + hole/2 facts on exhaustion (engine.ts:188-198 ⟦this.store.add(V.hole, MAIN⟧); RFDB aborts without committing (E-codes, engine_v2.rs:681-684 ⟦abort-no-commit⟧) — the known policy contradiction, ТЗ P1 mandates holes`);
+        `${what} with an evaluation budget: v0 commits partial results + hole/2 facts on exhaustion (engine.ts:188-198 ⟦this.store.add(V.hole, MAIN⟧); RFDB aborts without committing (E-codes, engine_v2.rs:681-684 ⟦stays intact (abort-no-commit)⟧) — the known policy contradiction, ТЗ P1 mandates holes`);
     }
     if (opts.who !== undefined) {
       throw new UnsupportedFeature('missing:rules-as-data',

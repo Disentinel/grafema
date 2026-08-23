@@ -2,7 +2,7 @@
 // spot-checks in BOTH directions (why on derived facts, whynot on absent
 // tuples). Per seed: build a constrained tier-0 program; run it on the
 // vendored v0 engine (negation seeds from a boot snapshot — v0 stratification
-// is boot-DATA-driven, engine.ts:2-4; running them bootless would silently
+// is boot-DATA-driven, engine.ts:2-4 ⟦READ from stratum/2 facts⟧; running them bootless would silently
 // change v0 semantics); run it through the RfdbRofl adapter; compare
 // canonical fact sets byte-for-byte. ANY difference or unexpected E-code is
 // an engine DIVERGENCE (run fails with a full repro dump), never a RED.
@@ -102,7 +102,8 @@ export async function runSeedDifferential(prog: GeneratedProgram, ctx: SeedConte
 
   // Witness spot-check: ≤5 derived facts (dump ∖ program ground facts) —
   // existence + body-soundness, NOT tree identity (v0 first-witness-only,
-  // store.ts:127; witness choice is mode-dependent, LIMITS.md:48)
+  // store.ts:127 ⟦if (!this.witnesses.has(key)) this.witnesses.set(key, w);⟧;
+  // witness choice is mode-dependent, LIMITS.md:48 ⟦and seminaive agree on results⟧)
   const groundLines = new Set<string>();
   for (const rel of prog.rels) {
     for (const t of adapter.groundFactsOf(rel)) groundLines.add(`${rel}(${t.join(',')})`);

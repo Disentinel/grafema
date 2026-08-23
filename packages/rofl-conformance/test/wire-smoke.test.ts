@@ -122,6 +122,53 @@ test('adapter end-to-end: TC rows in exact v0 rendering', async () => {
   assert.equal(await adapter.holds('path(d, a)'), false);
 });
 
+// A CONSTANT head argument is ground on both engines: v0's safety test passes,
+// no demand unfolding happens, and RFDB builds the head the same way. The rows
+// below are the vendored v0's OWN answers to the same programs, so this is a
+// cross-engine agreement pin. Only a WILDCARD head is a real refusal, and the
+// last assertion holds the engine to that — the one thing an anchored citation
+// cannot prove is an ABSENCE, so it is probed live.
+test('adapter end-to-end: constant head arguments agree with v0, wildcard heads do not', async () => {
+  // (1) atom constant in the first head position
+  const a = new RfdbRofl(client);
+  a.load('p0(a, m).\np0(b, n).\nc0(k, Y) :- p0(X, Y).');
+  assert.deepEqual((await a.query('c0(X, Y)')).rows.map((x) => x.text),
+    ['X = k, Y = m', 'X = k, Y = n']);
+  // (2) INTEGER constant in the head: stays an int through the wire round-trip
+  const b = new RfdbRofl(client);
+  b.load('p0(a, m).\np0(b, n).\nc1(7, Y) :- p0(X, Y).');
+  assert.deepEqual((await b.query('c1(X, Y)')).rows.map((x) => x.text),
+    ['X = 7, Y = m', 'X = 7, Y = n']);
+  // (3) constant in the BASE rule of a recursion
+  const c = new RfdbRofl(client);
+  c.load('e0(a, b).\ne0(b, c).\ntc0(r, Y) :- e0(Y, Z).\ntc0(X, Y) :- tc0(X, Z), e0(Z, Y).');
+  assert.deepEqual((await c.query('tc0(X, Y)')).rows.map((x) => x.text),
+    ['X = r, Y = a', 'X = r, Y = b', 'X = r, Y = c']);
+  // (4) the refusal that REMAINS. On the same program v0 demand-unfolds the head
+  // and answers ['X = ?X, Y = m'] — an answer row carrying an UNBOUND term, which
+  // is the whole of demand mode. RFDB has two observed behaviours here and the
+  // assertion admits both, because which one you get depends on how old the
+  // rfdb-server build under test is: a build carrying the head-safety check
+  // refuses with E-EXEC-004, a build predating it silently answers []. (The
+  // anchored source citation for that check lives on the translator's refusal
+  // detail, where the citation gate can verify it; a citation written here
+  // would not be gated, because the gate scans src/ only.) Neither behaviour is
+  // v0's answer, and it is that ABSENCE — the one thing an anchored citation
+  // cannot prove — that the refusal records. Measured on both builds.
+  let wildcardHead: string;
+  try {
+    const rows = await client.executeDatalog('k_q(_, V1) :- k_p(V0, V1).\nk_p("a","m").\n');
+    wildcardHead = `answered ${JSON.stringify(rows)}`;
+    assert.deepEqual(rows, [], wildcardHead);
+  } catch (e) {
+    wildcardHead = (e as Error).message;
+    assert.match(wildcardHead, /E-EXEC-004/);
+    assert.match(wildcardHead, /range-restricted/);
+  }
+  // whichever of the two it was, it is not v0's demand-mode row
+  assert.doesNotMatch(wildcardHead, /\?V0|\?X/);
+});
+
 // A REPEATED HEAD VARIABLE is a real head construction on BOTH engines: every
 // repeated position receives the same value. The expected rows below are the
 // vendored v0's OWN answers, measured on the same three programs (in v0's own

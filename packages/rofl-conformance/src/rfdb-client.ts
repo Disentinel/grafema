@@ -1,7 +1,8 @@
 // rfdb-client.ts — minimal unix-socket client for rfdb-server.
 // Framing: [4-byte BE length][MessagePack body] both directions
-// (rfdb_server.rs read/write loop). Requests are internally tagged maps
-// {"cmd": <camelCase>, ...} (Request enum serde attrs, rfdb_server.rs:85).
+// (rfdb_server.rs ⟦let len = u32::from_be_bytes(len_buf) as usize;⟧ read/write
+// loop). Requests are internally tagged maps {"cmd": <camelCase>, ...}
+// (Request enum serde attrs, rfdb_server.rs:85 ⟦#[serde(tag = "cmd", rename_all = "camelCase")]⟧).
 
 import * as net from 'node:net';
 import { encode, decode, type MpValue } from './msgpack.ts';
@@ -113,9 +114,10 @@ export class RfdbClient {
   }
 
   /** Execute a derive program; returns rows of variable bindings for the FIRST
-   *  rule head's predicate (rfdb_server.rs:2949-2951 — callers hoist the wanted
+   *  rule head's predicate (rfdb_server.rs:2949-2951 ⟦Some(program.rules()[0].head().clone())⟧ — callers hoist the wanted
    *  predicate's first rule to the top). explain is ALWAYS false: explain=true
-   *  silently reroutes to the legacy v1 query engine (rfdb_server.rs:2907). */
+   *  silently reroutes to the legacy v1 query engine
+   *  (rfdb_server.rs:2907 ⟦if derive_engine_enabled() && !explain⟧). */
   async executeDatalog(source: string): Promise<Record<string, string>[]> {
     const r = (await this.call({ cmd: 'executeDatalog', source, explain: false })) as { [k: string]: MpValue };
     if (typeof r['error'] === 'string') throw new RfdbError(r['error']);

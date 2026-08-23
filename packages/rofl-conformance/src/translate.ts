@@ -7,7 +7,7 @@
 // also contains [audit] perspectives).
 //
 // Dialect facts this encoding rests on (all live-probed against rfdb-server):
-//   • ground facts in program text are first-class EDB (plan.rs FactStats);
+//   • ground facts in program text are first-class EDB (plan.rs ⟦struct FactStats⟧);
 //   • executeDatalog returns the FIRST rule head's predicate → callers hoist;
 //   • user predicates are namespaced `u_<rel>`: v0 rel names may collide with
 //     RFDB base relations (node/type/edge/incoming/attr — phase1 TC uses
@@ -79,7 +79,8 @@ const I64_MAX = 9223372036854775807n;
 interface TransRule {
   rel: string;              // original head rel
   text: string;             // translated RFDB rule line
-  headVars: string[];       // renamed head variable names, positional
+  headVars: string[];       // positional head arguments as rendered: a renamed
+                            // variable (V0, V1, …) or a constant's program text
 }
 
 export interface Translation {
@@ -292,12 +293,25 @@ export function translate(clauses: Clause[]): TranslateResult {
     // e.g. `r(V1, V1) :- p(V0, V1).` over `p(a, m)` yields r(m, m) on both,
     // never r(a, m). Pinned by test/translate.test.ts
     // ('repeated head vars translate — both engines build the head by substitution').
+    // A head CONSTANT needs no refusal either, and for the same reason: it is
+    // ground, so v0's safety test (engine.ts:158
+    // ⟦!h.args.every(groundIn)⟧) passes and no demand unfolding is involved.
+    // Live-probed on eleven shapes (constant first / last / only position, atom
+    // and integer, constant beside a repeated variable, a constant head joined
+    // by the next rule, union with a variable-headed rule, under negation, in a
+    // recursion's base rule, and a wholly constant head over a variable body) —
+    // RFDB and v0 agree tuple-for-tuple. Pinned by test/translate.test.ts
+    // ('constant head arguments translate — probed on both engines').
+    // Only a WILDCARD head position is a real refusal: there v0 answers with an
+    // unbound variable term (`k_q(_, V1) :- k_p(V0, V1).` over p(a,m) answers
+    // `X = ?X, Y = m`) because the rule is unsafe and gets demand-unfolded,
+    // while RFDB rejects it as not range-restricted (E-EXEC-004).
     for (const a of c.head.args) {
-      if (a.k !== 'v' || isWildcard(a)) {
-        return fail('missing:demand-mode', `head argument of clause ${ci + 1} is not a named variable: v0 tolerates such heads via demand/moded evaluation (engine.ts:80-127 ⟦demand-backed (unfolded at call sites)⟧); RFDB has no demand mode`);
+      if (a.k === 'v' && isWildcard(a)) {
+        return fail('missing:demand-mode', `head argument of clause ${ci + 1} is a WILDCARD: the rule is unsafe, and v0 tolerates it via demand/moded evaluation (engine.ts:80-127 ⟦demand-backed (unfolded at call sites)⟧), answering with an unbound variable term; RFDB has no demand mode and rejects the head as not range-restricted (E-EXEC-004 from the head-safety check in exec.rs ⟦fn head_safety_diagnosis⟧, live-probed)`);
       }
-      if (!posVars.has(a.name)) {
-        return fail('missing:demand-mode', `head variable '${a.name}' of clause ${ci + 1} is not bound by a positive premise (not range-restricted): v0 handles this via demand mode`);
+      if (a.k === 'v' && !posVars.has(a.name)) {
+        return fail('missing:demand-mode', `head variable '${a.name}' of clause ${ci + 1} is not bound by a positive premise (not range-restricted): v0 handles this via demand mode (engine.ts:80-127 ⟦demand-backed (unfolded at call sites)⟧), RFDB rejects the head (E-EXEC-004 from the head-safety check in exec.rs ⟦fn head_safety_diagnosis⟧, live-probed)`);
       }
     }
     for (const b of c.body) {
@@ -379,7 +393,7 @@ export function translate(clauses: Clause[]): TranslateResult {
       } else if (b.t === 'neg') {
         // negated wildcards go to the wire as-is: the engine evaluates them
         // existentially over the bound columns (ROFL F1 fix, regression-pinned
-        // by exec.rs::negated_derived_leg_with_wildcard_is_existential)
+        // by exec.rs ⟦fn negated_derived_leg_with_wildcard_is_existential⟧)
         bodyParts.push(`\\+ ${PFX}${b.lit.rel}(${b.lit.args.map(rn).join(', ')})`);
       }
     }
@@ -392,7 +406,7 @@ export function translate(clauses: Clause[]): TranslateResult {
 
   // A body literal over a predicate with no facts and no rules goes to the
   // wire as-is: the engine serves it as a legal EMPTY relation (ROFL F2 fix,
-  // regression-pinned by exec.rs::unknown_predicate_leg_terminates_with_empty_result).
+  // regression-pinned by exec.rs ⟦fn unknown_predicate_leg_terminates_with_empty_result⟧).
   const programRels = [...new Set(clauses.flatMap((c) => litsOf(c).map((l) => l.rel)))];
 
   return {

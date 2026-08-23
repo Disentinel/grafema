@@ -3,6 +3,16 @@
 // (conformance-run-meta.json), including the expected-vs-found join against the
 // pre-registered ledger round-001 claims.
 //
+// Anchors (⟦…⟧, see citations.ts) are SOURCE-SIDE bookkeeping, so prose that
+// carries a checkable citation still reads to a human exactly as it did before
+// the convention existed. The ORDER is load-bearing: every string is stripped
+// BEFORE it is truncated (buildReport returns stripAnchorsDeep(...), and the
+// note fields that slice a scenario's evidence strip it first), and the finished
+// document is only ASSERTED anchor-free. Stripping a document that has already
+// been truncated deletes everything from a half-open ⟦ to the next ⟧ — which
+// lands in a LATER table row. Measured, not hypothetical: it swallowed ten rows
+// of the tier-1 table before the order was fixed.
+//
 // conformance-report.json carries NO run identity: two identical-seed runs on
 // the same commit produce byte-identical report files (ТЗ A3 reproducibility
 // discipline) — run_id/timestamp live in the sidecar, and the ledger records
@@ -13,6 +23,7 @@ import * as path from 'node:path';
 import { execSync } from 'node:child_process';
 import type { ScenarioResult } from './suite-runner.ts';
 import type { Tier0Summary } from './differential.ts';
+import { stripAnchors, stripAnchorsDeep, assertNoAnchors } from './citations.ts';
 
 export interface ExpectedVsFound {
   claim: string;
@@ -65,12 +76,12 @@ export function joinExpectations(tier1: ScenarioResult[], tier0: Tier0Summary): 
   {
     const r = byId.get('p1-functor-append');
     const found = r ? `${r.verdict.toLowerCase()}${r.reason_code ? `:${r.reason_code}` : ''}` : 'missing';
-    out.push({ claim: 'exp_phase1_functor_red', expected: 'red:missing:compound-terms', found, match: r?.verdict === 'RED' && r.reason_code === 'missing:compound-terms', note: r?.evidence.slice(0, 160) ?? '' });
+    out.push({ claim: 'exp_phase1_functor_red', expected: 'red:missing:compound-terms', found, match: r?.verdict === 'RED' && r.reason_code === 'missing:compound-terms', note: r ? stripAnchors(r.evidence).slice(0, 160) : '' });
   }
   {
     const r = byId.get('p1-arith');
     const found = r ? `${r.verdict.toLowerCase()}${r.reason_code ? `:${r.reason_code}` : ''}` : 'missing';
-    out.push({ claim: 'exp_phase1_arith_red', expected: 'red:dialect:untranslatable', found, match: r?.verdict === 'RED' && r.reason_code === 'dialect:untranslatable', note: r?.evidence.slice(0, 160) ?? '' });
+    out.push({ claim: 'exp_phase1_arith_red', expected: 'red:dialect:untranslatable', found, match: r?.verdict === 'RED' && r.reason_code === 'dialect:untranslatable', note: r ? stripAnchors(r.evidence).slice(0, 160) : '' });
   }
   {
     const v = verdictOf(['p2-diff-positive', 'p2-diff-negation']);
@@ -91,7 +102,7 @@ export function joinExpectations(tier1: ScenarioResult[], tier0: Tier0Summary): 
   {
     const r = byId.get('boot-load');
     const found = r ? `${r.verdict.toLowerCase()}${r.reason_code ? `:${r.reason_code}` : ''}` : 'missing';
-    out.push({ claim: 'exp_boot_load_red', expected: 'red:missing:rules-as-data', found, match: r?.verdict === 'RED' && r.reason_code === 'missing:rules-as-data', note: r?.evidence.slice(0, 160) ?? '' });
+    out.push({ claim: 'exp_boot_load_red', expected: 'red:missing:rules-as-data', found, match: r?.verdict === 'RED' && r.reason_code === 'missing:rules-as-data', note: r ? stripAnchors(r.evidence).slice(0, 160) : '' });
   }
   out.push({
     claim: 'exp_tier0_differential_green',
@@ -107,7 +118,7 @@ export function joinExpectations(tier1: ScenarioResult[], tier0: Tier0Summary): 
       ? 'green'
       : `failed:why=${tier0.witnessFailed},whynot=${tier0.whynotFailed}`,
     match: tier0.witnessFailed === 0 && tier0.whynotFailed === 0,
-    note: `${tier0.witnessChecked} why witnesses (existence + body ⊆ v0 facts) + ${tier0.whynotChecked} whynot gap witnesses (existence + satisfied ⊆ v0 facts) checked; NOT tree identity — v0 keeps first witness only, store.ts:127`,
+    note: `${tier0.witnessChecked} why witnesses (existence + body ⊆ v0 facts) + ${tier0.whynotChecked} whynot gap witnesses (existence + satisfied ⊆ v0 facts) checked; NOT tree identity — v0 keeps first witness only, store.ts:127 ⟦if (!this.witnesses.has(key)) this.witnesses.set(key, w);⟧`,
   });
   // Pre-registered in ledger round-004-pre BEFORE the de-workaround run: with
   // the F1/F2/F3 translator workarounds REMOVED (negated wildcards, unknown
@@ -133,7 +144,7 @@ export function buildReport(
 ): Report {
   const v0Rev = fs.readFileSync(path.join(PKG, 'vendor/rofl-v0/REV'), 'utf8').trim();
   const gitSha = sh('git rev-parse HEAD');
-  return {
+  return stripAnchorsDeep({
     engines: {
       v0: { rev: v0Rev },
       rfdb: { gitSha, binary: server.binary, serverVersion: server.serverVersion, protocolVersion: server.protocolVersion },
@@ -151,17 +162,17 @@ export function buildReport(
     tier1,
     expectedVsFound: joinExpectations(tier1, tier0),
     discoveredEngineFindings: [
-      'F1 FIXED (was: RFDB `\\+ p(X, _)` — wildcard inside a NEGATED literal — silently returned wrong answers; probe q0(X) :- p0(X), \\+ p2(X, _) with p0(c0). p0(c1). p2(c1,c9). returned {c0, c1}, correct {c0}). Engine fix: exec.rs join_derived negated branch now anti-joins existentially over the non-wildcard columns (regression: exec.rs::negated_derived_leg_with_wildcard_is_existential). The translator\'s aux-predicate projection workaround is REMOVED — negated wildcards go to the wire as-is.',
-      'F2 FIXED (was: a body literal over a predicate with NO facts and NO rules gave no response past the 30s EvalLimits deadline — a stratify.rs debug_assert panic killed the DEBUG-build connection thread). Engine fix: the debug_assert removed, unknown predicate = legal empty relation; deadline abort pinned by exec.rs::unknown_predicate_leg_expired_deadline_aborts_with_e_exec_001. The translator\'s empty-predicate elimination workaround is REMOVED — unknown predicates go to the wire as-is.',
-      'F3 FIXED (was: a fully-ground body literal in a multi-literal rule tripped E-PLAN-003 after planner reordering; q0(X) :- p0(X), p1("c1","c2"). rejected). Engine fix: plan.rs shares_no_binding treats an empty bound set as "preceding legs were filters", so a ground probe is safe in any position (regression: plan.rs::ground_probe_leg_is_safe_in_any_position). The translator\'s ground-body-literal rejection is REMOVED; the structural cross-join guard for genuinely disconnected generators remains.',
+      'F1 FIXED (was: RFDB `\\+ p(X, _)` — wildcard inside a NEGATED literal — silently returned wrong answers; probe q0(X) :- p0(X), \\+ p2(X, _) with p0(c0). p0(c1). p2(c1,c9). returned {c0, c1}, correct {c0}). Engine fix: the negated branch of join_derived in exec.rs ⟦fn join_derived⟧ now anti-joins existentially over the non-wildcard columns (regression test negated_derived_leg_with_wildcard_is_existential in exec.rs ⟦fn negated_derived_leg_with_wildcard_is_existential⟧). The translator\'s aux-predicate projection workaround is REMOVED — negated wildcards go to the wire as-is.',
+      'F2 FIXED (was: a body literal over a predicate with NO facts and NO rules gave no response past the 30s EvalLimits deadline — a debug_assert in the stratifier panicked and killed the DEBUG-build connection thread; that assert no longer exists, so there is nothing left to cite). Engine fix: the debug_assert removed, unknown predicate = legal empty relation; deadline abort pinned by the regression test unknown_predicate_leg_expired_deadline_aborts_with_e_exec_001 in exec.rs ⟦fn unknown_predicate_leg_expired_deadline_aborts_with_e_exec_001⟧. The translator\'s empty-predicate elimination workaround is REMOVED — unknown predicates go to the wire as-is.',
+      'F3 FIXED (was: a fully-ground body literal in a multi-literal rule tripped E-PLAN-003 after planner reordering; q0(X) :- p0(X), p1("c1","c2"). rejected). Engine fix: shares_no_binding in plan.rs ⟦fn shares_no_binding⟧ treats an empty bound set as "preceding legs were filters", so a ground probe is safe in any position (regression test ground_probe_leg_is_safe_in_any_position in plan.rs ⟦fn ground_probe_leg_is_safe_in_any_position⟧). The translator\'s ground-body-literal rejection is REMOVED; the structural cross-join guard for genuinely disconnected generators remains.',
       'executeDatalog "first rule head" includes ground FACTS (a fact is a bodyless rule): the target predicate\'s first RULE must be hoisted above all facts or the response is the first fact\'s relation with empty bindings. (Wire-protocol dialect rule, NOT a bug — the translator keeps the hoist.)',
     ],
-  };
+  });
 }
 
 export function writeReports(report: Report): { jsonPath: string; mdPath: string; metaPath: string; runId: string } {
   const jsonPath = path.join(PKG, 'conformance-report.json');
-  fs.writeFileSync(jsonPath, JSON.stringify(report, null, 2) + '\n');
+  fs.writeFileSync(jsonPath, assertNoAnchors(JSON.stringify(report, null, 2), jsonPath) + '\n');
 
   // Run identity lives in the sidecar so the report file itself is
   // byte-reproducible evidence (same seeds + same commit ⇒ same bytes).
@@ -189,7 +200,7 @@ export function writeReports(report: Report): { jsonPath: string; mdPath: string
   lines.push('');
   lines.push(`- seeds run: **${report.tier0.seeds}** (75% positive, 25% stratified negation with boot preloaded on the v0 side)`);
   lines.push(`- fact-set divergences: **${report.tier0.divergences.length}**`);
-  lines.push(`- why (positive) witness spot-checks: **${report.tier0.witnessChecks.passed} passed / ${report.tier0.witnessChecks.failed} failed** (existence + body ⊆ v0 fact set; deliberately NOT tree identity — v0 stores only the first witness per fact, store.ts:127, and witness choice is mode-dependent, LIMITS.md:48; tree-shape parity remains RED missing:whynot-shape)`);
+  lines.push(stripAnchors(`- why (positive) witness spot-checks: **${report.tier0.witnessChecks.passed} passed / ${report.tier0.witnessChecks.failed} failed** (existence + body ⊆ v0 fact set; deliberately NOT tree identity — v0 stores only the first witness per fact, store.ts:127 ⟦if (!this.witnesses.has(key)) this.witnesses.set(key, w);⟧, and witness choice is mode-dependent, LIMITS.md:48 ⟦and seminaive agree on results⟧; tree-shape parity remains RED missing:whynot-shape)`));
   lines.push(`- whynot (negative) gap spot-checks: **${report.tier0.whynotChecks.passed} passed / ${report.tier0.whynotChecks.failed} failed** (≤5 absent ground tuples per seed over rule-bearing rels: v0 whynot must NOT hold, RFDB explainDatalogGap witness must EXIST, satisfied premises ⊆ v0 fact set, failing predicate must be a program predicate; demo-tree parity stays RED missing:whynot-shape)`);
   lines.push('');
   if (report.tier0.divergences.length > 0) {
@@ -226,6 +237,6 @@ export function writeReports(report: Report): { jsonPath: string; mdPath: string
   lines.push('');
   lines.push('Tier-0 compares canonicalized USER-visible fact sets: perspective-stripped `rel(args)` lines, sorted; the v0 side is masked by the phase2.test.ts:56-61 domainFacts port (RESERVED + stratum + unstratified excluded) intersected with the generated program\'s relations (boot is preloaded on the v0 side of negation seeds and derives its own vocabulary the RFDB side can never contain). Witness comparison covers BOTH directions: positive (why — witness existence + body ⊆ v0 facts) and negative (whynot — gap-witness existence for absent tuples + satisfied premises ⊆ v0 facts + failing-predicate sanity), NOT tree identity. why/whynot TREE parity is out of tier-0 scope by design (missing:whynot-shape).');
   lines.push('');
-  fs.writeFileSync(mdPath, lines.join('\n'));
+  fs.writeFileSync(mdPath, assertNoAnchors(lines.join('\n'), mdPath));
   return { jsonPath, mdPath };
 }
