@@ -18,7 +18,7 @@ import { startServer, StaleBinaryError, DEFAULT_BINARY, type ServerHandle } from
 import { RfdbClient } from './rfdb-client.ts';
 import { runTier0, makeSeedContext, HarnessGap, type Tier0Summary, type StorePassContext } from './differential.ts';
 import { runOracleSelfCheck, runSubject, type ScenarioResult } from './suite-runner.ts';
-import { buildReport, writeReports } from './report.ts';
+import { buildReport, writeReports, storePassShortfall } from './report.ts';
 
 function argOf(flag: string): string | null {
   const i = process.argv.indexOf(flag);
@@ -119,6 +119,15 @@ async function main(): Promise<number> {
           console.log(`[run]   NOT REFLECTABLE seed ${u.seed}: ${u.unreflectable} — ${u.unreflectableDetail}`);
         }
         if (st.divergences.length > 0) exitCode = 1;
+        // The floor under the denominator. "N of N agree" is only a result while N is the
+        // whole seed set: seeds that refuse leave the ratio green while measuring less and
+        // less, down to a perfectly green 1/1. A shortfall fails the run here as well as
+        // reddening the verdict row, because the machine gate reads the exit code.
+        const shortfall = storePassShortfall(tier0);
+        if (shortfall !== null) {
+          console.error(`[run]   STORE DENOMINATOR SHORTFALL: ${shortfall} — the agreement ratio below is not about all ${SEEDS} seeds`);
+          exitCode = 1;
+        }
       }
     }
 

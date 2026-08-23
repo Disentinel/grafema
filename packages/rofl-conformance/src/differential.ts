@@ -264,7 +264,8 @@ export interface StoreSeedResult {
   unreflectableDetail: string | null;
   /** Facts written by reflection. The positive control: zero is a harness gap. */
   reflectedFacts: number;
-  /** The mode the SERVER read back off its engine after the switch. */
+  /** The mode read back out of the database through the READ-ONLY door
+   *  (`getRuleSource`), which never saw the switch request — see {@link switchRuleSource}. */
   modeConfirmed: 'text' | 'store' | null;
   /** Rows the same selectors returned against the store BEFORE reflection. Must be 0. */
   emptyStoreRows: number;
@@ -301,7 +302,7 @@ function oracleFor(prog: GeneratedProgram, ctx: SeedContext): OracleEngine {
  *  Without it, "0 programs were unreflectable" is unfalsifiable: a door that refused nothing
  *  at all would produce the same zero. The annotation is the same one the bundled
  *  `depends.dl` opens with, so it PARSES — what comes back is Projection T's own gate and
- *  not a syntax error wearing its clothes (`rfdb_server.rs:8817-8821` ⟦A well-formed `@materialize` program — it PARSES⟧). */
+ *  not a syntax error wearing its clothes (`rfdb_server.rs:8878-8882` ⟦A well-formed `@materialize` program — it PARSES⟧). */
 const UNREFLECTABLE_CONTROL = '@materialize(edge_type="DEPENDS_ON")\np(X, Y) :- edge(X, Y, "IMPORTS_FROM").';
 
 /** Prove the refusal path is live before counting how many programs it refused. */
@@ -324,10 +325,47 @@ export async function assertRefusalDetectorWorks(store: StorePassContext): Promi
     );
   } finally {
     // Closing the last connection to an ephemeral database IS the deletion
-    // (`rfdb_server.rs:2872-2879` ⟦Cleanup ephemeral database if no connections remain⟧) —
+    // (`rfdb_server.rs:2900-2907` ⟦Cleanup ephemeral database if no connections remain⟧) —
     // measured: a dropDatabase after this close answers "Database … not found".
     await store.client.closeDatabase();
   }
+}
+
+/** Switch the rule source and CONFIRM it through the read-only door, returning the mode the
+ *  database says it is in.
+ *
+ *  The confirmation deliberately does not use `setRuleSource`'s own reply. That reply is a
+ *  reply to the request: the server-side setter is total, so its read-back and a plain echo
+ *  of the argument are the same value on every input, and a harness leaning on it would be
+ *  confirming its own ask. `getRuleSource` is a separate READ that never saw the request, so
+ *  a server that ignored the switch — or one that acknowledged one mode while sitting in the
+ *  other — is caught here. Both answers are demanded to agree, which is the only place in
+ *  the pass where the two doors are held against each other.
+ *
+ *  Throws {@link HarnessGap}, never returns a wrong mode: every question asked after this
+ *  point would otherwise be answered by the wrong program, and the answer would look like an
+ *  ordinary result. */
+async function switchRuleSource(
+  client: RfdbClient,
+  want: 'text' | 'store',
+  seed: number,
+  when: string,
+): Promise<'text' | 'store'> {
+  const acked = await client.setRuleSource(want);
+  const observed = await client.getRuleSource();
+  if (observed !== want) {
+    throw new HarnessGap(
+      `seed ${seed}: asked for rule source '${want}' ${when}, but the database reads '${observed}' — ` +
+      'every question after this point would be answered by the other program',
+    );
+  }
+  if (acked !== observed) {
+    throw new HarnessGap(
+      `seed ${seed}: the switch acknowledged '${acked}' ${when} while the database reads '${observed}' — ` +
+      'the acknowledgement is not the state',
+    );
+  }
+  return observed;
 }
 
 /** Run one seed with the rules coming out of the store, and compare three ways:
@@ -376,27 +414,31 @@ export async function runSeedStorePass(
     }
 
     // ── the empty-store control ──
-    // Same selectors, same database, store mode, nothing reflected yet. Anything other
-    // than zero means the request text is still being executed and every "agreement"
-    // measured afterwards would be about the text, not the store.
-    const emptyMode = await store.client.setRuleSource('store');
-    if (emptyMode !== 'store') {
-      throw new HarnessGap(`seed ${prog.seed}: server read back rule source '${emptyMode}' when asked for 'store' before the empty-store control`);
-    }
+    // Same selectors, same database, store mode, nothing reflected yet. The selectors carry
+    // no rules and no facts of their own, so an EMPTY store must answer nothing at all;
+    // anything other than zero means the engine is not reading the store.
+    //
+    // What this control does NOT do, and the pass would be misdescribed if it claimed
+    // otherwise: it does not by itself tell the two modes apart, because on an empty
+    // database the text mode returns zero for these selectors too. Two other things do
+    // that, and they are what the pass actually rests on — (a) the same selectors turn
+    // NON-empty after reflection, which only the store can explain, and (b) the store
+    // selector `u_p(V0, V1)` names a predicate with no rule in the request at all, so the
+    // text mode has no program to run for it. This control's job is narrower and still
+    // necessary: it proves the database each seed measures in starts EMPTY, so the answer
+    // below cannot be the previous seed's.
+    await switchRuleSource(store.client, 'store', prog.seed, 'before the empty-store control');
     result.emptyStoreRows = (await adapter.domainFactSet()).length;
     if (result.emptyStoreRows !== 0) {
       throw new HarnessGap(
         `seed ${prog.seed}: the EMPTY store answered ${result.emptyStoreRows} facts. The selectors carry no ` +
-        'rules and no facts, so a non-empty answer means the engine is not reading the store — every ' +
-        `later agreement on this seed would be an agreement about the request text.\n${prog.text}`,
+        'rules and no facts, so a non-empty answer means this database was not fresh — every ' +
+        `later agreement on this seed could be the previous seed's.\n${prog.text}`,
       );
     }
 
     // ── reflect, then switch ──
-    const backToText = await store.client.setRuleSource('text');
-    if (backToText !== 'text') {
-      throw new HarnessGap(`seed ${prog.seed}: server read back rule source '${backToText}' when asked for 'text'`);
-    }
+    await switchRuleSource(store.client, 'text', prog.seed, 'to reflect');
     try {
       result.reflectedFacts = await adapter.reflectIntoStore();
     } catch (e) {
@@ -416,11 +458,9 @@ export async function runSeedStorePass(
         prog.text,
       );
     }
-    const mode = await store.client.setRuleSource('store');
-    result.modeConfirmed = mode;
-    if (mode !== 'store') {
-      throw new HarnessGap(`seed ${prog.seed}: server read back rule source '${mode}' when asked for 'store' — the questions below would have been answered from the request text`);
-    }
+    result.modeConfirmed = await switchRuleSource(
+      store.client, 'store', prog.seed, 'before the questions below',
+    );
 
     // ── ask ──
     result.storeSet = await adapter.domainFactSet();
@@ -448,7 +488,7 @@ export async function runSeedStorePass(
     return result;
   } finally {
     // The ephemeral database dies with its last connection
-    // (`rfdb_server.rs:2872-2879` ⟦Cleanup ephemeral database if no connections remain⟧);
+    // (`rfdb_server.rs:2900-2907` ⟦Cleanup ephemeral database if no connections remain⟧);
     // {@link runTier0} proves at the end of the pass that none of them survived.
     await store.client.closeDatabase();
   }
@@ -470,8 +510,9 @@ export interface Tier0StoreSummary {
    *  from a silence, so the count is reported beside the agreement numbers rather than
    *  left implicit in "the run did not abort". */
   emptyStoreControlsPassed: number;
-  /** Seeds where the server read the rule source back as 'store' before being asked
-   *  anything — a request the server ignored would otherwise be answered from the text. */
+  /** Seeds where the database itself, asked through the read-only `getRuleSource` door,
+   *  said 'store' before being asked anything — a switch the server ignored would otherwise
+   *  leave the questions answered from the request text. */
   storeModeConfirmed: number;
   witnessChecked: number;
   witnessFailed: number;

@@ -1527,14 +1527,28 @@ impl GraphEngineV2 {
     /// every subsequent derive call executes, so it has to survive a restart or a reopened
     /// database would silently run the other program. An ephemeral engine has no config
     /// file — the flag is then in-memory only, which is exactly its lifetime.
+    ///
+    /// ALL-OR-NOTHING against the file: a disk-backed engine whose `db_config.json` write
+    /// fails keeps the OLD mode in memory. The earlier order — assign, then persist —
+    /// produced exactly the split this flag exists to prevent: memory saying `store` while
+    /// the file still said `text`, so the database answered store-mode queries until the
+    /// next restart and then silently reverted. Worse, the split laundered itself, because
+    /// [`Self::persist_durable_flags`] writes EVERY cached flag: one later successful write
+    /// of any other flag would have committed the mode that had already failed to persist.
+    /// Pinned by `a_failed_durable_write_leaves_the_rule_source_as_it_was`.
     pub fn set_rule_source(&mut self, mode: crate::derive::RuleSource) -> Result<()> {
+        let previous = self.rule_source;
         self.rule_source = mode;
-        // Changing the rule source changes the PROGRAM, so every cached derived result and
-        // durable pin keyed to the old program is stale by construction.
-        self.reset_derive_caches();
         if let Some(path) = self.path.clone() {
-            self.persist_durable_flags(&path)?;
+            if let Err(e) = self.persist_durable_flags(&path) {
+                self.rule_source = previous;
+                return Err(e);
+            }
         }
+        // Changing the rule source changes the PROGRAM, so every cached derived result and
+        // durable pin keyed to the old program is stale by construction. After the write,
+        // not before: a rolled-back switch changed no program and must invalidate nothing.
+        self.reset_derive_caches();
         Ok(())
     }
 
@@ -1558,10 +1572,20 @@ impl GraphEngineV2 {
     /// Idempotent: marking an already-ROFL database rewrites the same content. An ephemeral
     /// engine has no config file, so the marker is in-memory only — exactly that engine's
     /// lifetime.
+    ///
+    /// ALL-OR-NOTHING against the file, for the same reason as
+    /// [`Self::set_rule_source`]: a marker that lives only in memory is not a marker, and
+    /// because [`Self::persist_durable_flags`] writes every cached flag at once, an
+    /// in-memory-only `true` here would be committed by the next successful write of the
+    /// rule source. Pinned by `a_failed_durable_write_leaves_the_rule_source_as_it_was`.
     pub fn enable_rofl_mode(&mut self) -> Result<()> {
+        let previous = self.rofl_mode;
         self.rofl_mode = true;
         if let Some(path) = self.path.clone() {
-            self.persist_durable_flags(&path)?;
+            if let Err(e) = self.persist_durable_flags(&path) {
+                self.rofl_mode = previous;
+                return Err(e);
+            }
         }
         Ok(())
     }
@@ -6685,15 +6709,20 @@ mod tests {
         engine
     }
 
-    /// The rule source is a DURABLE property of the database: it survives a reopen, and it
-    /// survives `clear_durable` — which recreates `db_config.json` through
-    /// `MultiShardStore::create` and would otherwise silently demote a reflexive database
-    /// to text mode (clearing the DATA must not change the PROGRAM).
+    /// The rule source is a DURABLE property of the database: it survives a reopen, a
+    /// COMPACTION, and `clear_durable` — the last of which recreates `db_config.json`
+    /// through `MultiShardStore::create` and would otherwise silently demote a reflexive
+    /// database to text mode (clearing the DATA must not change the PROGRAM).
+    ///
+    /// Compaction is in here because the design's exit condition for this stage names it
+    /// beside restart and clear (`_ai/research/rofl-rules-as-data-design.md` ⟦перезапуск,
+    /// сброс, уплотнение и `clear`⟧), and it is the one of the four that rewrites segment
+    /// files and the manifest — the neighbourhood `db_config.json` lives in.
     #[test]
     fn the_rule_source_is_a_durable_database_property() {
         let dir = tempfile::tempdir().unwrap();
         {
-            let mut engine = GraphEngineV2::create(dir.path()).expect("create");
+            let mut engine = reflexive_fixture(dir.path());
             assert_eq!(
                 engine.rule_source(),
                 crate::derive::RuleSource::Text,
@@ -6710,6 +6739,25 @@ mod tests {
                 crate::derive::RuleSource::Store,
                 "the flag must survive a reopen"
             );
+
+            // Compaction: rewrites the segments and the manifest under the very same
+            // directory, in memory AND on disk.
+            engine.compact_with_stats().expect("compact");
+            assert_eq!(
+                engine.rule_source(),
+                crate::derive::RuleSource::Store,
+                "compaction must not change the program"
+            );
+            let after_compact =
+                crate::storage_v2::multi_shard::DatabaseConfig::read_from(dir.path())
+                    .expect("read config")
+                    .expect("config present");
+            assert_eq!(
+                after_compact.rule_source,
+                crate::derive::RuleSource::Store,
+                "db_config.json lost the rule source during compaction"
+            );
+
             engine.clear_durable().expect("clear");
             assert_eq!(
                 engine.rule_source(),
@@ -6778,6 +6826,78 @@ mod tests {
         assert!(
             engine.rofl_mode(),
             "…and the cleared database must still reopen as a ROFL database"
+        );
+    }
+
+    /// A durable flag whose write FAILED must not be live in memory.
+    ///
+    /// The failure this pins is the one the whole rules-as-data door is built against: a
+    /// silence. With the mode set in memory and the file left behind, the database answers
+    /// store-mode queries for the rest of the process and reverts on the next open — no
+    /// error anywhere, two different answers from one database. The caller does get an
+    /// `Err`, but an `Err` says "it did not happen", so it MUST not have happened.
+    ///
+    /// The two flags are pinned together on purpose: they share
+    /// [`GraphEngineV2::persist_durable_flags`], which writes every cached flag at once, so
+    /// an in-memory-only value of either one is committed by the next successful write of
+    /// the other — the third assertion below.
+    ///
+    /// Verified to fail before the fix: with `self.rule_source = mode;` left in front of the
+    /// persist, this test panics at
+    /// `a failed durable write must leave the rule source alone, got Store`.
+    #[test]
+    fn a_failed_durable_write_leaves_the_rule_source_as_it_was() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = GraphEngineV2::create(dir.path()).expect("create");
+
+        // Remove the file the flags are persisted into — `persist_durable_flags` reads it
+        // before writing, so this is a write that cannot succeed.
+        let config_path = dir.path().join("db_config.json");
+        assert!(config_path.exists(), "the fixture must start with a config file");
+        std::fs::remove_file(&config_path).expect("remove config");
+
+        let err = engine
+            .set_rule_source(crate::derive::RuleSource::Store)
+            .expect_err("a durable write that cannot happen must be reported");
+        assert!(
+            format!("{err}").contains("db_config.json"),
+            "the error must name what could not be written: {err}"
+        );
+        assert_eq!(
+            engine.rule_source(),
+            crate::derive::RuleSource::Text,
+            "a failed durable write must leave the rule source alone, got {:?}",
+            engine.rule_source()
+        );
+
+        let err = engine
+            .enable_rofl_mode()
+            .expect_err("the ROFL marker is durable on the same terms");
+        assert!(
+            !engine.rofl_mode(),
+            "a failed durable write must leave the ROFL marker alone: {err}"
+        );
+
+        // And nothing was left behind to be laundered later: restore the file, make ONE
+        // successful write, and the flag that failed must still be off on disk.
+        crate::storage_v2::multi_shard::DatabaseConfig {
+            shard_count: 4,
+            rule_source: crate::derive::RuleSource::Text,
+            rofl_mode: false,
+        }
+        .write_to(dir.path())
+        .expect("restore config");
+        engine
+            .set_rule_source(crate::derive::RuleSource::Store)
+            .expect("the write succeeds once the file is back");
+        let on_disk = crate::storage_v2::multi_shard::DatabaseConfig::read_from(dir.path())
+            .expect("read config")
+            .expect("config present");
+        assert_eq!(on_disk.rule_source, crate::derive::RuleSource::Store);
+        assert!(
+            !on_disk.rofl_mode,
+            "the ROFL marker never persisted, so a later write of another flag must not \
+             commit it"
         );
     }
 

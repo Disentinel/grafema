@@ -114,10 +114,10 @@ export class RfdbClient {
   }
 
   /** Execute a derive program; returns rows of variable bindings for the FIRST
-   *  rule head's predicate (rfdb_server.rs:3034-3037 ⟦Some(program.rules()[0].head().clone())⟧ — callers hoist the wanted
+   *  rule head's predicate (rfdb_server.rs:3062-3065 ⟦Some(program.rules()[0].head().clone())⟧ — callers hoist the wanted
    *  predicate's first rule to the top). explain is ALWAYS false: explain=true
    *  silently reroutes to the legacy v1 query engine
-   *  (rfdb_server.rs:3033 ⟦if derive_engine_enabled() && !explain⟧). */
+   *  (rfdb_server.rs:3061 ⟦if derive_engine_enabled() && !explain⟧). */
   async executeDatalog(source: string): Promise<Record<string, string>[]> {
     const r = (await this.call({ cmd: 'executeDatalog', source, explain: false })) as { [k: string]: MpValue };
     if (typeof r['error'] === 'string') throw new RfdbError(r['error']);
@@ -164,14 +164,34 @@ export class RfdbClient {
    *  each query — the historical default) or 'store' (the facts reflectProgram wrote). A
    *  durable property of the DATABASE, persisted server-side, reversible in both directions.
    *
-   *  Returns the mode the SERVER read back off its engine, not an echo of the argument, so a
-   *  caller can state which mode it actually measured in instead of assuming the request took
-   *  effect. Note that while the source is 'store' every @materialize write-back refuses with
+   *  The reply is the mode the server read off its engine after the switch — but read it for
+   *  what it is: the setter is TOTAL, so on today's engine that value and an echo of the
+   *  argument coincide on every input, and no measurement can tell them apart. A caller that
+   *  needs to CONFIRM the mode asks {@link getRuleSource}, which never saw the request. Note
+   *  that while the source is 'store' every @materialize write-back refuses with
    *  E-REFLECT-003 by design: Projection T carries no annotations. */
   async setRuleSource(mode: 'text' | 'store'): Promise<'text' | 'store'> {
     const r = (await this.call({ cmd: 'setRuleSource', mode })) as { [k: string]: MpValue };
     if (typeof r['error'] === 'string') throw new RfdbError(r['error']);
     if (!('ruleSource' in r)) throw new Error(`unexpected setRuleSource response: ${JSON.stringify(r)}`);
+    return r['ruleSource'] as 'text' | 'store';
+  }
+
+  /** Where the open database's rules come from — an OBSERVATION, changing nothing.
+   *
+   *  This is the door a confirmation has to go through: `setRuleSource`'s reply is a reply
+   *  to the request, this one is an answer about the database asked separately, and a server
+   *  that ignored the switch is caught here and nowhere else.
+   *
+   *  It is also what any ordinary client (orchestrator, MCP, CLI) needs in order to tell
+   *  "this database derives nothing" apart from "this database is in store mode, so my
+   *  program text is not its program" — the two look identical, both are zero rows with no
+   *  error. Until this command existed the only way to find out was to SET the mode, i.e. to
+   *  change the thing being measured. */
+  async getRuleSource(): Promise<'text' | 'store'> {
+    const r = (await this.call({ cmd: 'getRuleSource' })) as { [k: string]: MpValue };
+    if (typeof r['error'] === 'string') throw new RfdbError(r['error']);
+    if (!('ruleSource' in r)) throw new Error(`unexpected getRuleSource response: ${JSON.stringify(r)}`);
     return r['ruleSource'] as 'text' | 'store';
   }
 
@@ -201,7 +221,7 @@ export class RfdbClient {
   /** Names of the databases the server currently holds.
    *
    *  Closing the last connection to an EPHEMERAL database removes it
-   *  (`rfdb_server.rs:2872-2879` ⟦Cleanup ephemeral database if no connections remain⟧), so this is
+   *  (`rfdb_server.rs:2900-2907` ⟦Cleanup ephemeral database if no connections remain⟧), so this is
    *  how a caller proves its per-seed databases went away instead of piling up behind it. */
   async listDatabases(): Promise<string[]> {
     const r = (await this.call({ cmd: 'listDatabases' })) as { [k: string]: MpValue };

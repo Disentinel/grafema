@@ -340,6 +340,23 @@ pub enum Request {
         mode: rfdb::derive::RuleSource,
     },
 
+    /// Read where THIS database's rules come from, WITHOUT changing anything. READ path,
+    /// derive-engine-ONLY, same reply shape as `SetRuleSource`.
+    ///
+    /// Exists because the mode is a durable property of the DATABASE and, until this door,
+    /// the only way to find out what it was was to SET it — which is not an observation.
+    /// The consequence was a real trap for every client that is not the conformance
+    /// harness: a database left in `store` mode answers every ordinary `executeDatalog`
+    /// with zero rows (the request text is not the program any more), no error, nothing
+    /// different in the Hello handshake — a silence indistinguishable from an honest zero,
+    /// which is the exact failure this whole surface was built to make impossible. A client
+    /// that gets an unexpected empty answer can now ASK, and get a coded one-word answer.
+    ///
+    /// Deliberately NOT in the Hello capabilities and NOT in `OpenDatabase`: Hello is
+    /// per-CONNECTION and happens before any database is open, while this is a property of
+    /// one database, so answering it in the handshake would be answering about nothing.
+    GetRuleSource,
+
     // Cypher queries
     CypherQuery {
         query: String,
@@ -1298,6 +1315,7 @@ fn get_operation_name(request: &Request) -> String {
         Request::ExplainDatalogGap { .. } => "ExplainDatalogGap".to_string(),
         Request::ReflectProgram { .. } => "ReflectProgram".to_string(),
         Request::SetRuleSource { .. } => "SetRuleSource".to_string(),
+        Request::GetRuleSource => "GetRuleSource".to_string(),
         Request::IsEndpoint { .. } => "IsEndpoint".to_string(),
         Request::GetNodeIdentifier { .. } => "GetNodeIdentifier".to_string(),
         Request::UpdateNodeVersion { .. } => "UpdateNodeVersion".to_string(),
@@ -1350,7 +1368,8 @@ fn handle_request_with_cancel(
                 features.push("datalogDerive".to_string());
                 // Projection T (rules-as-data): `reflectProgram` writes a program's rules into
                 // the database as facts, `setRuleSource` makes the engine execute THOSE rules
-                // instead of the request's text. Advertised under the SAME kill switch because
+                // instead of the request's text, `getRuleSource` reads which of the two is in
+                // force without changing it. Advertised under the SAME kill switch because
                 // both dispatchers are derive-engine paths and refuse when it is off — a
                 // client that needs store-mode rules can then refuse UP FRONT instead of
                 // discovering it as empty answers, which are indistinguishable from an honest
@@ -1888,6 +1907,15 @@ fn handle_request_with_cancel(
                     Ok(effective) => Response::RuleSourceMode { rule_source: effective },
                     Err(e) => Response::Error { error: e },
                 }
+            })
+        }
+
+        Request::GetRuleSource => {
+            // READ path — it takes the read lock and changes nothing, which is the whole
+            // point: asking must not be a way of setting.
+            with_engine_read(session, |engine| match dispatch_get_rule_source(engine) {
+                Ok(mode) => Response::RuleSourceMode { rule_source: mode },
+                Err(e) => Response::Error { error: e },
             })
         }
 
@@ -3330,10 +3358,18 @@ fn dispatch_reflect_program(
 /// the STORE via [`GraphEngineV2::set_rule_source`], and return the mode read BACK off the
 /// engine. derive-engine-ONLY and kill-switch-gated, like every other Projection T door.
 ///
-/// The return value is deliberately re-READ through [`GraphEngineV2::rule_source`] instead of
-/// echoing the argument. An echo would confirm the request, not the state, and the state is
-/// what the next query is answered from — a client checking an echo would be assuming exactly
-/// the thing it meant to verify.
+/// The return value is re-READ through [`GraphEngineV2::rule_source`] rather than echoed
+/// from the argument. Read this for exactly what it is: today the setter is TOTAL — every
+/// mode it accepts, it reaches — so the read-back and the echo are the same value on every
+/// input, and no test can tell them apart. It is written this way so that the day a mode
+/// becomes refusable the reply keeps meaning "the state", not because the difference is
+/// observable now.
+///
+/// A client that needs to CONFIRM the mode must therefore not lean on this reply. It must
+/// ask [`Request::GetRuleSource`], which never saw the request — that is the door the
+/// conformance harness confirms through
+/// (`rofl-conformance/src/differential.ts` ⟦switchRuleSource⟧), and mutating THAT to a
+/// constant is caught (`wire_get_rule_source_reads_the_state_and_changes_nothing`).
 fn dispatch_set_rule_source(
     engine: &mut dyn GraphStore,
     mode: rfdb::derive::RuleSource,
@@ -3352,6 +3388,31 @@ fn dispatch_set_rule_source(
 
     v2.set_rule_source(mode)
         .map_err(|e| format!("derive engine set_rule_source error: {e}"))?;
+    Ok(v2.rule_source())
+}
+
+/// `GetRuleSource` dispatch (READ path): where this database's rules come from, observed
+/// and not altered. derive-engine-ONLY and kill-switch-gated like its two siblings — with
+/// the switch off no derive call consults the mode, so there is nothing here to report.
+///
+/// Takes `&dyn GraphStore`, not `&mut`, and that is the contract rather than an
+/// optimisation: the reason this door exists is that SETTING was the only way to find out,
+/// and a probe that writes is not a probe.
+fn dispatch_get_rule_source(
+    engine: &dyn GraphStore,
+) -> std::result::Result<rfdb::derive::RuleSource, String> {
+    if !derive_engine_enabled() {
+        return Err("RFDB_DERIVE_ENGINE: getRuleSource is a derive-engine-only path; with the kill \
+                    switch off nothing reads the rule source"
+            .to_string());
+    }
+    let v2 = engine
+        .as_any()
+        .downcast_ref::<GraphEngineV2>()
+        .ok_or_else(|| {
+            "RFDB_DERIVE_ENGINE: getRuleSource requires a storage_v2 GraphEngineV2 backend"
+                .to_string()
+        })?;
     Ok(v2.rule_source())
 }
 
@@ -8849,9 +8910,110 @@ p(X, Y) :- edge(X, Y, "IMPORTS_FROM")."#;
         }
     }
 
-    /// Both Projection T doors are derive-engine paths, so both are kill-switch-gated (I5):
-    /// with `RFDB_DERIVE_ENGINE=off` they refuse EXPLICITLY instead of writing nothing and
-    /// reporting success. Advertised to the client as the `rulesAsData` Hello capability,
+    /// The READ-ONLY door: `getRuleSource` reports the state and leaves it exactly as it
+    /// found it.
+    ///
+    /// Two properties, and the second is why the door exists at all.
+    ///
+    /// (1) It reads the STATE, not a constant and not the last request: the same request is
+    /// sent three times — before any switch, after `store`, after `text` — and answers
+    /// differently each time it should. A door hard-wired to either mode fails one of the
+    /// three; a door that echoed the previous `SetRuleSource` argument would still pass, so
+    /// the FIRST reading (before any switch was ever sent on this session) is the one that
+    /// rules that out.
+    ///
+    /// (2) Asking is not setting. Between the readings the mode is left alone and a real
+    /// derive query is run: the row count must follow the mode that was set, never the
+    /// reading in between. Before this door, the only way to learn the mode was to SET it —
+    /// which is how a client "checking" would have flipped a production database into
+    /// answering every `executeDatalog` with a silent zero.
+    #[test]
+    fn wire_get_rule_source_reads_the_state_and_changes_nothing() {
+        let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+        let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
+        std::env::set_var("RFDB_DERIVE_ENGINE", "on");
+
+        const PROGRAM: &str = r#"p(X) :- node(X, "FUNCTION")."#;
+
+        let (_dir, manager) = setup_test_manager();
+        let mut session = rules_as_data_session(&manager);
+
+        let read_mode = |manager: &DatabaseManager, session: &mut ClientSession| {
+            match handle_request(manager, session, Request::GetRuleSource, &None) {
+                Response::RuleSourceMode { rule_source } => rule_source,
+                other => panic!("expected RuleSourceMode from getRuleSource, got {other:?}"),
+            }
+        };
+
+        // (1a) A database nobody has switched reads `text` — and nothing has been sent for
+        // an echo to copy.
+        assert_eq!(
+            read_mode(&manager, &mut session),
+            rfdb::derive::RuleSource::Text,
+            "an untouched database must read back as text"
+        );
+        // The positive control for the row counts below: in text mode the request text IS
+        // the program, so it derives the two FUNCTIONs.
+        assert_eq!(wire_datalog_rows(&manager, &mut session, PROGRAM), 2);
+
+        match handle_request(
+            &manager,
+            &mut session,
+            Request::SetRuleSource { mode: rfdb::derive::RuleSource::Store },
+            &None,
+        ) {
+            Response::RuleSourceMode { .. } => {}
+            other => panic!("expected RuleSourceMode, got {other:?}"),
+        }
+
+        // (1b) …and now it reads `store`.
+        assert_eq!(
+            read_mode(&manager, &mut session),
+            rfdb::derive::RuleSource::Store,
+            "after the switch the door must report store"
+        );
+        // (2) Reading twice more must not have set anything: the store is empty, so store
+        // mode answers zero to the SAME text that answered 2 above. Were the read a
+        // disguised write of `text`, this would be 2.
+        assert_eq!(read_mode(&manager, &mut session), rfdb::derive::RuleSource::Store);
+        assert_eq!(
+            wire_datalog_rows(&manager, &mut session, PROGRAM),
+            0,
+            "reading the mode must not have moved the database back to text"
+        );
+
+        match handle_request(
+            &manager,
+            &mut session,
+            Request::SetRuleSource { mode: rfdb::derive::RuleSource::Text },
+            &None,
+        ) {
+            Response::RuleSourceMode { .. } => {}
+            other => panic!("expected RuleSourceMode, got {other:?}"),
+        }
+        // (1c) Back to text — three different readings from one door rule out a constant.
+        assert_eq!(
+            read_mode(&manager, &mut session),
+            rfdb::derive::RuleSource::Text,
+            "the door must follow the state back"
+        );
+        assert_eq!(
+            wire_datalog_rows(&manager, &mut session, PROGRAM),
+            2,
+            "…and the database itself is back in text mode, so the 0 above was store mode \
+             and not a broken graph"
+        );
+
+        match prev {
+            Some(v) => std::env::set_var("RFDB_DERIVE_ENGINE", v),
+            None => std::env::remove_var("RFDB_DERIVE_ENGINE"),
+        }
+    }
+
+    /// All THREE Projection T doors are derive-engine paths, so all three are
+    /// kill-switch-gated (I5): with `RFDB_DERIVE_ENGINE=off` they refuse EXPLICITLY instead
+    /// of writing nothing and reporting success. Advertised to the client as the
+    /// `rulesAsData` Hello capability,
     /// which appears by default and disappears under the same switch — so a client that needs
     /// store-mode rules refuses UP FRONT rather than reading empty answers as zeros.
     #[test]
@@ -8876,7 +9038,8 @@ p(X, Y) :- edge(X, Y, "IMPORTS_FROM")."#;
         std::env::remove_var("RFDB_DERIVE_ENGINE");
         assert!(
             hello(&manager).contains(&"rulesAsData".to_string()),
-            "default Hello must advertise rulesAsData (reflectProgram + setRuleSource are live)"
+            "default Hello must advertise rulesAsData (reflectProgram + setRuleSource + \
+             getRuleSource are live)"
         );
 
         std::env::set_var("RFDB_DERIVE_ENGINE", "off");
@@ -8897,6 +9060,7 @@ p(X, Y) :- edge(X, Y, "IMPORTS_FROM")."#;
         for (what, request) in [
             ("reflectProgram", Request::ReflectProgram { source: "p(X) :- node(X, \"FUNCTION\").".to_string() }),
             ("setRuleSource", Request::SetRuleSource { mode: rfdb::derive::RuleSource::Store }),
+            ("getRuleSource", Request::GetRuleSource),
         ] {
             match handle_request(&manager, &mut session, request, &None) {
                 Response::Error { error } => assert!(

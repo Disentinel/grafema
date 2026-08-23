@@ -33,6 +33,41 @@ export interface ExpectedVsFound {
   note: string;
 }
 
+/** Seeds the store pass actually MEASURED: the denominator under every agreement count. */
+export function storePassMeasured(st: NonNullable<Tier0Summary['store']>): number {
+  return st.seedsRun - st.unreflectable.length;
+}
+
+/** Why the store pass's denominator is not the full seed count — or `null` when it is.
+ *
+ *  THE FLOOR UNDER THE NUMBER, and the reason it exists: every count this pass publishes is
+ *  "N of M", and M is computed, not fixed. Let the seeds refuse (a `#requires` the generator
+ *  starts emitting, a Projection T that narrows) and M collapses with them — 119 refusals
+ *  leave "1/1 agree", which is literally true, reads like a pass, and is a measurement of
+ *  almost nothing. Measured on the code as it stood: with 7 of 8 seeds refused the verdict
+ *  row came back `green` and the run exited 0.
+ *
+ *  So a shortfall is a RED verdict and a non-zero exit, not a footnote beside a green one.
+ *  Both halves are checked, because the denominator can shrink from either end: seeds that
+ *  refused ON THE MERITS (they never reached the store), and seeds the pass never ran at all
+ *  (fewer store-pass seeds than text-pass seeds). Refusals stay their own category in the
+ *  report — this does not recode them as divergences, it stops them being invisible.
+ *
+ *  Pinned by `the store pass verdict goes RED when its denominator collapses` in
+ *  test/store-pass.test.ts. */
+export function storePassShortfall(tier0: Tier0Summary): string | null {
+  const st = tier0.store;
+  if (!st) return null;
+  if (st.seedsRun !== tier0.seedsRun) {
+    return `the store pass ran ${st.seedsRun} of the ${tier0.seedsRun} seeds the text pass ran`;
+  }
+  const measured = storePassMeasured(st);
+  if (measured !== st.seedsRun) {
+    return `only ${measured} of ${st.seedsRun} seeds were measured (${st.unreflectable.length} refused on the merits)`;
+  }
+  return null;
+}
+
 export interface Report {
   engines: {
     v0: { rev: string };
@@ -163,12 +198,18 @@ export function joinExpectations(tier1: ScenarioResult[], tier0: Tier0Summary): 
   // nobody asked, whereas a row reading "0/0 agree" would look like a measurement.
   if (tier0.store) {
     const st = tier0.store;
-    const measured = st.seedsRun - st.unreflectable.length;
-    const clean = st.agreeWithText === measured && st.agreeWithOracle === measured && st.divergences.length === 0;
+    const measured = storePassMeasured(st);
+    const shortfall = storePassShortfall(tier0);
+    const clean = shortfall === null
+      && st.agreeWithText === measured && st.agreeWithOracle === measured && st.divergences.length === 0;
     out.push({
       claim: 'exp_rules_from_store_agrees',
       expected: 'green',
-      found: clean ? 'green' : `agreeText:${st.agreeWithText}/${measured},agreeOracle:${st.agreeWithOracle}/${measured},divergences:${st.divergences.length}`,
+      found: clean
+        ? 'green'
+        : shortfall !== null
+          ? `denominator:${shortfall}`
+          : `agreeText:${st.agreeWithText}/${measured},agreeOracle:${st.agreeWithOracle}/${measured},divergences:${st.divergences.length}`,
       match: clean,
       note: `${measured} of ${st.seedsRun} seeds carried whole by Projection T (${st.unreflectable.length} refused on the merits, refusal control ${st.refusalControlCode}); ${st.reflectedFactsTotal} rule-facts written; each seed's answer taken from a fresh database whose SAME selectors returned 0 rows before reflection`,
     });
@@ -280,6 +321,9 @@ export function writeReports(report: Report): { jsonPath: string; mdPath: string
     lines.push('## Tier-0 rules-from-store — the same seeds answered with the rules read out of the database');
     lines.push('');
     lines.push(`- seeds run: **${st.seeds}**; carried whole by Projection T: **${st.seedsMeasured}**; refused on the merits (not reflectable, NOT a divergence): **${st.seeds - st.seedsMeasured}** — the refusal path is live, a deliberately unreflectable control program came back \`${st.refusalControlCode}\``);
+    if (st.seedsMeasured !== st.seeds || st.seeds !== report.tier0.seeds) {
+      lines.push(`- ⚠ **DENOMINATOR SHORTFALL** — the ratios below are over ${st.seedsMeasured} seeds, not the ${report.tier0.seeds} the text pass ran. The verdict \`exp_rules_from_store_agrees\` is RED for this reason alone: a shrinking denominator keeps a ratio green while it measures less and less.`);
+    }
     lines.push(`- **same answer with rules from the store as with rules from the text: ${st.agreeWithText} / ${st.seedsMeasured}**`);
     lines.push(`- same answer as the ROFL v0 oracle: **${st.agreeWithOracle} / ${st.seedsMeasured}**`);
     lines.push(`- rule-facts written by reflection: **${st.reflectedFactsTotal}**`);
