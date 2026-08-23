@@ -1908,6 +1908,29 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         // scans, ~10.8 s per pack, for a join the (F)-keyed build-once index serves in
         // milliseconds.)
         let atom_args = atom.args();
+
+        // A VARIABLE-FREE positive leg (`k(_, _)`, `p("c1", _)`, `p1("c1","c2")`) is a
+        // NONEMPTINESS FILTER, not a generator: it captures nothing, so every fact it
+        // unifies with hands back the SAME row. Extending once per matching fact
+        // multiplied the intermediate by |matches| for an answer set that is unchanged
+        // (a `BindRow` carries no tag, and the head projection is set semantics over an
+        // idempotent tag), which is how a leading `edge(_, _)` turned a 50-row answer
+        // into 2500 materialized rows. Its truth is also ROW-INDEPENDENT — one scan
+        // decides it for the whole batch.
+        //
+        // This is the executor half of the planner's F3 exemption: `shares_no_binding`
+        // waves a leg through while the bound set is still EMPTY, on the premise that
+        // every leg placed so far multiplies the output by at most 1. A leg placed under
+        // an empty bound set can have no variable arguments (a free variable would BIND,
+        // making the set non-empty), so this branch is exactly what makes that premise
+        // true rather than merely asserted.
+        if atom_args.iter().all(|t| !matches!(t, Term::Var(_))) {
+            let matched = source
+                .values()
+                .any(|f| unify_atom(atom, &f.key, &BindRow::new()).is_some());
+            return if matched { rows } else { Vec::new() };
+        }
+
         let bound_positions: Vec<usize> = leg
             .pattern
             .iter()
@@ -2023,6 +2046,35 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             );
             return if negated { rows } else { Vec::new() };
         };
+
+        // ── Variable-free positive leg = ROW-INDEPENDENT nonemptiness filter ──
+        //
+        // Same invariant as [`Self::join_derived`]'s variable-free branch, for base
+        // relations and builtins: `edge(_, _, "CALLS")` / `node("id", "T")` capture
+        // nothing, so every tuple they produce yields the SAME row back. Their truth
+        // does not depend on the row at all, so ONE eval decides the whole batch —
+        // instead of |rows| evals each fanning out to |matches| duplicate rows (a
+        // leading `edge(_, _)` over a 50-edge store produced 50 rows where 1 is
+        // answer-equivalent, and the next generator then cross-extended that 50×).
+        // This is what makes the planner's F3 empty-bound-set exemption sound: a leg
+        // placed while nothing is bound yet cannot have a variable argument.
+        //
+        // MUST precede the POSITIVE fast paths below (the built-once attr generator
+        // and the cached generators): each of those admits a `Term::Wildcard`
+        // argument and re-introduces the per-row fan-out this branch collapses.
+        // (The set-at-once anti-join below is `negated`-gated and this branch is
+        // `!negated`-gated, so those two can never contend.) Pinned by
+        // `tests::variable_free_leg_does_not_multiply_the_intermediate`: moving this
+        // block below the cached generators reds it on the intermediate cap.
+        if !negated && atom.args().iter().all(|t| !matches!(t, Term::Var(_))) {
+            let (spec, _slot_vars) = resolve_arg_spec(atom, &BindRow::new());
+            let mut batch = Batch::new();
+            // An eval Err is a planning fault the planner already excluded; the safe
+            // reading is "no tuple", i.e. the filter rejects (never a crash).
+            let eval = def.eval;
+            let nonempty = eval(self.view, &mut batch, &spec).is_ok() && !batch.rows.is_empty();
+            return if nonempty { rows } else { Vec::new() };
+        }
 
         // ── Set-at-once anti-join (the function-has-contains shape) ──
         //
@@ -4049,6 +4101,145 @@ mod tests {
             names("qf"),
             all,
             "\\+ p4(_): p4 has no facts and no rules (empty relation), the negation is vacuous"
+        );
+    }
+
+    /// F3 SAFETY BACKSTOP — a VARIABLE-FREE positive leg must be a row-independent
+    /// nonemptiness FILTER (fan-out ≤ 1), never a generator.
+    ///
+    /// This is the invariant the planner's empty-bound-set exemption rests on.
+    /// `shares_no_binding` waves a leg through while nothing is bound yet, on the
+    /// premise that everything placed before it multiplied the output by at most 1.
+    /// Only a variable-free leg can be placed under an empty bound set — but
+    /// evaluated as a CROSS-EXTEND such a leg emits one identical row per matching
+    /// fact, so the premise is false and the exemption admits a genuine Cartesian
+    /// product (a leading `edge(_, _)` over a 50-edge store gave 50 rows, and the
+    /// next generator cross-extended them to 2500 for a 50-row answer).
+    ///
+    /// `max_intermediate_results` counts exactly these per-clause rows
+    /// (`eval_clause` projects ONE tuple per surviving `BindRow`, before any dedup),
+    /// so a ceiling strictly between the answer size and the product observes the
+    /// fan-out directly — in EITHER leg order, since the product is symmetric.
+    #[test]
+    fn variable_free_leg_does_not_multiply_the_intermediate() {
+        const N: usize = 20;
+        let mut v = FixtureStorageView::new(1);
+        for i in 0..N {
+            node(&mut v, &format!("n{}", i), "CALL");
+            edge(&mut v, &format!("n{}", i), "n0", "CALLS");
+        }
+        let mut src = String::new();
+        for i in 0..N {
+            src.push_str(&format!("k(\"a\", \"x{}\").\n", i));
+        }
+        src.push_str(
+            r#"
+            nm(N) :- node(C, "CALL"), attr(C, "name", N).
+            qd(N) :- nm(N), k(_, _).
+            qb(N) :- nm(N), edge(_, _, "CALLS").
+        "#,
+        );
+        let prog = parse_ext_program(&src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let plans = plan_program(&rules, &strat, &Stats::default()).expect("plan");
+
+        // N answers per rule; the un-capped cross-extend materializes N × N = 400.
+        let mut limits = EvalLimits::none();
+        limits.max_intermediate_results = 100;
+        let exec = Executor::<BoolTag>::with_limits(&v, limits, DEFAULT_ITERATION_CAP);
+        let eval = exec
+            .evaluate(&plans, &rules, &strat)
+            .expect("a variable-free leg must not multiply the intermediate");
+
+        // …and the answer is unchanged by the fan-out cap.
+        let names = |pred: &str| -> std::collections::BTreeSet<String> {
+            eval.facts(pred)
+                .into_iter()
+                .map(|r| r[0].as_str())
+                .collect()
+        };
+        let expected: std::collections::BTreeSet<String> =
+            (0..N).map(|i| format!("n{}", i)).collect();
+        assert_eq!(
+            names("qd"),
+            expected,
+            "derived variable-free leg: answer intact"
+        );
+        assert_eq!(
+            names("qb"),
+            expected,
+            "base variable-free leg: answer intact"
+        );
+    }
+
+    /// Negation over an ARITY-MISMATCHED predicate is the exact COMPLEMENT of the
+    /// positive reading, not a second vacuous-negation bug.
+    ///
+    /// The F1 anti-join filters its key set by `f.key.len() == atom_args.len()`, so
+    /// `\+ p3(X, _)` against arity-3 `p3` facts passes every row. That is sound
+    /// because the POSITIVE reading of the same leg is empty: `unify_atom` rejects
+    /// on `atom.args().len() != fact_key.len()`, and `join_derived`'s index build
+    /// skips mismatched facts outright. The engine identifies relations by
+    /// name AND arity (standard datalog), so `p3/2` is a distinct, EMPTY relation —
+    /// empty positive ⇔ vacuous negation is exactly complementary, at every arity.
+    ///
+    /// Pinned as a pair: if either half is ever changed to match on name alone, this
+    /// test fails and forces the other half to change with it.
+    ///
+    /// The `posvf` / `negvf` pair covers the VARIABLE-FREE shape (`p3(_, _)`), which
+    /// takes the nonemptiness-filter branch of `join_derived` instead of the keyed
+    /// index. That branch calls `unify_atom` DIRECTLY over the relation, so the arity
+    /// rejection in `unify_atom` is its ONLY guard — with the rejection removed the
+    /// leg and its negation are both true at once (unsound), which no other test
+    /// observes. `pos`/`neg` cannot cover it: they bind `X`, so they route through
+    /// the index build, whose own arity skip masks the change.
+    #[test]
+    fn arity_mismatched_leg_is_empty_positive_and_vacuous_negated() {
+        let v = FixtureStorageView::new(1);
+        let src = r#"
+            p0("c0"). p0("c1").
+            p3("c0", "y", "z"). p3("c1", "y", "z").
+            pos(X) :- p0(X), p3(X, _).
+            neg(X) :- p0(X), \+ p3(X, _).
+            ok3(X) :- p0(X), \+ p3(X, _, _).
+            posvf(X) :- p0(X), p3(_, _).
+            negvf(X) :- p0(X), \+ p3(_, _).
+        "#;
+        let eval = run(src, &v, Stats::default());
+        let names = |pred: &str| -> std::collections::BTreeSet<String> {
+            eval.facts(pred)
+                .into_iter()
+                .map(|r| r[0].as_str())
+                .collect()
+        };
+        use std::collections::BTreeSet;
+        let all = BTreeSet::from(["c0".to_string(), "c1".to_string()]);
+        assert_eq!(
+            names("pos"),
+            BTreeSet::<String>::new(),
+            "p3/2 is a distinct EMPTY relation: the positive leg derives nothing"
+        );
+        assert_eq!(
+            names("neg"),
+            all,
+            "…so its negation is vacuous — the exact complement, not an unsound pass"
+        );
+        assert_eq!(
+            names("posvf"),
+            BTreeSet::<String>::new(),
+            "an arity-mismatched VARIABLE-FREE leg is a filter over an EMPTY \
+             relation: it rejects every row"
+        );
+        assert_eq!(
+            names("negvf"),
+            all,
+            "…so its negation holds for every row — complementary, never both true"
+        );
+        assert_eq!(
+            names("ok3"),
+            BTreeSet::<String>::new(),
+            "at the MATCHING arity the negation bites: every c has a p3/3 fact"
         );
     }
 
