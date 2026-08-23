@@ -158,6 +158,24 @@ pub enum ExecCode {
     /// a derive fixpoint ignored the flag entirely and ground CPU to completion (or
     /// the wall-clock deadline) long after the client died.
     Cancelled,
+    /// A rule head carries a term the body can never bind — a head variable that occurs in
+    /// no positive body literal, or a wildcard written straight into the head (`E-EXEC-004`).
+    /// This is the classic Datalog range-restriction (safety) violation: the head names a
+    /// column with no source, so the rule denotes an infinite relation.
+    ///
+    /// It is raised BEFORE the clause's legs run and independently of the data, because the
+    /// alternative — dropping the unprojectable rows — answers with an empty relation, which
+    /// is exactly the answer a safe rule gives when its body matches nothing. Collapsing
+    /// "nothing was found" into "I could not run this rule" is what makes the why-not
+    /// explanation surface unanswerable, so an unsafe rule is a refusal, never a zero.
+    ///
+    /// `004` is the next free number in THIS enum, which is the single owner of the
+    /// `E-EXEC-*` taxonomy (invariant I5). The v2 spec's §8.5 also writes `E-EXEC-004`, for
+    /// a downstream read of a timed-out external plugin's poisoned output predicates — that
+    /// mechanism has no implementation here (the external batch plugins it describes were
+    /// replaced by the bundled rule packs), exactly as the spec's `E-PLAN-004`/`E-PLAN-005`
+    /// and `E-TAG-*` have none.
+    UnsafeHead,
 }
 
 impl ExecCode {
@@ -167,6 +185,7 @@ impl ExecCode {
             ExecCode::IterationCap => "E-EXEC-002",
             ExecCode::LimitExceeded => "E-EXEC-001",
             ExecCode::Cancelled => "E-EXEC-003",
+            ExecCode::UnsafeHead => "E-EXEC-004",
         }
     }
 }
@@ -1558,6 +1577,8 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                     head_pred: plan.head.clone(),
                     plan,
                     rule,
+                    // Diagnosed once here, raised in `eval_clause` before any leg runs.
+                    unsafe_head: head_safety_diagnosis(plan, rule),
                 });
             }
         }
@@ -1577,6 +1598,20 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         relations: &HashMap<String, Relation<T>>,
         delta_leg: Option<usize>,
     ) -> ExecResult<Vec<Box<[Value]>>> {
+        // ── Rule safety (I5): an unbindable head term refuses, it does not answer ──
+        //
+        // Diagnosed from the program text when the clause was collected, so the refusal is
+        // data-independent and fires ahead of BOTH the empty-leg short-circuit below and the
+        // per-row projection at the end — otherwise an unsafe rule over an empty body would
+        // return the very empty relation this code exists to stop being ambiguous.
+        if let Some(detail) = &clause.unsafe_head {
+            return Err(ExecError {
+                code: ExecCode::UnsafeHead,
+                stratum: self.cur_stratum.get(),
+                detail: detail.clone(),
+            });
+        }
+
         // ── Empty-positive-derived-leg short-circuit (W9-iter2) ──
         //
         // A POSITIVE derived leg whose fact source is empty can extend no row, so the
@@ -1671,8 +1706,17 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         let head = clause.rule.head();
         let mut out: Vec<Box<[Value]>> = Vec::with_capacity(rows.len());
         for row in &rows {
-            if let Some(tuple) = project_head(head, row) {
-                out.push(tuple);
+            match project_head(head, row) {
+                Ok(tuple) => out.push(tuple),
+                // The per-row backstop: a head term the static diagnosis passed but the row
+                // still cannot ground. Refuse with the same code rather than drop the row.
+                Err(detail) => {
+                    return Err(ExecError {
+                        code: ExecCode::UnsafeHead,
+                        stratum: self.cur_stratum.get(),
+                        detail,
+                    })
+                }
             }
         }
         Ok(out)
@@ -3397,6 +3441,10 @@ struct Clause<'r> {
     head_pred: String,
     plan: &'r RulePlan,
     rule: &'r Rule,
+    /// The rule-safety diagnosis, computed once when the clause is collected: `None` when
+    /// every head term is bindable, otherwise the one-line detail of the `E-EXEC-004`
+    /// refusal that [`Executor::eval_clause`] raises before running a single leg.
+    unsafe_head: Option<String>,
 }
 
 impl<'r> Clause<'r> {
@@ -3682,21 +3730,102 @@ fn project_anti_join_key(atom: &Atom, row: &BindRow) -> Option<Vec<Value>> {
     Some(key)
 }
 
-/// Project a rule head onto a ground tuple from a binding row. Every head variable must be
-/// bound (the planner enforces rule safety); returns `None` otherwise (the row is dropped).
-fn project_head(head: &Atom, row: &BindRow) -> Option<Box<[Value]>> {
+/// Project a rule head onto a ground tuple from a binding row.
+///
+/// Every head term must resolve to a ground `Value`: a constant and a typed literal are
+/// ground already, a head variable must be bound in `row`, and a wildcard names no column at
+/// all. When one does not, the row is NOT droppable — dropping it answers with an empty
+/// relation, which is byte-identical to the answer a safe rule gives when its body matched
+/// nothing, and that collision is exactly what the why-not surface cannot recover from. So
+/// the failure comes back as the detail of an `E-EXEC-004` refusal ([`ExecCode::UnsafeHead`])
+/// which the caller raises with its stratum index.
+///
+/// [`head_safety_diagnosis`] normally catches the same defect statically, before any leg
+/// runs; this is the per-row backstop for a head variable the plan claimed a leg would bind
+/// but no leg actually wrote into the row.
+fn project_head(head: &Atom, row: &BindRow) -> Result<Box<[Value]>, String> {
     let mut out = Vec::with_capacity(head.args().len());
-    for t in head.args() {
+    for (pos, t) in head.args().iter().enumerate() {
         match t {
             Term::Const(s) => out.push(Value::from_term_const(s)),
             // A typed literal is already a ground `Value`; use it directly.
             Term::Lit(v) => out.push(v.clone()),
-            Term::Var(v) => out.push(row.get(v)?.clone()),
-            // A wildcard in a head is not a captured column; a safe rule never has one.
-            Term::Wildcard => return None,
+            Term::Var(v) => match row.get(v) {
+                Some(val) => out.push(val.clone()),
+                None => {
+                    return Err(format!(
+                        "unsafe rule: head {}/{} argument {} is variable {} which no body \
+                         literal bound",
+                        head.predicate(),
+                        head.args().len(),
+                        pos,
+                        v
+                    ))
+                }
+            },
+            Term::Wildcard => {
+                return Err(format!(
+                    "unsafe rule: head {}/{} argument {} is a wildcard, which captures no \
+                     column",
+                    head.predicate(),
+                    head.args().len(),
+                    pos
+                ))
+            }
         }
     }
-    Some(out.into_boxed_slice())
+    Ok(out.into_boxed_slice())
+}
+
+/// Decide, from the program text alone, whether a clause's head is bindable — the Datalog
+/// range-restriction (safety) check.
+///
+/// A head term is bindable when it is ground already (a constant or a typed literal) or when
+/// it is a variable that occurs in at least one POSITIVE body leg. A positive leg leaves
+/// every one of its variable arguments bound in the row: an argument the planner marked
+/// `Bound` was bound by an earlier leg, and one it marked `Free` is written by this leg.
+/// A NEGATIVE leg binds nothing — it is an anti-join filter — so it does not count, and a
+/// wildcard in the head names no column and is never bindable.
+///
+/// Returns `None` for a safe head, otherwise the one-line detail naming every offending head
+/// position. The check reads only the plan and the rule, never the data, so an unsafe rule is
+/// refused identically whether its body would have matched a million rows or none.
+fn head_safety_diagnosis(plan: &RulePlan, rule: &Rule) -> Option<String> {
+    let head = rule.head();
+    let mut bound: HashSet<&str> = HashSet::new();
+    for leg in &plan.legs {
+        if leg.literal.is_negative() {
+            continue;
+        }
+        for t in leg.literal.atom().args() {
+            if let Term::Var(v) = t {
+                bound.insert(v.as_str());
+            }
+        }
+    }
+
+    let mut offenders: Vec<String> = Vec::new();
+    for (pos, t) in head.args().iter().enumerate() {
+        match t {
+            Term::Const(_) | Term::Lit(_) => {}
+            Term::Var(v) => {
+                if !bound.contains(v.as_str()) {
+                    offenders.push(format!("argument {pos} is variable {v}"));
+                }
+            }
+            Term::Wildcard => offenders.push(format!("argument {pos} is a wildcard")),
+        }
+    }
+    if offenders.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "unsafe rule: head {}/{} is not range-restricted — {} ({})",
+        head.predicate(),
+        head.args().len(),
+        offenders.join(", "),
+        "no positive body literal can bind it"
+    ))
 }
 
 /// Build the initial binding row that pins a clause's HEAD to a specific ground tuple — the
@@ -6007,6 +6136,147 @@ mod tests {
     fn exec_codes_are_stable() {
         assert_eq!(ExecCode::IterationCap.as_str(), "E-EXEC-002");
         assert_eq!(ExecCode::LimitExceeded.as_str(), "E-EXEC-001");
+        assert_eq!(ExecCode::Cancelled.as_str(), "E-EXEC-003");
+        assert_eq!(ExecCode::UnsafeHead.as_str(), "E-EXEC-004");
+    }
+
+    // ── rule safety: an unbindable head term is a refusal, never a silent zero ──
+
+    /// Plan + evaluate `src` over `view`, returning either the committed relation
+    /// `head` (its ground tuples) or the executor's coded refusal. The two outcomes a
+    /// caller must be able to tell apart: "the body matched nothing" vs "I could not
+    /// run this rule".
+    fn eval_outcome(
+        src: &str,
+        view: &FixtureStorageView,
+        stats: Stats,
+        head: &str,
+    ) -> Result<Vec<Box<[Value]>>, ExecError> {
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let plans = plan_program(&rules, &strat, &stats).expect("plan");
+        let exec = Executor::<BoolTag>::with_limits(view, EvalLimits::none(), DEFAULT_ITERATION_CAP);
+        exec.evaluate(&plans, &rules, &strat)
+            .map(|ev| ev.facts(head))
+    }
+
+    /// A head variable that NO body literal can bind is an unsafe rule. Before the fix the
+    /// executor dropped every projected row inside `project_head` and answered with an empty
+    /// relation — the same answer a perfectly safe rule gives when its body matches nothing.
+    /// That collision is what makes "why is this fact not derived?" unanswerable, so the
+    /// unsafe rule must come back as the coded refusal `E-EXEC-004` instead.
+    #[test]
+    fn unbound_head_variable_is_refused_not_silently_empty() {
+        let mut v = FixtureStorageView::new(1);
+        node(&mut v, "fn1", "FUNCTION");
+        node(&mut v, "fn2", "FUNCTION");
+        let stats = Stats { total_nodes: 2, total_edges: 0, ..Default::default() };
+
+        // Control: the same body with a SAFE head derives one tuple per matching node.
+        let safe = eval_outcome(
+            r#"safe_head(X) :- node(X, "FUNCTION")."#,
+            &v,
+            stats.clone(),
+            "safe_head",
+        )
+        .expect("a safe rule evaluates");
+        assert_eq!(safe.len(), 2, "control: the body matches both fixture nodes");
+
+        // `Y` occurs in the head and in no body literal — nothing can ever bind it.
+        match eval_outcome(
+            r#"unsafe_head(X, Y) :- node(X, "FUNCTION")."#,
+            &v,
+            stats.clone(),
+            "unsafe_head",
+        ) {
+            Ok(rows) => panic!(
+                "SILENT ZERO: the unsafe rule answered Ok with {} tuple(s) instead of a coded \
+                 refusal — indistinguishable from an honestly empty body",
+                rows.len()
+            ),
+            Err(e) => {
+                assert_eq!(e.code.as_str(), "E-EXEC-004");
+                assert!(
+                    e.detail.contains('Y'),
+                    "the detail must name the unbindable head term, got {:?}",
+                    e.detail
+                );
+            }
+        }
+
+        // A wildcard written straight into the head is the same defect: it names no column.
+        match eval_outcome(
+            r#"wild_head(X, _) :- node(X, "FUNCTION")."#,
+            &v,
+            stats,
+            "wild_head",
+        ) {
+            Ok(rows) => panic!(
+                "SILENT ZERO: the wildcard head answered Ok with {} tuple(s) instead of a coded \
+                 refusal",
+                rows.len()
+            ),
+            Err(e) => assert_eq!(e.code.as_str(), "E-EXEC-004"),
+        }
+    }
+
+    /// The refusal must NOT depend on the data: an unsafe rule whose body happens to match
+    /// nothing is still an unsafe rule. Before the fix this case was doubly invisible — the
+    /// row-level drop never even ran. The fixture holds no `CLASS` node, so the body is empty.
+    #[test]
+    fn unbound_head_variable_is_refused_even_with_an_empty_body() {
+        let mut v = FixtureStorageView::new(1);
+        node(&mut v, "fn1", "FUNCTION");
+        let stats = Stats { total_nodes: 1, total_edges: 0, ..Default::default() };
+
+        match eval_outcome(
+            r#"unsafe_head(X, Y) :- node(X, "CLASS")."#,
+            &v,
+            stats,
+            "unsafe_head",
+        ) {
+            Ok(rows) => panic!(
+                "SILENT ZERO: an unsafe rule with a non-matching body answered Ok with {} \
+                 tuple(s); rule safety is a property of the program, not of the data",
+                rows.len()
+            ),
+            Err(e) => assert_eq!(e.code.as_str(), "E-EXEC-004"),
+        }
+    }
+
+    /// The refusal must never fire on production input: every rule of every bundled stdlib
+    /// pack has a range-restricted head. This is the counterpart of the two tests above —
+    /// they pin that an unsafe rule is refused, this one pins that a safe one is not.
+    #[test]
+    fn every_bundled_stdlib_pack_has_range_restricted_heads() {
+        use crate::derive::stdlib::STDLIB_PACKS;
+
+        // Enough of a graph that no leg is planned away as trivially empty.
+        let stats = Stats { total_nodes: 64, total_edges: 64, ..Default::default() };
+        let mut unsafe_heads: Vec<String> = Vec::new();
+        let mut checked = 0usize;
+        for (name, src) in STDLIB_PACKS {
+            let prog = parse_ext_program(src).unwrap_or_else(|e| panic!("{name}: parse: {e}"));
+            let strat = stratify(&prog).unwrap_or_else(|e| panic!("{name}: stratify: {e}"));
+            let rules = prog.rules();
+            let plans = plan_program(&rules, &strat, &stats)
+                .unwrap_or_else(|e| panic!("{name}: plan: {e}"));
+            // `plan_program` returns one plan per rule in input order; the zip below is only
+            // honest while that holds, so pin it rather than silently checking a prefix.
+            assert_eq!(plans.len(), rules.len(), "{name}: one plan per rule");
+            for (plan, rule) in plans.iter().zip(rules.iter()) {
+                checked += 1;
+                if let Some(detail) = head_safety_diagnosis(plan, rule) {
+                    unsafe_heads.push(format!("{name}: {detail}"));
+                }
+            }
+        }
+        assert!(checked > 0, "the pack registry must not be empty");
+        assert!(
+            unsafe_heads.is_empty(),
+            "bundled packs must never trip E-EXEC-004 ({checked} rules checked): {unsafe_heads:#?}"
+        );
     }
 
     // ── empty program / empty stratum is not an error ───────────────
