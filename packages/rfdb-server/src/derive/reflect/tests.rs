@@ -179,6 +179,45 @@ fn reflected_records_add_no_row_to_any_base_relation() {
     assert_eq!(view.reflected_facts().len(), reflected_ids.len());
 }
 
+/// The FIFTH read point: the bound-id METADATA lookup, which `node_attr/3` reads through
+/// (`derive/builtin.rs`) — NOT `get_node`, so the four checks above do not cover it.
+///
+/// It is the worst one to leave open, because the blob IS the reflected tuple: a program
+/// that hits it reads the content of its own rules. And the id is no secret — it is a pure
+/// function of the tuple ([`ReflectedFact::fact_id`]), so anyone who knows the rule can
+/// compute the id and write it into a program as a constant.
+#[test]
+fn the_bound_id_metadata_lookup_does_not_serve_a_reflected_tuple() {
+    let mut db = Db::new();
+    let ordinary = {
+        let mut n = ordinary_node("a.js->FUNCTION->f", "FUNCTION", "f", "a.js");
+        n.metadata = r#"{"line":42}"#.to_string();
+        n
+    };
+    let ordinary_id = ordinary.id;
+    let rule = parse_one("p(X) :- node(X, \"FUNCTION\").");
+    let reflected = encode_rules_to_records(&[&rule]).expect("encode");
+    let reflected_ids: Vec<u128> = reflected.iter().map(|r| r.id).collect();
+    assert!(!reflected_ids.is_empty());
+    let mut records = vec![ordinary];
+    records.extend(reflected);
+    db.commit(records);
+    db.flush();
+
+    let view = db.view();
+    for id in &reflected_ids {
+        assert_eq!(
+            view.node_metadata(*id),
+            None,
+            "node_metadata served the reflected tuple of {id:032x} — `node_attr/3` reads \
+             exactly this point"
+        );
+    }
+    // Positive control on the same view: an ORDINARY node's blob still comes back, so the
+    // `None`s above measure the filter and not a dead lookup.
+    assert_eq!(view.node_metadata(ordinary_id).as_deref(), Some(r#"{"line":42}"#));
+}
+
 // ── Step 3/4: encoding and idempotent writing ──────────────────────
 
 fn parse_one(src: &str) -> Rule {
@@ -465,4 +504,317 @@ fn a_wildcard_term_round_trips() {
         Term::Wildcard,
         Term::Const("CALLS".into()),
     ])));
+}
+
+// ── Ordering, identity and the write-side gates ────────────────────
+
+/// A CONTESTED slot — one rule id, two `conclusion_lit` facts in slot 1 — must resolve the
+/// way the reference resolves it, and the reference's answer is not "whatever the storage
+/// hands us last".
+///
+/// The reference's `Store.relAll` walks a per-relation index kept canonically sorted by
+/// `factKey = rel[persp](canonTerm(args))` at all times (`store.ts:48-59`), so its
+/// documented "last one wins" means *lexicographically greatest FACT KEY*, independent of
+/// insertion order. Sorting the scan by the content-addressed node id instead is equally
+/// deterministic but ARBITRARY — a BLAKE3 hash orders unrelated to the key.
+///
+/// Ground truth, measured on the reference (probe `/tmp/fix-tiebreak-oracle.mts`, run from
+/// `packages/rofl-conformance` with `node --experimental-strip-types`, positive control
+/// `load.ok = true` first), in BOTH insertion orders:
+///
+/// ```text
+/// keyA=$lit(h,main,$cons($var("X"),$nil),$now)
+/// keyB=$lit(zzz,main,$cons($var("X"),$nil),$now)
+/// WINNER = ["zzz[main](?X)@now :- a[main](?X)@now"]     (both orders)
+/// keyA=$lit(aaa,…) keyB=$lit(bbb,…) WINNER = ["bbb[main](?X)@now :- …"]  (both orders)
+/// ```
+///
+/// The pair is SEARCHED FOR rather than hard-coded, and the search demands a pair on which
+/// the two candidate orders DISAGREE: greater fact key but smaller node id. On a hard-coded
+/// pair a hash order agrees with the key order half the time, so the test would pass under
+/// the wrong rule by luck — it did, on `h`/`zzz`, until this search replaced it.
+#[test]
+fn a_contested_conclusion_slot_resolves_the_way_the_reference_resolves_it() {
+    const RID: &str = "rCONTEST";
+    let premise = {
+        let r = parse_one("h(X) :- a(X).");
+        reify_body_elem(&r.body()[0]).expect("reify")
+    };
+    let conclusion = |pred: &str| -> (ReflectedFact, u128) {
+        let rule = parse_one(&format!("{pred}(X) :- a(X)."));
+        let head = reify_atom(rule.head()).expect("reify");
+        let f = ReflectedFact::new(
+            REL_CONCLUSION_LIT,
+            vec![rofl_atom(RID), Value::Int(1), head],
+        );
+        let id = f.fact_id().expect("id");
+        (f, id)
+    };
+
+    // Search for a discriminating pair: `hi` has the greater fact key AND the smaller node
+    // id, so key order and id order name different winners.
+    let candidates: Vec<(String, ReflectedFact, u128)> = (0..60)
+        .map(|i| {
+            let pred = format!("p{i}");
+            let (f, id) = conclusion(&pred);
+            (pred, f, id)
+        })
+        .collect();
+    let mut found: Option<(&(String, ReflectedFact, u128), &(String, ReflectedFact, u128))> = None;
+    'outer: for a in &candidates {
+        for b in &candidates {
+            if a.1.fact_key() < b.1.fact_key() && a.2 < b.2 {
+                // a: smaller key, smaller id  → b: greater key, GREATER id. Not discriminating.
+                continue;
+            }
+            if a.1.fact_key() < b.1.fact_key() && a.2 > b.2 {
+                found = Some((a, b));
+                break 'outer;
+            }
+        }
+    }
+    let (lo, hi) = found.expect(
+        "no discriminating pair among 60 candidates — the search itself is broken, since a \
+         hash order disagrees with a key order about half the time",
+    );
+
+    for order in [[&lo.1, &hi.1], [&hi.1, &lo.1]] {
+        let mut facts = vec![ReflectedFact::new(REL_RULE, vec![rofl_atom(RID)])];
+        for f in order {
+            facts.push((*f).clone());
+        }
+        facts.push(ReflectedFact::new(
+            REL_PREMISE_LIT,
+            vec![rofl_atom(RID), Value::Int(1), premise.clone()],
+        ));
+
+        let mut db = Db::new();
+        let records: Vec<NodeRecordV2> =
+            facts.iter().map(|f| f.to_node_record().expect("record")).collect();
+        db.commit(records);
+        db.flush();
+        let decoded = decode_rules(&db.view());
+
+        assert_eq!(decoded.rules.len(), 1, "one enumerated id ⇒ one rule");
+        assert_eq!(
+            decoded.rules[0].head().predicate(),
+            hi.0,
+            "the reference keeps the greater FACT KEY ('{}' over '{}'); this pair was chosen \
+             because the node-id order says the opposite ({:032x} < {:032x}), so picking \
+             '{}' means the scan is still ordered by hash",
+            hi.0,
+            lo.0,
+            hi.2,
+            lo.2,
+            lo.0
+        );
+    }
+}
+
+/// The scan key IS the reference's `factKey`, spelled out — the property the tie-break
+/// above rests on. Measured against the reference's own `canonTerm` output (same probe):
+/// `$lit(h,main,$cons($var("X"),$nil),$now)`.
+#[test]
+fn the_scan_key_is_the_references_fact_key() {
+    let rule = parse_one("h(X) :- a(X).");
+    let head = reify_atom(rule.head()).expect("reify");
+    let fact =
+        ReflectedFact::new(REL_CONCLUSION_LIT, vec![rofl_atom("rabc"), Value::Int(1), head]);
+    assert_eq!(
+        fact.fact_key(),
+        r#"conclusion_lit[main](rabc,1,$lit(h,main,$cons($var("X"),$nil),$now))"#
+    );
+}
+
+/// The fact id carries the PERSPECTIVE, per the fact model
+/// (`fid = BLAKE3(canon(perspective, predicate, tuple))`, `derive/canon.rs:4`) and the
+/// reference's `factKey` (`store.ts:25-27`).
+///
+/// Nothing collides today — the perspective is the constant `main` — so this is checked
+/// structurally: the id must NOT be the hash of the bare tuple, which is what leaving the
+/// perspective out would produce, and which would alias two perspectives' facts onto one
+/// node the day perspectives land.
+#[test]
+fn the_fact_id_is_keyed_by_perspective() {
+    let fact = ReflectedFact::new(REL_RULE, vec![rofl_atom("rabc")]);
+    let bare = {
+        let term = crate::datalog::TermBlob::new(
+            fact.predicate.clone(),
+            fact.args.clone().into_boxed_slice(),
+        )
+        .expect("term");
+        let mut bytes = Vec::new();
+        crate::derive::canon::canon_bytes(
+            &Value::Term(std::sync::Arc::new(term)),
+            &mut bytes,
+        )
+        .expect("canon");
+        u128::from_le_bytes(blake3::hash(&bytes).as_bytes()[0..16].try_into().unwrap())
+    };
+    assert_ne!(
+        fact.fact_id().expect("id"),
+        bare,
+        "the id must be keyed by perspective, not by the bare tuple"
+    );
+    // Still content-addressed: same fact, same id.
+    assert_eq!(fact.fact_id().unwrap(), fact.clone().fact_id().unwrap());
+}
+
+/// Two DIFFERENT clauses under one rule id must be REFUSED at encode time.
+///
+/// The rule id is the reference's: `r` + a 32-bit FNV-1a of the canonical clause. Thirty-two
+/// bits is a birthday bound, not a guarantee, and reflection is additive — a collision
+/// would merge the two clauses' premises into a rule nobody wrote, silently, because the
+/// decoder assembles a rule from every fact carrying its id.
+#[test]
+fn two_clauses_under_one_rule_id_are_refused_at_encode_time() {
+    let a = parse_one("h(X) :- a(X).");
+    let b = parse_one("zzz(X) :- c(X).");
+    let id_a = rule_id(&a);
+
+    // Simulate the collision by declaring `a`'s id already taken by `b`'s clause.
+    let mut already = std::collections::BTreeMap::new();
+    already.insert(id_a.clone(), canon_clause(&b));
+
+    let err = encode_rules_to_records_beside(&[&a], &already)
+        .expect_err("a collision must be refused, not merged");
+    assert_eq!(err.code, E_REFLECT_ENCODE, "{err}");
+
+    // Positive control: the SAME clause under the same id is idempotence, not a collision.
+    let mut same = std::collections::BTreeMap::new();
+    same.insert(id_a.clone(), canon_clause(&a));
+    assert!(encode_rules_to_records_beside(&[&a], &same).is_ok());
+
+    // …and the plain entry (empty store) still encodes both rules side by side.
+    assert!(encode_rules_to_records(&[&a, &b]).is_ok());
+}
+
+/// `rule_index` reports what the store CLAIMS (enumerated id → decoded clause) — the input
+/// the collision gate needs.
+#[test]
+fn the_rule_index_reports_what_the_store_claims() {
+    let rule = parse_one("p(X) :- node(X, \"FUNCTION\").");
+    let records = encode_rules_to_records(&[&rule]).expect("encode");
+    let mut db = Db::new();
+    db.commit(records);
+    db.flush();
+
+    let index = rule_index(&db.view());
+    assert_eq!(index.len(), 1);
+    assert_eq!(index.get(&rule_id(&rule)).map(String::as_str), Some(canon_clause(&rule).as_str()));
+}
+
+/// A program Projection T cannot carry WHOLE is refused rather than reflected minus the
+/// parts that do not fit.
+///
+/// Annotations are not only a write-back concern: `@materialize` / `@materialize_node` feed
+/// the stratifier (`derive/stratify.rs:205-233` — a materialized type is a cross-run
+/// producer and earns a dependency edge), so a store built by dropping them could stratify
+/// differently from the text it came from, and with negation that changes the ANSWER, not
+/// just the write-back.
+#[test]
+fn a_program_projection_t_cannot_carry_whole_is_refused() {
+    let plain = crate::derive::parser_ext::parse_ext_program("p(X) :- node(X, \"FUNCTION\").")
+        .expect("parse");
+    assert!(refuse_unreflectable_program(&plain).is_ok(), "positive control: a plain program");
+
+    let annotated = crate::derive::parser_ext::parse_ext_program(
+        "@materialize(edge_type=\"REACHES\")\np(X, Y) :- edge(X, Y, \"CALLS\").",
+    )
+    .expect("parse");
+    let err = refuse_unreflectable_program(&annotated).expect_err("annotations must refuse");
+    assert_eq!(err.code, E_REFLECT_MODE, "{err}");
+}
+
+/// A skipped reflection reaches the OBSERVER, not just the return value.
+///
+/// The engine-level sibling of this test (`graph/engine_v2.rs`) cannot check this: the
+/// engine installs [`crate::derive::events::EventLog::discard`], so the trace it would
+/// inspect does not exist there. This is the level where a sink can be installed, so this
+/// is where the claim "a skip is never silent" is actually measured — one
+/// [`crate::derive::events::EventKind::ReflectSkipped`] carrying the decoder's diagnostic
+/// verbatim, emitted before the fixpoint, on the same trace the answer is.
+///
+/// Both controls are here on purpose:
+/// * positive — the healthy neighbour still answers (rows are non-empty), so the event is
+///   not the report of a wholesale decode failure;
+/// * negative — the same store WITHOUT the broken rule emits NO such event, so the
+///   assertion is not satisfied by an event the decoder emits unconditionally.
+#[test]
+fn a_skipped_reflection_is_emitted_on_the_event_trace() {
+    use crate::derive::events::{EventKind, EventLog, SharedMemSink};
+
+    fn run(with_broken: bool) -> (Vec<String>, usize) {
+        let mut db = Db::new();
+        db.commit(vec![
+            ordinary_node("fnA", "FUNCTION", "fnA", "f.js"),
+            ordinary_node("fnB", "FUNCTION", "fnB", "f.js"),
+        ]);
+
+        let healthy = parse_one("p(X) :- node(X, \"FUNCTION\").");
+        let (_id, mut facts) = encode_rule(&healthy).expect("encode");
+        if with_broken {
+            // A head reflection that is not a literal at all: `rule/1` names it, so the
+            // decoder must SEE it, and `conclusion_lit` is unusable, so it must SKIP it.
+            let bad = "rdeadbeef";
+            facts.push(ReflectedFact::new(REL_RULE, vec![rofl_atom(bad)]));
+            facts.push(ReflectedFact::new(
+                REL_CONCLUSION_LIT,
+                vec![rofl_atom(bad), Value::Int(1), Value::Str("not a literal".into())],
+            ));
+        }
+        let records: Vec<NodeRecordV2> =
+            facts.iter().map(|f| f.to_node_record().expect("record")).collect();
+        db.commit(records);
+        db.flush();
+
+        let sink = SharedMemSink::new();
+        let stats = crate::derive::builtin::Stats {
+            total_nodes: 2,
+            total_edges: 0,
+            ..Default::default()
+        };
+        let eval = crate::derive::evaluate_in(
+            &db.view(),
+            "",
+            crate::derive::RuleSource::Store,
+            stats,
+            crate::datalog::EvalLimits::none(),
+            EventLog::with_sink(Box::new(sink.clone())),
+        )
+        .expect("evaluate from store");
+
+        let skips: Vec<String> = sink
+            .events()
+            .into_iter()
+            .filter_map(|e| match e.kind {
+                EventKind::ReflectSkipped { detail } => Some(detail),
+                _ => None,
+            })
+            .collect();
+        (skips, eval.facts("p").len())
+    }
+
+    let (clean_skips, clean_rows) = run(false);
+    assert!(
+        clean_skips.is_empty(),
+        "negative control: a healthy store must emit no skip, got {clean_skips:?}"
+    );
+    assert_eq!(clean_rows, 2, "negative control: the healthy rule answers");
+
+    let (skips, rows) = run(true);
+    assert_eq!(
+        skips.len(),
+        1,
+        "exactly one skip must reach the trace, got {skips:?}"
+    );
+    assert!(
+        skips[0].contains("rdeadbeef"),
+        "the diagnostic must name the rule it dropped, got {:?}",
+        skips[0]
+    );
+    assert_eq!(
+        rows, 2,
+        "positive control: the healthy neighbour still answers"
+    );
 }

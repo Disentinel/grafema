@@ -395,10 +395,15 @@ pub(crate) trait StorageView: Sync {
     /// ([`crate::derive::reflect`]).
     ///
     /// It is a separate door on purpose. Reflected facts live in the same node space as
-    /// ordinary graph nodes, so every base-relation read point above (`node/2`, typed
-    /// scans, the bound-id lookup, the attr generator) filters them out; a program can
-    /// neither observe nor join against its own rules through the ordinary vocabulary.
-    /// A view with no reflected records yields an empty vec.
+    /// ordinary graph nodes, so all FIVE base-relation read points above filter them out —
+    /// `node/2` (the id-ordered run), the typed scan, the bound-id lookup, the attr
+    /// generator, and the bound-id METADATA lookup that `node_attr/3` reads through. A
+    /// program can neither observe nor join against its own rules through the ordinary
+    /// vocabulary. A view with no reflected records yields an empty vec.
+    ///
+    /// The isolation stops at this trait: the planner's cardinality oracle
+    /// (`GraphEngineV2::derive_stats`) counts nodes through the store directly, and it
+    /// subtracts the reserved type there for the same reason.
     fn reflected_facts(&self) -> Vec<(u128, String)>;
 }
 
@@ -605,6 +610,13 @@ fn snapshot_edge_metadata(
 /// Metadata blob of one bound node id, via the same snapshot point lookup as
 /// [`snapshot_get_node`]. Empty stored metadata (`""`, storage's "none" marker)
 /// normalizes to `None` — the node twin of [`snapshot_edge_metadata`].
+///
+/// A reflected-rule record resolves to `None` for the same reason [`snapshot_get_node`]
+/// does, and the stake here is higher: the blob IS the reflected tuple, so serving it
+/// would hand a program the content of its own rules. `node_attr/3`
+/// (`crate::derive::builtin`) reads through this point and NOT through `get_node`, and a
+/// reflected fact's id is a pure function of its tuple — i.e. computable and writable as a
+/// constant, not a secret.
 fn snapshot_node_metadata(
     store: &MultiShardStore,
     snapshot: &ReadSnapshot,
@@ -612,6 +624,7 @@ fn snapshot_node_metadata(
 ) -> Option<String> {
     store
         .get_node_at(snapshot, id)
+        .filter(|r| !is_reflected_type(&r.node_type))
         .map(|r| r.metadata)
         .filter(|m| !m.is_empty())
 }
@@ -1049,6 +1062,11 @@ impl StorageView for FixtureStorageView {
     fn node_metadata(&self, id: u128) -> Option<String> {
         // Only blobs explicitly attached via `put_node_metadata` exist; a node without one
         // (including every plain `put_node`) is `None` — the real impl's "" normalization.
+        // Reflected-rule records are `None` here too (the real impl's filter): the blob is
+        // the rule tuple itself, and `node_attr/3` reads through this point.
+        if self.nodes.get(&id).is_some_and(|n| is_reflected_type(&n.node_type)) {
+            return None;
+        }
         self.node_meta.get(&id).cloned()
     }
 

@@ -142,18 +142,44 @@ impl ReflectedFact {
         ReflectedFact { predicate: predicate.into(), args }
     }
 
-    /// Content-addressed identity: BLAKE3 over the canonical bytes of the tuple viewed as
-    /// the term `<predicate>(arg…)`, truncated to the low 16 bytes (little-endian) — the
-    /// same shape as every other node id in this codebase. Writing the same fact twice
+    /// Content-addressed identity: BLAKE3 over the canonical bytes of
+    /// `<perspective>(<predicate>(arg…))`, truncated to the low 16 bytes (little-endian) —
+    /// the same shape as every other node id in this codebase. Writing the same fact twice
     /// therefore hits the same node and never duplicates.
+    ///
+    /// The PERSPECTIVE is part of the identity, not an afterthought: the reference keys a
+    /// fact by `rel[persp](args)` (`vendor/rofl-v0/src/store.ts:25-27`) and the fact model
+    /// specifies `fid = BLAKE3(canon(perspective, predicate, tuple))`
+    /// (`derive/canon.rs:4`). It is a constant (`main`) in this slice, so nothing collides
+    /// today — but leaving it out would make the FIRST second perspective alias two
+    /// distinct facts onto one node, and canon-v1 is self-delimiting, so wrapping costs a
+    /// functor and buys the property outright.
     pub fn fact_id(&self) -> Result<u128, ReflectError> {
         let term = TermBlob::new(self.predicate.clone(), self.args.clone().into_boxed_slice())
             .map_err(|e| ReflectError::new(E_REFLECT_ENCODE, format!("non-canonical argument: {e}")))?;
+        let keyed = TermBlob::new(
+            REFLECT_PERSPECTIVE,
+            vec![Value::Term(std::sync::Arc::new(term))].into_boxed_slice(),
+        )
+        .map_err(|e| ReflectError::new(E_REFLECT_ENCODE, format!("non-canonical argument: {e}")))?;
         let mut bytes = Vec::new();
-        crate::derive::canon::canon_bytes(&Value::Term(std::sync::Arc::new(term)), &mut bytes)
+        crate::derive::canon::canon_bytes(&Value::Term(std::sync::Arc::new(keyed)), &mut bytes)
             .map_err(|e| ReflectError::new(E_REFLECT_ENCODE, format!("non-canonical argument: {e}")))?;
         let hash = blake3::hash(&bytes);
         Ok(u128::from_le_bytes(hash.as_bytes()[0..16].try_into().unwrap()))
+    }
+
+    /// The reference's `factKey` (`vendor/rofl-v0/src/store.ts:25-27`) for this fact:
+    /// `rel[persp](canonTerm(arg),…)`.
+    ///
+    /// This string is the reference's SCAN ORDER, not a display form. `Store.relAll` walks
+    /// a per-relation index kept canonically sorted by this key at all times
+    /// (`store.ts:48-59`), so every "last one wins" in `decodeRules` means *lexicographically
+    /// greatest fact key*. [`decode_rules`] therefore sorts on this, and not on the
+    /// content-addressed node id, which is a hash and orders arbitrarily.
+    pub fn fact_key(&self) -> String {
+        let args: Vec<String> = self.args.iter().map(canon_value).collect();
+        format!("{}[{}]({})", self.predicate, REFLECT_PERSPECTIVE, args.join(","))
     }
 
     /// The storage node carrying this fact.
@@ -460,6 +486,33 @@ pub fn canon_term(t: &Term) -> String {
     }
 }
 
+/// Canonical text of a REIFIED value — the reference's `canonTerm` (`unify.ts:79-87`) over
+/// the value alphabet a reflected fact's arguments live in.
+///
+/// The mapping onto the reference's five term kinds is exact: `Str` is its `'s'`
+/// (JSON-quoted), `Int` its `'i'`, a zero-arity `Term` its `'a'` (a bare atom name), an
+/// n-ary `Term` its `'f'`. `Float`/`BigInt`/`Id` have no reference counterpart — they come
+/// from RFDB's wider literal set — and go through the ONE value-to-text codec
+/// ([`crate::datalog::value_to_wire_string`]), exactly as [`canon_term`] renders them.
+///
+/// This is a different function from [`canon_term`] and deliberately so: that one is the
+/// canonical text of a rule TERM (`?X` for a variable), this one of a stored fact
+/// ARGUMENT, where a variable has already been reified into the ordinary term `$var("X")`.
+pub fn canon_value(v: &Value) -> String {
+    match v {
+        Value::Str(s) => Json::String(s.clone()).to_string(),
+        Value::Int(i) => i.to_string(),
+        Value::Term(t) if t.args.is_empty() => t.functor.clone(),
+        Value::Term(t) => {
+            let args: Vec<String> = t.args.iter().map(canon_value).collect();
+            format!("{}({})", t.functor, args.join(","))
+        }
+        Value::Float(_) | Value::BigInt(_) | Value::Id(_) => {
+            crate::datalog::value_to_wire_string(v)
+        }
+    }
+}
+
 /// Canonical text of a literal — the reference's `canonLit` (`reflect.ts:114-116`).
 pub fn canon_atom(a: &Atom) -> String {
     let args: Vec<String> = a.args().iter().map(canon_term).collect();
@@ -529,16 +582,109 @@ pub fn encode_rule(r: &Rule) -> Result<(String, Vec<ReflectedFact>), ReflectErro
 /// Encode a whole program's rules into the storage records that carry them. Duplicate
 /// facts across rules (two clauses of one predicate share nothing, but two identical
 /// clauses share everything) collapse by node id, which is the intended idempotence.
+///
+/// Equivalent to [`encode_rules_to_records_beside`] against an empty store.
 pub fn encode_rules_to_records(rules: &[&Rule]) -> Result<Vec<NodeRecordV2>, ReflectError> {
+    encode_rules_to_records_beside(rules, &BTreeMap::new())
+}
+
+/// [`encode_rules_to_records`] against a store that ALREADY holds reflected rules
+/// (`already`: enumerated rule id → canonical clause, from [`rule_index`]).
+///
+/// # Why the gate exists
+///
+/// The rule id is the reference's ([`rule_id`]): `r` + a 32-BIT FNV-1a of the canonical
+/// clause. Thirty-two bits is a birthday bound, not a guarantee, and reflection is
+/// ADDITIVE — the premises of two clauses landing on one id would merge into a rule that
+/// was never written, silently, because `decode_rules` assembles a rule out of every fact
+/// carrying its id. So the collision is caught HERE, at the only door that can still
+/// refuse: writing two different clauses under one id is `E-REFLECT-001`.
+///
+/// The gate belongs on the write side and nowhere else. Re-deriving the id from a DECODED
+/// rule and rejecting a mismatch would also catch it, and would destroy the decoder's four
+/// documented outcomes on an incomplete reflection (a rule missing premises decodes to a
+/// shorter clause with a different id — the reference runs it, and `p3-malformed-sibling`
+/// stands on exactly that).
+pub fn encode_rules_to_records_beside(
+    rules: &[&Rule],
+    already: &BTreeMap<String, String>,
+) -> Result<Vec<NodeRecordV2>, ReflectError> {
+    let mut canon_by_rule_id: BTreeMap<String, String> = already.clone();
     let mut by_id: BTreeMap<u128, NodeRecordV2> = BTreeMap::new();
     for r in rules {
-        let (_, facts) = encode_rule(r)?;
+        let (id, facts) = encode_rule(r)?;
+        let canon = canon_clause(r);
+        if let Some(prev) = canon_by_rule_id.insert(id.clone(), canon.clone()) {
+            if prev != canon {
+                return Err(ReflectError::new(
+                    E_REFLECT_ENCODE,
+                    format!(
+                        "rule id {id} collides: '{prev}' and '{canon}' hash alike, and \
+                         reflection is additive — their premises would merge into a rule \
+                         nobody wrote"
+                    ),
+                ));
+            }
+        }
         for f in facts {
             let rec = f.to_node_record()?;
             by_id.insert(rec.id, rec);
         }
     }
     Ok(by_id.into_values().collect())
+}
+
+/// The rules a store already holds, as enumerated rule id → canonical clause — the
+/// `already` argument of [`encode_rules_to_records_beside`].
+///
+/// Built from [`decode_rules`], so a reflection the decoder skips is absent here: there is
+/// no clause to collide with.
+pub fn rule_index(view: &dyn StorageView) -> BTreeMap<String, String> {
+    let decoded = decode_rules(view);
+    decoded
+        .ids
+        .iter()
+        .zip(decoded.rules.iter())
+        .map(|(id, r)| (id.clone(), canon_clause(r)))
+        .collect()
+}
+
+/// Refuse a program Projection T cannot carry whole.
+///
+/// Projection T reflects RULES — `rule/1`, `conclusion_lit/3`, `premise_lit/3` — and
+/// nothing else. A program also carries `#requires` pragmas, `@materialize` /
+/// `@materialize_node` annotations and lattice payloads, and none of them survive the round
+/// trip. Dropping them is NOT cosmetic: annotations feed the stratifier
+/// (`derive/stratify.rs:205-233` — a materialized edge/node type is a cross-run producer
+/// and gets a dependency edge), so the same program could land in a different stratum
+/// order in store mode than in text mode, and with negation that changes the ANSWER.
+///
+/// Refusing at the write door is what makes the read door safe: a store assembled through
+/// [`crate::graph::engine_v2::GraphEngineV2::reflect_program`] can only ever hold programs
+/// for which "no annotations" is the truth rather than an omission.
+pub fn refuse_unreflectable_program(program: &ExtProgram) -> Result<(), ReflectError> {
+    if !program.requires.is_empty() {
+        return Err(ReflectError::mode(
+            "a program with `#requires` pragmas cannot be reflected: Projection T carries \
+             rules only, and the pragma would be lost without trace",
+        ));
+    }
+    for item in &program.items {
+        if !item.annotations.is_empty() {
+            return Err(ReflectError::mode(
+                "a program with annotations (`@materialize` / `@materialize_node`) cannot \
+                 be reflected: Projection T carries rules only, and the annotation feeds \
+                 stratification — losing it can change the answer, not just the write-back",
+            ));
+        }
+        if item.lattice_payload.is_some() {
+            return Err(ReflectError::mode(
+                "a rule with a lattice payload cannot be reflected: Projection T carries \
+                 the clause only",
+            ));
+        }
+    }
+    Ok(())
 }
 
 // ── Decoding — the executor's ONLY rule source ─────────────────────
@@ -550,6 +696,16 @@ pub struct DecodedRules {
     /// order facts happen to sit in storage (the reference sorts identically,
     /// `reflect.ts:214`).
     pub rules: Vec<Rule>,
+    /// The ENUMERATED rule id (the `rule/1` argument) each decoded rule was assembled
+    /// under, positionally parallel to [`Self::rules`] — the reference's `DRule.id`
+    /// (`reflect.ts:183`).
+    ///
+    /// It is NOT necessarily `rule_id(&rules[i])`: an incompletely reflected rule decodes
+    /// to a clause the id no longer names, which is the reference's behaviour and the
+    /// substrate of `p3-malformed-sibling`. The write-side collision gate
+    /// ([`encode_rules_to_records_beside`]) reads it for exactly that reason — it needs
+    /// what the store CLAIMS, not what the clause recomputes to.
+    pub ids: Vec<String>,
     /// Per-rule diagnostics for reflections that were skipped.
     pub diagnostics: Vec<String>,
 }
@@ -571,18 +727,22 @@ pub struct DecodedRules {
 /// A reflection whose terms do not decode is skipped with a diagnostic.
 ///
 /// Two facts claiming the same `conclusion_lit` slot: the last one in the scan wins, as in
-/// the reference. The scan order here is by fact id (content-addressed), so "last" is
-/// deterministic across runs rather than dependent on storage layout.
+/// the reference — and "last" means the same thing here as there. The reference's
+/// `relAll` walks a per-relation index held canonically sorted by
+/// `factKey = rel[persp](canonTerm(args))` (`store.ts:48-59`), so the scan below sorts on
+/// [`ReflectedFact::fact_key`]. Sorting on the content-addressed node id instead would be
+/// deterministic but ARBITRARY, and would pick a different winner from the reference on a
+/// contested slot.
 pub fn decode_rules(view: &dyn StorageView) -> DecodedRules {
     let mut diagnostics: Vec<String> = Vec::new();
-    let mut raw: Vec<(u128, ReflectedFact)> = Vec::new();
+    let mut raw: Vec<(String, ReflectedFact)> = Vec::new();
     for (id, blob) in view.reflected_facts() {
         match ReflectedFact::from_metadata_json(&blob) {
-            Ok(f) => raw.push((id, f)),
+            Ok(f) => raw.push((f.fact_key(), f)),
             Err(e) => diagnostics.push(format!("reflected fact {id:032x}: {e}; skipped")),
         }
     }
-    raw.sort_by_key(|(id, _)| *id);
+    raw.sort_by(|a, b| a.0.cmp(&b.0));
 
     let mut conclusions: BTreeMap<String, Value> = BTreeMap::new();
     let mut premises: BTreeMap<String, Vec<(i64, Value)>> = BTreeMap::new();
@@ -620,7 +780,9 @@ pub fn decode_rules(view: &dyn StorageView) -> DecodedRules {
     enumerated.sort();
     enumerated.dedup();
 
-    let mut rules: Vec<(String, Rule)> = Vec::new();
+    // (canonical clause, enumerated rule id, rule) — the canon leads because it is the
+    // reference's sort key (`reflect.ts:214`); the id rides along for the write-side gate.
+    let mut rules: Vec<(String, String, Rule)> = Vec::new();
     for id in enumerated {
         let Some(head_term) = conclusions.get(&id) else {
             diagnostics.push(format!("rule {id}: missing conclusion reflection; skipped"));
@@ -653,10 +815,16 @@ pub fn decode_rules(view: &dyn StorageView) -> DecodedRules {
             continue;
         }
         let rule = Rule::new(head, body);
-        rules.push((canon_clause(&rule), rule));
+        rules.push((canon_clause(&rule), id, rule));
     }
     rules.sort_by(|a, b| a.0.cmp(&b.0));
-    DecodedRules { rules: rules.into_iter().map(|(_, r)| r).collect(), diagnostics }
+    let mut out_rules = Vec::with_capacity(rules.len());
+    let mut out_ids = Vec::with_capacity(rules.len());
+    for (_, id, rule) in rules {
+        out_rules.push(rule);
+        out_ids.push(id);
+    }
+    DecodedRules { rules: out_rules, ids: out_ids, diagnostics }
 }
 
 fn as_rule_id(v: &Value) -> Option<String> {

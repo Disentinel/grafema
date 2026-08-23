@@ -508,6 +508,17 @@ impl GraphEngineV2 {
     /// one same-version data mutation (the delete→re-add un-tombstone) publishes a fresh
     /// tombstone `Arc` — the cache compares BOTH (see the field doc for why version
     /// alone is insufficient).
+    ///
+    /// The reserved reflected-rule type
+    /// ([`crate::derive::reflect::REFLECT_NODE_TYPE`]) is SUBTRACTED here. This counter
+    /// reads the store directly, not through
+    /// [`crate::derive::storage_glue::StorageView`], so it is the one place the view's
+    /// isolation of the rule store does not reach — and these numbers are not decoration:
+    /// they feed the cost model and the cartesian-product gate (`E-PLAN-003`). Left in,
+    /// `total_nodes` (and a `$rofl/reflect` entry in the per-type map) would grow with the
+    /// number of REFLECTED RULES, so the same program could plan differently in text mode
+    /// and in store mode — which is exactly the difference a text-vs-store differential
+    /// exists to rule out.
     fn derive_stats(
         &self,
         snapshot: &crate::storage_v2::read_snapshot::ReadSnapshot,
@@ -517,7 +528,8 @@ impl GraphEngineV2 {
                 return stats.clone();
             }
         }
-        let nodes_by_type = self.store.count_nodes_by_type_at(snapshot);
+        let mut nodes_by_type = self.store.count_nodes_by_type_at(snapshot);
+        nodes_by_type.remove(crate::derive::reflect::REFLECT_NODE_TYPE);
         let stats = crate::derive::builtin::Stats {
             total_nodes: nodes_by_type.values().sum(),
             total_edges: self.store.edge_count_at(snapshot) as u64,
@@ -1426,13 +1438,35 @@ impl GraphEngineV2 {
     /// The commit passes NO changed files: the reflected nodes live under the virtual file
     /// [`crate::derive::reflect::REFLECT_FILE`], so no re-analysis of a real source file
     /// can tombstone a rule.
+    ///
+    /// Two things this door REFUSES rather than accepts quietly, because both would show up
+    /// later as a wrong answer with no error attached:
+    ///
+    /// * a program Projection T cannot carry whole — `#requires`, `@materialize` /
+    ///   `@materialize_node` annotations, a lattice payload
+    ///   ([`crate::derive::reflect::refuse_unreflectable_program`]). Annotations are not
+    ///   only a write-back concern: they feed stratification, so a store built by dropping
+    ///   them could answer differently from the text it came from;
+    /// * a rule id already claimed in this store by a DIFFERENT clause
+    ///   ([`crate::derive::reflect::encode_rules_to_records_beside`]). Reflection is
+    ///   additive and the id is 32-bit, so a collision would merge two clauses' premises
+    ///   into a rule nobody wrote.
     pub fn reflect_program(
         &mut self,
         source: &str,
     ) -> std::result::Result<usize, crate::derive::EvalError> {
         let program = crate::derive::parser_ext::parse_ext_program(source)?;
+        crate::derive::reflect::refuse_unreflectable_program(&program)?;
         let rules = program.rules();
-        let records = crate::derive::reflect::encode_rules_to_records(&rules)?;
+        // What this store already claims, read through the same pinned view the executor
+        // would use, so the gate sees exactly the rules a decode would.
+        let already = {
+            let snapshot = self.snapshot();
+            let view =
+                crate::derive::storage_glue::BorrowedLsmStorageView::new(&self.store, snapshot);
+            crate::derive::reflect::rule_index(&view)
+        };
+        let records = crate::derive::reflect::encode_rules_to_records_beside(&rules, &already)?;
         let written = records.len();
         self.commit_batch_ext(records, vec![], &[], std::collections::HashMap::new(), &[])
             .map_err(|e| {
@@ -1565,7 +1599,28 @@ impl GraphEngineV2 {
     /// `db_config.json` from scratch, so the rule source and the ROFL marker are
     /// re-persisted afterwards ([`Self::persist_durable_flags`]). Clearing the DATA must
     /// never change what the database IS.
+    ///
+    /// So do the reflected RULES (step 0 lifts them out, step 4 puts them back). The flag
+    /// alone is not enough: a store-mode database whose rules were wiped keeps answering,
+    /// with an empty program and therefore an empty result — no error, no diagnostic, just
+    /// a quietly wrong answer. `clear` is about graph data; the program is not graph data.
     pub fn clear_durable(&mut self) -> Result<()> {
+        // ── 0. Lift the reflected RULES out before the data goes. ──
+        // `clear` empties the graph; the rules are not graph data, they are the PROGRAM,
+        // and they only live in the node space because that is the space the executor can
+        // read. Dropping them here would leave a store-mode database in the one state that
+        // fails silently: mode still `Store`, program now empty, every query answering an
+        // honest-looking empty set. Captured verbatim (same ids, same blobs), re-committed
+        // at the end — a clear that keeps the program is idempotent on it.
+        let reflected: Vec<crate::storage_v2::types::NodeRecordV2> = {
+            let snapshot = self.snapshot();
+            self.store.find_nodes_at(
+                &snapshot,
+                Some(crate::derive::reflect::REFLECT_NODE_TYPE),
+                None,
+            )
+        };
+
         let Some(path) = self.path.clone() else {
             // Ephemeral engine: the in-memory swap IS the durable clear.
             self.store = MultiShardStore::ephemeral(DEFAULT_SHARD_COUNT);
@@ -1574,6 +1629,15 @@ impl GraphEngineV2 {
             self.pending_tombstone_edges.clear();
             self.declared_fields.clear();
             self.reset_derive_caches();
+            if !reflected.is_empty() {
+                self.commit_batch_ext(
+                    reflected,
+                    vec![],
+                    &[],
+                    std::collections::HashMap::new(),
+                    &[],
+                )?;
+            }
             return Ok(());
         };
 
@@ -1605,6 +1669,17 @@ impl GraphEngineV2 {
         // marker, i.e. clearing the DATA would change the PROGRAM and the MODE. Re-persist
         // every durable flag we were opened with.
         self.persist_durable_flags(&path)?;
+
+        // ── 4. Put the PROGRAM back (step 0). ──
+        if !reflected.is_empty() {
+            self.commit_batch_ext(
+                reflected,
+                vec![],
+                &[],
+                std::collections::HashMap::new(),
+                &[],
+            )?;
+        }
         Ok(())
     }
 }
@@ -6826,30 +6901,57 @@ p(X) :- node(X, "CLASS")."#;
         assert_eq!(from_text.len(), 3, "text mode must see all three nodes");
     }
 
-    /// `@materialize` write-back is REFUSED in store mode with a typed `E-REFLECT-003`.
-    /// Projection T carries no annotations, so a write-back would find zero directives and
-    /// commit nothing while reporting success — silent data loss.
+    /// `@materialize` is refused on BOTH doors with a typed `E-REFLECT-003`.
+    ///
+    /// Projection T carries no annotations, so a write-back run from the store would find
+    /// zero directives and commit nothing while reporting success — silent data loss.
+    /// There are two ways to arrive there and both are closed:
+    ///
+    /// * the WRITE door — an annotated program is refused at reflection time, so the
+    ///   annotation never becomes a half-program in the store;
+    /// * the READ door — a database in store mode refuses a write-back request outright,
+    ///   whatever text it is handed, so a store built by some other route cannot reach it
+    ///   either.
     #[test]
     fn materialize_write_back_is_refused_in_store_mode() {
-        const SRC: &str = r#"@materialize(edge_type="REACHES")
+        const ANNOTATED: &str = r#"@materialize(edge_type="REACHES")
 p(X, Y) :- edge(X, Y, "CALLS")."#;
+        const PLAIN: &str = r#"p(X, Y) :- edge(X, Y, "CALLS")."#;
+
         let dir = tempfile::tempdir().unwrap();
         let mut engine = reflexive_fixture(dir.path());
-        engine.reflect_program(SRC).expect("reflect");
+
+        // The WRITE door.
+        let err = engine
+            .reflect_program(ANNOTATED)
+            .expect_err("an annotated program must not be reflectable");
+        assert_eq!(err.code(), crate::derive::reflect::E_REFLECT_MODE, "{err}");
+        // Positive control: the same clause WITHOUT the annotation reflects fine, so the
+        // refusal above is about the annotation and not about the rule.
+        assert!(engine.reflect_program(PLAIN).expect("reflect plain") > 0);
+
+        // The READ door.
         engine
             .set_rule_source(crate::derive::RuleSource::Store)
             .expect("set");
         engine.flush().expect("flush");
 
         let err = engine
-            .eval_derive_materialize(SRC, crate::datalog::EvalLimits::none())
+            .eval_derive_materialize(ANNOTATED, crate::datalog::EvalLimits::none())
             .expect_err("materialize must refuse in store mode");
         assert_eq!(err.code(), crate::derive::reflect::E_REFLECT_MODE, "{err}");
 
         let err = engine
-            .eval_derive_materialize_cached(SRC, crate::datalog::EvalLimits::none())
+            .eval_derive_materialize_cached(ANNOTATED, crate::datalog::EvalLimits::none())
             .expect_err("the cached materialize path must refuse too");
         assert_eq!(err.code(), crate::derive::reflect::E_REFLECT_MODE, "{err}");
+
+        // …and a plain query still works in the same database, so store mode is refusing
+        // the WRITE-BACK and not simply broken.
+        let rows = engine
+            .eval_derive("", "p", crate::datalog::EvalLimits::none())
+            .expect("plain query from the store");
+        assert_eq!(rows.len(), 1, "one CALLS edge in the fixture");
     }
 
     /// The materialize cache/pin key must carry the mode bit. Two modes hashing to one key
@@ -6868,9 +6970,17 @@ p(X, Y) :- edge(X, Y, "CALLS")."#;
     }
 
     /// A rule store with a BROKEN reflection beside a healthy one still answers from the
-    /// healthy rule, and the skip is reported on the event trace — never silently.
+    /// healthy rule: the decoder drops the unusable one and keeps its neighbour.
+    ///
+    /// The name says only what this level can measure. That the skip is also REPORTED
+    /// cannot be checked here — this entry installs
+    /// [`crate::derive::events::EventLog::discard`], so there is no trace to read; the
+    /// assertion for that lives one level down, where a sink can be installed
+    /// (`derive::reflect::tests::a_skipped_reflection_is_emitted_on_the_event_trace`).
+    /// In production the same diagnostic also goes to `tracing::warn!` in
+    /// [`crate::derive::program_for`], which is what makes it observable without a sink.
     #[test]
-    fn a_broken_reflection_is_reported_on_the_event_trace() {
+    fn a_broken_reflection_does_not_take_down_its_healthy_sibling() {
         use crate::derive::reflect::{ReflectedFact, REL_CONCLUSION_LIT, REL_RULE, rofl_atom};
 
         let dir = tempfile::tempdir().unwrap();
@@ -6908,6 +7018,127 @@ p(X, Y) :- edge(X, Y, "CALLS")."#;
             .eval_derive("", "p", crate::datalog::EvalLimits::none())
             .expect("the healthy rule must still answer");
         assert_eq!(rows.len(), 2, "two FUNCTIONs from the surviving rule");
+    }
+
+    /// The PLANNER's view of the graph must not notice that rules moved into the store.
+    ///
+    /// `derive_stats` counts the store directly, not through the isolating
+    /// [`crate::derive::storage_glue::StorageView`], so it is the one read point the
+    /// view's filter cannot reach. These numbers feed the cost model and the
+    /// cartesian-product gate (`E-PLAN-003`): if reflected nodes were counted, the same
+    /// program would plan against different magnitudes in text mode and in store mode,
+    /// which is precisely the difference a text-vs-store differential exists to exclude.
+    #[test]
+    fn reflected_rules_do_not_enter_the_planner_statistics() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = reflexive_fixture(dir.path());
+
+        let before = engine.derive_stats(&engine.snapshot());
+        assert!(
+            before.total_nodes > 0,
+            "positive control: the fixture has nodes to count"
+        );
+
+        // Reflect a program big enough that leaking it would be unmistakable.
+        let written = engine
+            .reflect_program(
+                r#"p(X, N) :- edge(X, Y, "CALLS"), node(Y, "FUNCTION"), attr(Y, "name", N).
+q(X) :- node(X, "FUNCTION").
+r(X, Y) :- edge(X, Y, "CALLS"), \+ node(X, "CLASS")."#,
+            )
+            .expect("reflect");
+        assert!(written >= 8, "the probe must be sizeable, wrote {written}");
+        engine.flush().expect("flush");
+
+        // Positive control on the SAME snapshot: the reserved nodes really are in the
+        // store — so a clean `nodes_by_type` below is a filter, not an empty database.
+        let snapshot = engine.snapshot();
+        let raw = engine.store.count_nodes_by_type_at(&snapshot);
+        assert_eq!(
+            raw.get(crate::derive::reflect::REFLECT_NODE_TYPE).copied(),
+            Some(written as u64),
+            "the raw store counter must see every reflected node"
+        );
+
+        let after = engine.derive_stats(&snapshot);
+        assert!(
+            !after
+                .nodes_by_type
+                .contains_key(crate::derive::reflect::REFLECT_NODE_TYPE),
+            "the reserved type must not appear in the planner's per-type map: {:?}",
+            after.nodes_by_type
+        );
+        assert_eq!(
+            after.total_nodes, before.total_nodes,
+            "reflecting a program must not change the node magnitude the planner sees"
+        );
+        assert_eq!(
+            after.nodes_by_type, before.nodes_by_type,
+            "…nor any per-type magnitude"
+        );
+    }
+
+    /// Clearing the DATA must not clear the PROGRAM.
+    ///
+    /// `clear_durable` keeps the reflexive flag (checked above), and the flag without the
+    /// rules is the worst of both: the database still answers from the store, the store is
+    /// empty, and every query returns nothing — a silent, total wrong answer rather than an
+    /// error. So the reflected records are lifted out before the wipe and put back after.
+    #[test]
+    fn clear_durable_keeps_the_reflected_program() {
+        const SRC: &str = r#"p(X) :- node(X, "FUNCTION")."#;
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = reflexive_fixture(dir.path());
+        let written = engine.reflect_program(SRC).expect("reflect");
+        assert!(written > 0);
+        engine
+            .set_rule_source(crate::derive::RuleSource::Store)
+            .expect("set");
+        engine.flush().expect("flush");
+
+        // Positive control before the clear: the store answers, non-empty.
+        let before = engine
+            .eval_derive("", "p", crate::datalog::EvalLimits::none())
+            .expect("store mode eval");
+        assert_eq!(before.len(), 2, "two FUNCTIONs in the fixture");
+
+        engine.clear_durable().expect("clear");
+
+        // The rules survived the wipe, byte for byte: same count, same decoded clause.
+        let snapshot = engine.snapshot();
+        let kept = engine.store.count_nodes_by_type_at(&snapshot);
+        assert_eq!(
+            kept.get(crate::derive::reflect::REFLECT_NODE_TYPE).copied(),
+            Some(written as u64),
+            "clearing the data must not take the program with it"
+        );
+        let view = crate::derive::storage_glue::BorrowedLsmStorageView::new(&engine.store, snapshot);
+        let index = crate::derive::reflect::rule_index(&view);
+        assert_eq!(
+            index.values().cloned().collect::<Vec<_>>(),
+            vec![crate::derive::reflect::canon_clause(
+                &crate::derive::parser_ext::parse_ext_program(SRC).expect("parse").rules()[0]
+            )],
+            "the surviving store must decode to the very clause that was reflected"
+        );
+
+        // …and the emptied database answers again once data comes back.
+        let refill = vec![
+            make_v2_node("a.js->FUNCTION->f", "FUNCTION", "f", "a.js"),
+            make_v2_node("a.js->FUNCTION->g", "FUNCTION", "g", "a.js"),
+        ];
+        engine
+            .commit_batch_ext(refill, vec![], &[], std::collections::HashMap::new(), &[])
+            .expect("commit");
+        engine.flush().expect("flush");
+        let after = engine
+            .eval_derive("", "p", crate::datalog::EvalLimits::none())
+            .expect("store mode eval after clear");
+        assert_eq!(
+            after.len(),
+            2,
+            "the same program, re-run on the refilled graph"
+        );
     }
 
 }

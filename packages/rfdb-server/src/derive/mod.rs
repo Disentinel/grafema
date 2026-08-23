@@ -218,6 +218,13 @@ impl RuleSource {
 /// broken reflection and keeps going (`vendor/rofl-v0/src/reflect.ts:200-213`), and a
 /// healthy rule must not be taken down by a broken neighbour. They are handed to the
 /// caller so they can never be lost silently.
+///
+/// "Not silently" is enforced HERE rather than left to the callers, and the difference is
+/// load-bearing. Handing the vector back covers only the eval entry, which puts it on the
+/// event trace — and production installs [`EventLog::discard`], while both explain entries
+/// drop the vector unread. A skipped reflection means the program SHRANK without anyone
+/// asking; it must leave a mark that does not depend on who happens to be listening, so
+/// every skip is also logged at WARN on the way out.
 pub(crate) fn program_for(
     view: &dyn StorageView,
     source: &str,
@@ -227,6 +234,9 @@ pub(crate) fn program_for(
         RuleSource::Text => Ok((parse_ext_program(source)?, Vec::new())),
         RuleSource::Store => {
             let decoded = crate::derive::reflect::program_from_store(view);
+            for d in &decoded.diagnostics {
+                tracing::warn!(target: "rofl::reflect", "reflection skipped: {d}");
+            }
             Ok((decoded.program, decoded.diagnostics))
         }
     }
