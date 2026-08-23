@@ -54,7 +54,7 @@
 //! ([`Literal`]) and nothing else; builtins are ordinary atoms dispatched by predicate name
 //! (`derive/builtin.rs`).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{json, Value as Json};
 
@@ -81,6 +81,43 @@ pub const REL_CONCLUSION_LIT: &str = "conclusion_lit";
 /// Projection T, relation 3 of 3 — `premise_lit(RuleId, K, ReifiedBodyElem)`.
 pub const REL_PREMISE_LIT: &str = "premise_lit";
 
+/// Projection T, relation 4 — `supersedes(NewRuleId, OldRuleId)`: the record that a rule
+/// is no longer in force, and by whose authority.
+///
+/// NOT a new mechanism. The name, the arity and the argument ORDER are the fact layer's
+/// reserved `supersedes/2` verbatim (`derive/catalog.rs` ⟦fn supersedes_decl⟧ declares
+/// `(aid_new, aid_old)`; `facts/lsm.rs` ⟦fn supersedes_record_of⟧ writes that tuple), and
+/// liveness is the fact layer's §2.4 rule run by the fact layer's own code
+/// ([`crate::facts::resolve_supersession`]). What differs is only WHAT is named: the fact
+/// layer supersedes ASSERTIONS by aid, Projection T supersedes RULES by rule id.
+///
+/// Why `FactStore::supersede` could not simply be called instead — three measured
+/// reasons, not a preference: its victim identity is `aid = BLAKE3(fid ‖ author ‖ tick)`
+/// and its selector is a `SupersedeScope { author, perspective, predicate, subject_set }`,
+/// while a reflected rule has neither author nor tick ([`ReflectedFact::fact_id`] is
+/// fid-only), so the scope has nothing to select on; its record vocabulary knows
+/// node/attr/edge/supersedes/conflict and not [`REFLECT_NODE_TYPE`]; and no `FactStore` is
+/// instantiated anywhere in the server, which the mechanical guard
+/// `facts::hygiene_tests::no_fact_store_consumer_outside_facts` exists to keep true. The
+/// LAW is shared; the substrate cannot be.
+pub const REL_SUPERSEDES: &str = "supersedes";
+
+/// The SURFACE by which a reflected program declares a supersession: a bodyless clause
+/// `supersedes("rc66425ca").` (the bare-atom spelling `supersedes(rc66425ca).` reads the
+/// same), carrying the victim's rule id — the same reserved name as [`REL_SUPERSEDES`],
+/// one argument short, because the write door fills the missing one in.
+///
+/// The missing argument is WHO supersedes, and its absence is the point. It is every
+/// ordinary rule of the same program, so a supersession can only be spelled the way the
+/// spec allows: by declaring the rule that takes the old one's place. A program carrying
+/// this directive and no ordinary rule is REFUSED ([`E_REFLECT_SUPERSEDE`]) — that
+/// refusal is what makes «no retract, supersede only» a property of the door instead of a
+/// remark in a comment.
+///
+/// The name cannot collide with the conformance corpus: the harness namespaces every
+/// generated relation `u_<rel>` (`rofl-conformance/src/translate.ts`).
+pub const SUPERSEDE_DIRECTIVE_ARITY: usize = 1;
+
 /// The only perspective this slice reflects into. RFDB rules carry no perspective.
 pub const REFLECT_PERSPECTIVE: &str = "main";
 /// The only temporal scope this slice reflects. RFDB rules carry no temporal scope.
@@ -103,6 +140,10 @@ pub const E_REFLECT_ENCODE: &str = "E-REFLECT-001";
 pub const E_REFLECT_DECODE: &str = "E-REFLECT-002";
 /// The requested path is unavailable while rules come from the store.
 pub const E_REFLECT_MODE: &str = "E-REFLECT-003";
+/// A supersession declaration the store cannot accept: no superseding rule to carry it, an
+/// unknown victim, or a claim set whose graph has a cycle. The Projection T counterpart of
+/// the fact layer's `E-SUP-001` store boundary — the refusal that keeps the read side total.
+pub const E_REFLECT_SUPERSEDE: &str = "E-REFLECT-004";
 
 impl ReflectError {
     fn new(code: &'static str, detail: impl Into<String>) -> Self {
@@ -585,11 +626,113 @@ pub fn encode_rule(r: &Rule) -> Result<(String, Vec<ReflectedFact>), ReflectErro
 ///
 /// Equivalent to [`encode_rules_to_records_beside`] against an empty store.
 pub fn encode_rules_to_records(rules: &[&Rule]) -> Result<Vec<NodeRecordV2>, ReflectError> {
-    encode_rules_to_records_beside(rules, &BTreeMap::new())
+    encode_rules_to_records_beside(rules, &StoreRuleIndex::default())
+}
+
+/// What a store ALREADY claims, as the write door needs to see it — the value
+/// [`rule_index`] returns and [`encode_rules_to_records_beside`] consumes.
+///
+/// Two fields because the write door has two independent duties, and one of them is new:
+/// refusing a 32-bit rule-id collision needs the clause behind every id, and refusing an
+/// unbuildable supersession needs the claims already standing.
+#[derive(Debug, Clone, Default)]
+pub struct StoreRuleIndex {
+    /// Enumerated rule id → canonical clause, for EVERY rule the store carries —
+    /// superseded ones included. A superseded rule keeps its id reserved: it is still in
+    /// the store, `decode_rules` still assembles it, and a new clause landing on the same
+    /// 32-bit id would still merge its premises with facts that never went away.
+    pub canon_by_rule_id: BTreeMap<String, String>,
+    /// The `supersedes(New, Old)` claims already in the store.
+    pub claims: BTreeSet<(String, String)>,
+}
+
+impl StoreRuleIndex {
+    /// The canonical clause of every rule the store carries, in rule-id order — what the
+    /// store DECODES TO, which is the question «did my program survive» asks.
+    pub fn values(&self) -> std::collections::btree_map::Values<'_, String, String> {
+        self.canon_by_rule_id.values()
+    }
+}
+
+/// Split a reflected program's clauses into the ordinary rules and the supersession
+/// directives ([`SUPERSEDE_DIRECTIVE_ARITY`]-ary bodyless `supersedes(...)` clauses).
+///
+/// A `supersedes` clause is a DIRECTIVE, never a rule: it is not enumerated, not encoded
+/// and never executed. Anything else wearing the reserved name — a body, the wrong arity,
+/// a non-ground argument — is refused rather than quietly executed as a user predicate,
+/// because a program whose supersession silently became an ordinary fact would answer with
+/// the old rule still in force and no error attached.
+pub fn split_supersede_directives<'a>(
+    rules: &[&'a Rule],
+) -> Result<(Vec<&'a Rule>, Vec<String>), ReflectError> {
+    let mut ordinary = Vec::new();
+    let mut victims = Vec::new();
+    for r in rules {
+        if r.head().predicate() != REL_SUPERSEDES {
+            ordinary.push(*r);
+            continue;
+        }
+        if !r.body().is_empty() {
+            return Err(ReflectError::new(
+                E_REFLECT_SUPERSEDE,
+                format!(
+                    "'{REL_SUPERSEDES}' is reserved: it declares a supersession and must be a \
+                     bodyless clause, but '{}' has a body",
+                    canon_clause(r)
+                ),
+            ));
+        }
+        if r.head().args().len() != SUPERSEDE_DIRECTIVE_ARITY {
+            return Err(ReflectError::new(
+                E_REFLECT_SUPERSEDE,
+                format!(
+                    "'{REL_SUPERSEDES}' is reserved and takes exactly \
+                     {SUPERSEDE_DIRECTIVE_ARITY} argument (the superseded rule id); '{}' has {}",
+                    canon_clause(r),
+                    r.head().args().len()
+                ),
+            ));
+        }
+        match &r.head().args()[0] {
+            Term::Const(id) => victims.push(id.clone()),
+            other => {
+                return Err(ReflectError::new(
+                    E_REFLECT_SUPERSEDE,
+                    format!(
+                        "'{REL_SUPERSEDES}' needs a ground rule id; found {other:?} in '{}'",
+                        canon_clause(r)
+                    ),
+                ))
+            }
+        }
+    }
+    Ok((ordinary, victims))
+}
+
+/// Refuse a program that carries a supersession directive on the TEXT evaluation path.
+///
+/// The directive names a rule in the STORE. Evaluated as text there is no store, the
+/// clause degenerates into an ordinary ground fact, and the rule the caller meant to take
+/// out of force keeps answering — a wrong answer with no error attached, which is exactly
+/// the failure mode this codebase refuses to ship (see [`refuse_unreflectable_program`],
+/// same reasoning in the other direction).
+pub fn refuse_supersede_directive_in_text(rules: &[&Rule]) -> Result<(), ReflectError> {
+    if let Some(r) = rules.iter().find(|r| r.head().predicate() == REL_SUPERSEDES) {
+        return Err(ReflectError::new(
+            E_REFLECT_SUPERSEDE,
+            format!(
+                "'{}' is a supersession declaration and names a rule in the STORE: it can be \
+                 reflected, not evaluated as text — as text the superseded rule would keep \
+                 answering and nothing would say so",
+                canon_clause(r)
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// [`encode_rules_to_records`] against a store that ALREADY holds reflected rules
-/// (`already`: enumerated rule id → canonical clause, from [`rule_index`]).
+/// (`already`, from [`rule_index`]).
 ///
 /// # Why the gate exists
 ///
@@ -605,14 +748,33 @@ pub fn encode_rules_to_records(rules: &[&Rule]) -> Result<Vec<NodeRecordV2>, Ref
 /// documented outcomes on an incomplete reflection (a rule missing premises decodes to a
 /// shorter clause with a different id — the reference runs it, and `p3-malformed-sibling`
 /// stands on exactly that).
+///
+/// # The supersession gate
+///
+/// Three refusals, all `E-REFLECT-004`, all mirroring what the fact layer gets from its
+/// `E-SUP-001` store boundary (`facts/mod.rs` ⟦fn supersede⟧):
+///
+/// * a directive with NO ordinary rule in the same program to carry it. The fact layer has
+///   no equivalent because it supersedes assertions, not rules; here it is the whole
+///   point — «no retract, supersede only» means a rule leaves only when another arrives;
+/// * a victim that is not in the store already. The fact layer's D11 boundary demands the
+///   victim resolve in the PRE-COMMIT snapshot for the same reason: superseding something
+///   that does not exist is a typo that would otherwise be indistinguishable from success;
+/// * a claim set whose graph has a cycle. The fact layer never has to check — strict tick
+///   monotonicity makes a cycle unbuildable — but Projection T has no tick, so the check
+///   is explicit ([`crate::facts::supersession_order`]). Refusing here is what keeps
+///   [`decode_rules`] total: mutual supersession has no single answer.
 pub fn encode_rules_to_records_beside(
     rules: &[&Rule],
-    already: &BTreeMap<String, String>,
+    already: &StoreRuleIndex,
 ) -> Result<Vec<NodeRecordV2>, ReflectError> {
-    let mut canon_by_rule_id: BTreeMap<String, String> = already.clone();
+    let (ordinary, victims) = split_supersede_directives(rules)?;
+    let mut canon_by_rule_id: BTreeMap<String, String> = already.canon_by_rule_id.clone();
     let mut by_id: BTreeMap<u128, NodeRecordV2> = BTreeMap::new();
-    for r in rules {
+    let mut superseders: Vec<String> = Vec::new();
+    for r in &ordinary {
         let (id, facts) = encode_rule(r)?;
+        superseders.push(id.clone());
         let canon = canon_clause(r);
         if let Some(prev) = canon_by_rule_id.insert(id.clone(), canon.clone()) {
             if prev != canon {
@@ -631,22 +793,75 @@ pub fn encode_rules_to_records_beside(
             by_id.insert(rec.id, rec);
         }
     }
+
+    if !victims.is_empty() {
+        if superseders.is_empty() {
+            return Err(ReflectError::new(
+                E_REFLECT_SUPERSEDE,
+                format!(
+                    "'{REL_SUPERSEDES}({})' has no superseding rule in the same program: a rule \
+                     is taken out of force only by the rule that replaces it — there is no \
+                     retraction",
+                    victims.join("', '")
+                ),
+            ));
+        }
+        let mut claims: Vec<(String, String)> = already.claims.iter().cloned().collect();
+        for victim in &victims {
+            if !already.canon_by_rule_id.contains_key(victim) {
+                return Err(ReflectError::new(
+                    E_REFLECT_SUPERSEDE,
+                    format!(
+                        "'{REL_SUPERSEDES}({victim})' names a rule this store does not carry: a \
+                         supersession must resolve its victim in the pre-commit store, or a typo \
+                         would be indistinguishable from a supersession that worked"
+                    ),
+                ));
+            }
+            for new in &superseders {
+                claims.push((new.clone(), victim.clone()));
+            }
+        }
+        if crate::facts::supersession_order(&claims).is_none() {
+            return Err(ReflectError::new(
+                E_REFLECT_SUPERSEDE,
+                format!(
+                    "'{REL_SUPERSEDES}({})' would close a supersession cycle: mutual \
+                     supersession has no single answer, so the claim never becomes writable",
+                    victims.join("', '")
+                ),
+            ));
+        }
+        for (new, old) in claims.iter().skip(already.claims.len()) {
+            let fact = ReflectedFact::new(
+                REL_SUPERSEDES,
+                vec![rofl_atom(new), rofl_atom(old)],
+            );
+            let rec = fact.to_node_record()?;
+            by_id.insert(rec.id, rec);
+        }
+    }
+
     Ok(by_id.into_values().collect())
 }
 
-/// The rules a store already holds, as enumerated rule id → canonical clause — the
-/// `already` argument of [`encode_rules_to_records_beside`].
+/// What a store already claims — the `already` argument of
+/// [`encode_rules_to_records_beside`].
 ///
 /// Built from [`decode_rules`], so a reflection the decoder skips is absent here: there is
-/// no clause to collide with.
-pub fn rule_index(view: &dyn StorageView) -> BTreeMap<String, String> {
+/// no clause to collide with. Superseded rules ARE present, deliberately: they never left
+/// the store, so their ids are still taken and their facts would still be picked up by a
+/// colliding clause.
+pub fn rule_index(view: &dyn StorageView) -> StoreRuleIndex {
     let decoded = decode_rules(view);
-    decoded
+    let canon_by_rule_id = decoded
         .ids
         .iter()
         .zip(decoded.rules.iter())
+        .chain(decoded.superseded_ids.iter().zip(decoded.superseded_rules.iter()))
         .map(|(id, r)| (id.clone(), canon_clause(r)))
-        .collect()
+        .collect();
+    StoreRuleIndex { canon_by_rule_id, claims: decoded.claims.iter().cloned().collect() }
 }
 
 /// Refuse a program Projection T cannot carry whole.
@@ -706,6 +921,23 @@ pub struct DecodedRules {
     /// ([`encode_rules_to_records_beside`]) reads it for exactly that reason — it needs
     /// what the store CLAIMS, not what the clause recomputes to.
     pub ids: Vec<String>,
+    /// THE HISTORY DOOR: rules the store still carries but that are no longer in force,
+    /// because a live `supersedes(_, id)` claim names them. Assembled exactly like
+    /// [`Self::rules`] and sorted the same way — the only difference is that they are not
+    /// handed to the executor.
+    ///
+    /// Not a leftover and not a debugging aid. It is the answer to «what used to hold
+    /// here», and it exists because supersession must not be spelled as deletion: the
+    /// facts of a superseded rule are still in storage, still readable, still decodable
+    /// into the clause that once ran.
+    pub superseded_rules: Vec<Rule>,
+    /// The enumerated rule id of each entry of [`Self::superseded_rules`], positionally
+    /// parallel to it.
+    pub superseded_ids: Vec<String>,
+    /// Every `supersedes(New, Old)` claim the store carries, sorted — including claims
+    /// whose superseder is itself superseded, which is why the count can exceed the number
+    /// of rules actually taken out of force.
+    pub claims: Vec<(String, String)>,
     /// Per-rule diagnostics for reflections that were skipped.
     pub diagnostics: Vec<String>,
 }
@@ -733,6 +965,21 @@ pub struct DecodedRules {
 /// [`ReflectedFact::fact_key`]. Sorting on the content-addressed node id instead would be
 /// deterministic but ARBITRARY, and would pick a different winner from the reference on a
 /// contested slot.
+///
+/// # Supersession
+///
+/// A rule the store still carries is nevertheless withheld from the executor when a LIVE
+/// [`REL_SUPERSEDES`] claim names it. Live means the fact layer's §2.4 rule, run by the
+/// fact layer's own code ([`crate::facts::resolve_supersession`]): a claim only kills if
+/// its own superseder was not itself superseded. Withheld is not dropped — the rule and
+/// its id come back in [`DecodedRules::superseded_rules`] / `superseded_ids`, which is the
+/// only reason «history intact» is a property of this function and not of a comment.
+///
+/// The pass is total because the write door already refused every cyclic claim set, so
+/// [`crate::facts::supersession_order`] always succeeds here. If it ever did not, the
+/// claims are left UNORDERED rather than dropped: an out-of-order pass can only kill
+/// FEWER rules (a claim whose superseder is killed later still fired), never more, so a
+/// corrupted store degrades toward the rules still running rather than toward silence.
 pub fn decode_rules(view: &dyn StorageView) -> DecodedRules {
     let mut diagnostics: Vec<String> = Vec::new();
     let mut raw: Vec<(String, ReflectedFact)> = Vec::new();
@@ -747,9 +994,19 @@ pub fn decode_rules(view: &dyn StorageView) -> DecodedRules {
     let mut conclusions: BTreeMap<String, Value> = BTreeMap::new();
     let mut premises: BTreeMap<String, Vec<(i64, Value)>> = BTreeMap::new();
     let mut enumerated: Vec<String> = Vec::new();
+    let mut claim_set: BTreeSet<(String, String)> = BTreeSet::new();
 
     for (_, f) in &raw {
         match f.predicate.as_str() {
+            REL_SUPERSEDES => {
+                if f.args.len() == 2 {
+                    if let (Some(new), Some(old)) =
+                        (as_rule_id(&f.args[0]), as_rule_id(&f.args[1]))
+                    {
+                        claim_set.insert((new, old));
+                    }
+                }
+            }
             REL_RULE => {
                 if f.args.len() == 1 {
                     if let Some(id) = as_rule_id(&f.args[0]) {
@@ -818,13 +1075,36 @@ pub fn decode_rules(view: &dyn StorageView) -> DecodedRules {
         rules.push((canon_clause(&rule), id, rule));
     }
     rules.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // The §2.4 liveness rule, run by the fact layer's own code over the claims this store
+    // carries. The order comes from `supersession_order` because Projection T has no tick;
+    // if the store somehow holds a cycle the write door refuses, the claims go through
+    // unordered — which can only under-kill, never over-kill.
+    let claims: Vec<(String, String)> = claim_set.into_iter().collect();
+    let ordered = crate::facts::supersession_order(&claims).unwrap_or_else(|| claims.clone());
+    let (killed, _) = crate::facts::resolve_supersession(&ordered);
+
     let mut out_rules = Vec::with_capacity(rules.len());
     let mut out_ids = Vec::with_capacity(rules.len());
+    let mut dead_rules = Vec::new();
+    let mut dead_ids = Vec::new();
     for (_, id, rule) in rules {
-        out_rules.push(rule);
-        out_ids.push(id);
+        if killed.contains(&id) {
+            dead_rules.push(rule);
+            dead_ids.push(id);
+        } else {
+            out_rules.push(rule);
+            out_ids.push(id);
+        }
     }
-    DecodedRules { rules: out_rules, ids: out_ids, diagnostics }
+    DecodedRules {
+        rules: out_rules,
+        ids: out_ids,
+        superseded_rules: dead_rules,
+        superseded_ids: dead_ids,
+        claims,
+        diagnostics,
+    }
 }
 
 fn as_rule_id(v: &Value) -> Option<String> {

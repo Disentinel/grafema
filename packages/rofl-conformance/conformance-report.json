@@ -4,8 +4,8 @@
       "rev": "052a4c5"
     },
     "rfdb": {
-      "gitSha": "a3c6e7656ff6729f62961dbc8216975c09663db2",
-      "binary": "/tmp/rofl-verify-target/release/rfdb-server",
+      "gitSha": "fa5e1493a39661b90242e794aadda3e1523d1223",
+      "binary": "/tmp/rofl-supersede-target/release/rfdb-server",
       "serverVersion": "0.4.1",
       "protocolVersion": 3
     }

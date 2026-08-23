@@ -673,16 +673,16 @@ fn two_clauses_under_one_rule_id_are_refused_at_encode_time() {
     let id_a = rule_id(&a);
 
     // Simulate the collision by declaring `a`'s id already taken by `b`'s clause.
-    let mut already = std::collections::BTreeMap::new();
-    already.insert(id_a.clone(), canon_clause(&b));
+    let mut already = StoreRuleIndex::default();
+    already.canon_by_rule_id.insert(id_a.clone(), canon_clause(&b));
 
     let err = encode_rules_to_records_beside(&[&a], &already)
         .expect_err("a collision must be refused, not merged");
     assert_eq!(err.code, E_REFLECT_ENCODE, "{err}");
 
     // Positive control: the SAME clause under the same id is idempotence, not a collision.
-    let mut same = std::collections::BTreeMap::new();
-    same.insert(id_a.clone(), canon_clause(&a));
+    let mut same = StoreRuleIndex::default();
+    same.canon_by_rule_id.insert(id_a.clone(), canon_clause(&a));
     assert!(encode_rules_to_records_beside(&[&a], &same).is_ok());
 
     // …and the plain entry (empty store) still encodes both rules side by side.
@@ -700,8 +700,12 @@ fn the_rule_index_reports_what_the_store_claims() {
     db.flush();
 
     let index = rule_index(&db.view());
-    assert_eq!(index.len(), 1);
-    assert_eq!(index.get(&rule_id(&rule)).map(String::as_str), Some(canon_clause(&rule).as_str()));
+    assert_eq!(index.canon_by_rule_id.len(), 1);
+    assert_eq!(
+        index.canon_by_rule_id.get(&rule_id(&rule)).map(String::as_str),
+        Some(canon_clause(&rule).as_str())
+    );
+    assert!(index.claims.is_empty(), "a store with no supersession carries no claims");
 }
 
 /// A program Projection T cannot carry WHOLE is refused rather than reflected minus the
@@ -817,4 +821,428 @@ fn a_skipped_reflection_is_emitted_on_the_event_trace() {
         rows, 2,
         "positive control: the healthy neighbour still answers"
     );
+}
+
+// ── Supersession: the acceptance criterion of the rules-as-data slice ──
+//
+// «superseding rule → old derivations superseded, history intact; no retract API exists.»
+//
+// Every test below carries the control the criterion needs and is easy to fake without: a
+// superseded rule stops deriving, so the WRONG answer and the BROKEN answer are both the
+// empty set. So each measurement pins a NON-EMPTY answer before and a DIFFERENT NON-EMPTY
+// answer after, and where the counts allow it, the "both rules still live" count too — the
+// fixture is chosen so 2 / 1 / 3 / 0 mean four distinct things.
+
+/// A store holding a program, ready to be superseded: two FUNCTIONs and one CLASS, so
+/// "the old rule" answers 2, "the new rule" answers 1, "both" answers 3 and "broken"
+/// answers 0 — four outcomes no two of which can be confused.
+fn supersession_fixture() -> Db {
+    let mut db = Db::new();
+    db.commit(vec![
+        ordinary_node("a.js->FUNCTION->f", "FUNCTION", "f", "a.js"),
+        ordinary_node("a.js->FUNCTION->g", "FUNCTION", "g", "a.js"),
+        ordinary_node("b.js->CLASS->C", "CLASS", "C", "b.js"),
+    ]);
+    db
+}
+
+/// Derive `p` out of the STORE's rules and return the rows.
+fn store_mode_p(db: &Db) -> Vec<Box<[Value]>> {
+    let stats = crate::derive::builtin::Stats {
+        total_nodes: 3,
+        total_edges: 0,
+        ..Default::default()
+    };
+    let eval = crate::derive::evaluate_in(
+        &db.view(),
+        "",
+        crate::derive::RuleSource::Store,
+        stats,
+        crate::datalog::EvalLimits::none(),
+        crate::derive::events::EventLog::discard(),
+    )
+    .expect("evaluate from store");
+    eval.facts("p")
+}
+
+/// Reflect a program's clauses into `db` the way `reflect_program` does — through
+/// [`rule_index`], so the supersession gate sees exactly what the store claims.
+fn reflect_into(db: &mut Db, source: &str) -> Result<usize, ReflectError> {
+    let program = crate::derive::parser_ext::parse_ext_program(source).expect("parse");
+    let rules = program.rules();
+    let already = rule_index(&db.view());
+    let records = encode_rules_to_records_beside(&rules, &already)?;
+    let n = records.len();
+    db.commit(records);
+    db.flush();
+    Ok(n)
+}
+
+/// (а) of the criterion: a rule declared as superseding the old one takes the old one's
+/// DERIVATIONS out of force.
+///
+/// The two controls the criterion is worthless without:
+/// * before — the same query at the same place answers 2 (non-empty), so the store and the
+///   evaluator were working;
+/// * after — it answers 1 (non-empty, and a DIFFERENT row: the CLASS, not the FUNCTIONs),
+///   so the emptiness of the old rule is not the emptiness of a broken pipeline.
+///
+/// And 3 is spelled out as the failure it would be: additive reflection with no
+/// supersession leaves both clauses live and answers 3.
+#[test]
+fn a_superseding_rule_takes_the_old_derivations_out_of_force() {
+    let mut db = supersession_fixture();
+    let old = parse_one("p(X) :- node(X, \"FUNCTION\").");
+    let old_id = rule_id(&old);
+    reflect_into(&mut db, "p(X) :- node(X, \"FUNCTION\").").expect("reflect the old rule");
+
+    let before = store_mode_p(&db);
+    assert_eq!(before.len(), 2, "positive control BEFORE: the old rule derives both FUNCTIONs");
+
+    reflect_into(
+        &mut db,
+        &format!("p(X) :- node(X, \"CLASS\").\nsupersedes(\"{old_id}\")."),
+    )
+    .expect("reflect the superseding rule");
+
+    let after = store_mode_p(&db);
+    assert_eq!(
+        after.len(),
+        1,
+        "positive control AFTER: the new rule derives the one CLASS — 3 would mean the old \
+         rule is still live, 0 would mean nothing derived at all. Got {after:?}"
+    );
+    // Not just a different COUNT — a different row.
+    assert_ne!(after[0], before[0], "the surviving derivation must be the new rule's");
+    assert_ne!(after[0], before[1], "the surviving derivation must be the new rule's");
+}
+
+/// (б) of the criterion: HISTORY INTACT. The superseded rule is still in the store — its
+/// facts are still there, and it still decodes into the clause that used to run.
+///
+/// Kept as its own test on purpose. "It stopped deriving" and "it is still on record" are
+/// two different claims, and the second one is the one a deletion would silently fail.
+#[test]
+fn the_superseded_rule_stays_in_the_store_and_still_decodes() {
+    let mut db = supersession_fixture();
+    let old = parse_one("p(X) :- node(X, \"FUNCTION\").");
+    let old_id = rule_id(&old);
+    reflect_into(&mut db, "p(X) :- node(X, \"FUNCTION\").").expect("reflect");
+
+    let facts_before = db.view().reflected_facts().len();
+    let enumerator_fid = ReflectedFact::new(REL_RULE, vec![rofl_atom(&old_id)])
+        .fact_id()
+        .expect("fid");
+    assert!(
+        db.view().reflected_facts().iter().any(|(id, _)| *id == enumerator_fid),
+        "control: the rule's enumerator fact is in the store before the supersession"
+    );
+
+    reflect_into(
+        &mut db,
+        &format!("p(X) :- node(X, \"CLASS\").\nsupersedes(\"{old_id}\")."),
+    )
+    .expect("reflect the superseding rule");
+
+    // Nothing left. The store only grew.
+    let facts_after = db.view().reflected_facts().len();
+    assert!(
+        facts_after > facts_before,
+        "supersession must ADD records, never remove them: {facts_before} → {facts_after}"
+    );
+    assert!(
+        db.view().reflected_facts().iter().any(|(id, _)| *id == enumerator_fid),
+        "the superseded rule's enumerator fact must still be in the store"
+    );
+
+    // And it is still readable AS A RULE, not just as bytes.
+    let decoded = decode_rules(&db.view());
+    assert_eq!(
+        decoded.superseded_ids,
+        vec![old_id.clone()],
+        "the decoder must report the superseded rule as history, not drop it"
+    );
+    assert_eq!(
+        decoded.superseded_rules,
+        vec![old],
+        "the history entry must decode to the clause that used to run"
+    );
+    assert_eq!(decoded.rules.len(), 1, "exactly one rule is in force");
+    assert_eq!(decoded.claims.len(), 1, "one claim, and it is on the record too");
+
+    // The write door still knows the dead id is taken — a new clause colliding with it
+    // would merge its premises with facts that never went away.
+    assert!(
+        rule_index(&db.view()).canon_by_rule_id.contains_key(&old_id),
+        "a superseded rule keeps its id reserved"
+    );
+}
+
+/// (б) again, past the one event that can quietly undo it: COMPACTION.
+///
+/// «History intact until the first compaction» is not history. Compaction folds segments
+/// and applies tombstones, so a store that keeps a superseded rule only because nothing has
+/// rewritten the segments yet has not proven anything.
+#[test]
+fn the_superseded_rule_survives_a_full_compaction() {
+    use crate::storage_v2::compaction::types::CompactionConfig;
+
+    let mut db = supersession_fixture();
+    let old = parse_one("p(X) :- node(X, \"FUNCTION\").");
+    let old_id = rule_id(&old);
+    reflect_into(&mut db, "p(X) :- node(X, \"FUNCTION\").").expect("reflect");
+    reflect_into(
+        &mut db,
+        &format!("p(X) :- node(X, \"CLASS\").\nsupersedes(\"{old_id}\")."),
+    )
+    .expect("reflect the superseding rule");
+
+    let before = db.view().reflected_facts().len();
+    assert!(before >= 7, "control: the store carries both rules and the claim, got {before}");
+
+    // `segment_threshold: 1` + `l1_fanout: 1.0` is the FULL merge — the policy that
+    // rewrites every run and physically drops what it decides is obsolete.
+    let result = db
+        .store
+        .compact(&mut db.manifest, &CompactionConfig { segment_threshold: 1, l1_fanout: 1.0 })
+        .expect("compact");
+    assert!(
+        !result.shards_compacted.is_empty(),
+        "control: the compaction must actually have run, got {result:?}"
+    );
+
+    let after = db.view().reflected_facts().len();
+    assert_eq!(after, before, "compaction must not drop a reflected record");
+
+    let decoded = decode_rules(&db.view());
+    assert_eq!(
+        decoded.superseded_rules,
+        vec![old],
+        "the superseded rule must still decode AFTER the merge rewrote the segments"
+    );
+    assert_eq!(store_mode_p(&db).len(), 1, "and the live answer is unchanged by compaction");
+}
+
+/// The recursion, not a flag: supersede the SUPERSEDER and the first rule is back in force.
+///
+/// This is the fact layer's §2.4 rule verbatim — an utterance is live unless a LIVE
+/// utterance supersedes it — and it is the sharpest evidence that supersession here is that
+/// law rather than a "dead" bit written onto a record. A bit could not come back.
+#[test]
+fn superseding_the_superseder_brings_the_first_rule_back() {
+    let mut db = supersession_fixture();
+    let r1 = parse_one("p(X) :- node(X, \"FUNCTION\").");
+    let r2 = parse_one("p(X) :- node(X, \"CLASS\").");
+    let (id1, id2) = (rule_id(&r1), rule_id(&r2));
+
+    reflect_into(&mut db, "p(X) :- node(X, \"FUNCTION\").").expect("reflect r1");
+    assert_eq!(store_mode_p(&db).len(), 2, "control: r1 alone answers 2");
+
+    reflect_into(&mut db, &format!("p(X) :- node(X, \"CLASS\").\nsupersedes(\"{id1}\")."))
+        .expect("r2 supersedes r1");
+    assert_eq!(store_mode_p(&db).len(), 1, "control: r2 alone answers 1");
+
+    // A third rule supersedes r2. r2's claim on r1 dies with it, so r1 is live again — and
+    // r3 adds nothing of its own, so the answer must be r1's 2, not 0 and not 3.
+    reflect_into(
+        &mut db,
+        &format!("p(X) :- node(X, \"FUNCTION\"), node(X, \"FUNCTION\").\nsupersedes(\"{id2}\")."),
+    )
+    .expect("r3 supersedes r2");
+
+    let decoded = decode_rules(&db.view());
+    assert_eq!(
+        decoded.superseded_ids,
+        vec![id2],
+        "only r2 is out of force now; r1 came back when the claim against it died"
+    );
+    assert_eq!(
+        store_mode_p(&db).len(),
+        2,
+        "r1 derives both FUNCTIONs again — 1 would mean r2 still live, 0 a broken store"
+    );
+}
+
+/// «No retract — supersede only», enforced at the write door rather than asserted in a
+/// comment: a supersession with no rule to carry it is REFUSED.
+///
+/// A bare `supersedes(rX).` is exactly the retraction the spec forbids — "take this rule
+/// out, put nothing in its place" — so it must not be writable at all.
+#[test]
+fn a_supersession_with_no_superseding_rule_is_refused() {
+    let mut db = supersession_fixture();
+    let old_id = rule_id(&parse_one("p(X) :- node(X, \"FUNCTION\")."));
+    reflect_into(&mut db, "p(X) :- node(X, \"FUNCTION\").").expect("reflect");
+    assert_eq!(store_mode_p(&db).len(), 2, "control: the rule answers before the attempt");
+
+    let err = reflect_into(&mut db, &format!("supersedes(\"{old_id}\")."))
+        .expect_err("a bare retraction must be refused");
+    assert_eq!(err.code, E_REFLECT_SUPERSEDE, "{err}");
+
+    assert_eq!(
+        store_mode_p(&db).len(),
+        2,
+        "and the refusal changed nothing: the rule still answers"
+    );
+
+    // Positive control: the SAME directive with a rule beside it is accepted.
+    reflect_into(
+        &mut db,
+        &format!("p(X) :- node(X, \"CLASS\").\nsupersedes(\"{old_id}\")."),
+    )
+    .expect("the same directive, carried by a rule, is legal");
+    assert_eq!(store_mode_p(&db).len(), 1);
+}
+
+/// A supersession must resolve its victim in the store it is written against, or a typo
+/// would be indistinguishable from a supersession that worked — the fact layer's D11
+/// boundary, in Projection T's vocabulary.
+#[test]
+fn a_supersession_of_a_rule_the_store_does_not_carry_is_refused() {
+    let mut db = supersession_fixture();
+    reflect_into(&mut db, "p(X) :- node(X, \"FUNCTION\").").expect("reflect");
+
+    let err = reflect_into(&mut db, "p(X) :- node(X, \"CLASS\").\nsupersedes(\"rdeadbeef\").")
+        .expect_err("an unknown victim must be refused");
+    assert_eq!(err.code, E_REFLECT_SUPERSEDE, "{err}");
+    assert_eq!(store_mode_p(&db).len(), 2, "the refusal wrote nothing");
+
+    // Positive control: the same shape with a victim that IS there goes through.
+    let real = rule_id(&parse_one("p(X) :- node(X, \"FUNCTION\")."));
+    reflect_into(&mut db, &format!("p(X) :- node(X, \"CLASS\").\nsupersedes(\"{real}\")."))
+        .expect("a known victim is legal");
+    assert_eq!(store_mode_p(&db).len(), 1);
+}
+
+/// A cycle is refused at the WRITE door, which is what keeps the read side total.
+///
+/// Mutual supersession has no single answer — "A in force, B out" and "B in force, A out"
+/// both satisfy the recursion — so the fact layer makes cycles unbuildable by strict tick
+/// monotonicity. Projection T has no tick, so it checks the graph instead
+/// ([`crate::facts::supersession_order`]) and refuses.
+#[test]
+fn a_supersession_cycle_is_refused_at_the_write_door() {
+    let mut db = supersession_fixture();
+    let r1 = parse_one("p(X) :- node(X, \"FUNCTION\").");
+    let r2 = parse_one("p(X) :- node(X, \"CLASS\").");
+    let (id1, id2) = (rule_id(&r1), rule_id(&r2));
+
+    reflect_into(&mut db, "p(X) :- node(X, \"FUNCTION\").").expect("reflect r1");
+    reflect_into(&mut db, &format!("p(X) :- node(X, \"CLASS\").\nsupersedes(\"{id1}\")."))
+        .expect("r2 supersedes r1");
+    assert_eq!(store_mode_p(&db).len(), 1, "control: r2 is in force, r1 is not");
+
+    // Now ask r1 to supersede r2 — closing the cycle r1 → r2 → r1.
+    let err = reflect_into(
+        &mut db,
+        &format!("p(X) :- node(X, \"FUNCTION\").\nsupersedes(\"{id2}\")."),
+    )
+    .expect_err("a cycle must be refused");
+    assert_eq!(err.code, E_REFLECT_SUPERSEDE, "{err}");
+    assert_eq!(
+        store_mode_p(&db).len(),
+        1,
+        "the refusal wrote nothing: the store is as it was"
+    );
+
+    // Positive control: a THIRD rule superseding r2 is not a cycle and is accepted.
+    reflect_into(
+        &mut db,
+        &format!("p(X) :- node(X, \"FUNCTION\"), node(X, \"FUNCTION\").\nsupersedes(\"{id2}\")."),
+    )
+    .expect("an acyclic claim is legal");
+    assert_eq!(store_mode_p(&db).len(), 2, "r1 is back, r2 is out");
+}
+
+/// The directive is a DIRECTIVE: it is never enumerated, never encoded as a rule and never
+/// executed. A `supersedes` clause that leaked through as an ordinary ground fact would be
+/// a rule nobody wrote, deriving into a reserved relation.
+#[test]
+fn the_supersede_directive_is_never_executed_as_a_rule() {
+    let mut db = supersession_fixture();
+    let old_id = rule_id(&parse_one("p(X) :- node(X, \"FUNCTION\")."));
+    reflect_into(&mut db, "p(X) :- node(X, \"FUNCTION\").").expect("reflect");
+    reflect_into(
+        &mut db,
+        &format!("p(X) :- node(X, \"CLASS\").\nsupersedes(\"{old_id}\")."),
+    )
+    .expect("reflect");
+
+    let decoded = decode_rules(&db.view());
+    assert!(
+        decoded
+            .rules
+            .iter()
+            .chain(decoded.superseded_rules.iter())
+            .all(|r| r.head().predicate() != REL_SUPERSEDES),
+        "no decoded rule may have the reserved head; got {:?}",
+        decoded.rules
+    );
+    // Control: the claim IS in the store — it just is not a rule.
+    assert_eq!(decoded.claims.len(), 1);
+}
+
+/// The reserved name is refused in shapes that are not a directive, rather than executed as
+/// a user predicate — a program whose supersession quietly became an ordinary fact would
+/// answer with the old rule still live and nothing would say so.
+#[test]
+fn the_reserved_name_in_a_non_directive_shape_is_refused() {
+    let with_body = crate::derive::parser_ext::parse_ext_program(
+        "supersedes(X) :- node(X, \"FUNCTION\").",
+    )
+    .expect("parse");
+    let err = split_supersede_directives(&with_body.rules()).expect_err("a body is not a directive");
+    assert_eq!(err.code, E_REFLECT_SUPERSEDE, "{err}");
+
+    let wrong_arity =
+        crate::derive::parser_ext::parse_ext_program("supersedes(\"ra\", \"rb\").").expect("parse");
+    let err = split_supersede_directives(&wrong_arity.rules())
+        .expect_err("the surface takes exactly one argument");
+    assert_eq!(err.code, E_REFLECT_SUPERSEDE, "{err}");
+
+    let non_ground =
+        crate::derive::parser_ext::parse_ext_program("supersedes(X).").expect("parse");
+    let err = split_supersede_directives(&non_ground.rules())
+        .expect_err("a variable is not a rule id");
+    assert_eq!(err.code, E_REFLECT_SUPERSEDE, "{err}");
+
+    // Positive control: the directive shape splits cleanly and leaves the rule alone.
+    let good = crate::derive::parser_ext::parse_ext_program(
+        "p(X) :- node(X, \"CLASS\").\nsupersedes(\"rc66425ca\").",
+    )
+    .expect("parse");
+    let (ordinary, victims) = split_supersede_directives(&good.rules()).expect("split");
+    assert_eq!(ordinary.len(), 1);
+    assert_eq!(victims, vec!["rc66425ca".to_string()]);
+}
+
+/// A supersession declaration cannot be EVALUATED as text: it names a rule in the store,
+/// and as text there is no store — the rule it was meant to take out of force would keep
+/// answering with no error attached.
+#[test]
+fn a_supersede_directive_cannot_be_evaluated_as_text() {
+    let db = supersession_fixture();
+    let stats = crate::derive::builtin::Stats {
+        total_nodes: 3,
+        total_edges: 0,
+        ..Default::default()
+    };
+    let run = |src: &str| {
+        crate::derive::evaluate_in(
+            &db.view(),
+            src,
+            crate::derive::RuleSource::Text,
+            stats.clone(),
+            crate::datalog::EvalLimits::none(),
+            crate::derive::events::EventLog::discard(),
+        )
+    };
+
+    // Positive control: the same program WITHOUT the directive evaluates and answers.
+    let ok = run("p(X) :- node(X, \"CLASS\").").expect("text mode evaluates");
+    assert_eq!(ok.facts("p").len(), 1);
+
+    let err = run("p(X) :- node(X, \"CLASS\").\nsupersedes(\"rc66425ca\").")
+        .expect_err("text mode must refuse a supersession declaration");
+    assert_eq!(err.code(), E_REFLECT_SUPERSEDE, "{err}");
 }

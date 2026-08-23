@@ -231,7 +231,15 @@ pub(crate) fn program_for(
     mode: RuleSource,
 ) -> Result<(ExtProgram, Vec<String>), EvalError> {
     match mode {
-        RuleSource::Text => Ok((parse_ext_program(source)?, Vec::new())),
+        RuleSource::Text => {
+            let program = parse_ext_program(source)?;
+            // A supersession directive means something only against a rule STORE. Run as
+            // text it would parse into an ordinary ground fact and the rule it was meant
+            // to take out of force would answer as though nothing had been said — a wrong
+            // answer with no error attached. Refuse; `reflectProgram` is its door.
+            crate::derive::reflect::refuse_supersede_directive_in_text(&program.rules())?;
+            Ok((program, Vec::new()))
+        }
         RuleSource::Store => {
             let decoded = crate::derive::reflect::program_from_store(view);
             for d in &decoded.diagnostics {

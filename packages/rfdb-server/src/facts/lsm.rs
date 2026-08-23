@@ -923,18 +923,21 @@ impl LsmFactStore {
         }
         // Decreasing tick; ties broken by aid for determinism (a tie can never
         // be a mutual kill — the boundary enforces strict tick monotonicity).
+        // This sort IS the order contract of `resolve_supersession`: a killer's
+        // tick strictly exceeds its victim's (E-SUP-001), so it is seen first.
         sups.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-        let mut killed: HashSet<u128> = HashSet::new();
-        for (_, own, victim, tx_invalidated) in sups {
-            let alive = !killed.contains(&own);
-            if tx_invalidated != TX_OPEN && alive {
+        let pairs: Vec<(u128, u128)> =
+            sups.iter().map(|(_, own, victim, _)| (*own, *victim)).collect();
+        let (killed, live) = crate::facts::resolve_supersession(&pairs);
+        // Rule 1 (D3 divergence arm): the tx_invalidated cache may only CONFIRM
+        // death. A supersedes assertion cache-marked dead that the LAW calls
+        // live is corruption, not a tie to break.
+        for ((_, own, _, tx_invalidated), alive) in sups.iter().zip(live) {
+            if *tx_invalidated != TX_OPEN && alive {
                 panic!(
                     "E-SUP-001: divergence — supersedes assertion {own:x} is cache-marked dead \
                      with no live supersedes(_, aid) fact in this snapshot"
                 );
-            }
-            if alive {
-                killed.insert(victim);
             }
         }
         killed

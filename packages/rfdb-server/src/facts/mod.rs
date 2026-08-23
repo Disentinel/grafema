@@ -451,6 +451,119 @@ pub fn aid(fid: u128, author_name: &str, tick: u64) -> u128 {
     u128::from_le_bytes(first16)
 }
 
+// ── The §2.4 supersession law (ONE implementation, two substrates) ──
+
+/// The §2.4 liveness law, as a pure function over supersession claims — the ONE
+/// place the rule «X is dead ⟺ some LIVE claim supersedes X» is implemented.
+///
+/// A claim is a pair `(own, victim)`: an utterance identified by `own` declares
+/// that `victim` is no longer in force. The law RECURSES — a claim only kills if
+/// the claim's own identity is itself unkilled — which is what makes supersession
+/// undoable without a delete: supersede the superseder and its victim comes back.
+///
+/// # The order contract
+///
+/// `claims` MUST arrive in an order where every claim that could kill `own` has
+/// already been seen. That is what makes the single pass below equal to the
+/// recursive definition, and it is the only precondition this function has. The
+/// two substrates supply that order from different places, and both are sound:
+///
+/// * the fact store orders by DECREASING tick ([`lsm::LsmFactStore`]'s
+///   `compute_superseded`) — well-founded because `E-SUP-001` refuses a supersede
+///   whose tick does not strictly exceed its victim's, so a killer is always
+///   strictly later and therefore strictly earlier in the pass;
+/// * Projection T (rules-as-data) has no tick, so it orders by
+///   [`supersession_order`] — well-founded because its write door refuses to
+///   commit a claim set whose graph has a cycle, which is the same guarantee
+///   («supersedes cycles are unconstructible») reached by a different road.
+///
+/// # Returns
+///
+/// The killed set, and a per-claim liveness verdict positionally parallel to
+/// `claims` — the fact store needs the verdict to run its `tx_invalidated`
+/// divergence check (rule 1: the cache may only CONFIRM death).
+pub fn resolve_supersession<K>(claims: &[(K, K)]) -> (std::collections::HashSet<K>, Vec<bool>)
+where
+    K: Eq + std::hash::Hash + Clone,
+{
+    let mut killed: std::collections::HashSet<K> = std::collections::HashSet::new();
+    let mut live = Vec::with_capacity(claims.len());
+    for (own, victim) in claims {
+        let alive = !killed.contains(own);
+        live.push(alive);
+        if alive {
+            killed.insert(victim.clone());
+        }
+    }
+    (killed, live)
+}
+
+/// Order supersession claims so [`resolve_supersession`]'s precondition holds, or
+/// report that no such order exists.
+///
+/// Reads the claims as a directed graph `own → victim` and topologically sorts the
+/// PARTICIPANTS, superseders first; a claim is then emitted at the rank of its own
+/// identity, so every claim that could kill `own` is emitted strictly earlier.
+/// Ties break on `K`'s own order, so the result is a function of the claim SET and
+/// not of the order it happened to be read in.
+///
+/// `None` means the claim graph has a cycle — mutual supersession, which has no
+/// single answer (both «A in force» and «B in force» satisfy the recursion). The
+/// fact store never has to ask, because strict tick monotonicity makes a cycle
+/// unbuildable; a substrate without ticks must ask at its WRITE door and refuse,
+/// which is what keeps the read side total.
+pub fn supersession_order<K>(claims: &[(K, K)]) -> Option<Vec<(K, K)>>
+where
+    K: Ord + Clone,
+{
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let mut out_edges: BTreeMap<&K, BTreeSet<&K>> = BTreeMap::new();
+    let mut in_degree: BTreeMap<&K, usize> = BTreeMap::new();
+    for (own, victim) in claims {
+        in_degree.entry(own).or_insert(0);
+        in_degree.entry(victim).or_insert(0);
+        if out_edges.entry(own).or_default().insert(victim) {
+            *in_degree.entry(victim).or_insert(0) += 1;
+        }
+    }
+
+    // Kahn, with a SORTED ready set so the rank assignment is deterministic.
+    let mut ready: BTreeSet<&K> = in_degree
+        .iter()
+        .filter(|(_, d)| **d == 0)
+        .map(|(k, _)| *k)
+        .collect();
+    let mut rank: BTreeMap<&K, usize> = BTreeMap::new();
+    let mut next_rank = 0usize;
+    while let Some(node) = ready.iter().next().copied() {
+        ready.remove(node);
+        rank.insert(node, next_rank);
+        next_rank += 1;
+        if let Some(targets) = out_edges.get(node) {
+            for t in targets {
+                let d = in_degree.get_mut(*t).expect("target counted above");
+                *d -= 1;
+                if *d == 0 {
+                    ready.insert(t);
+                }
+            }
+        }
+    }
+    if rank.len() != in_degree.len() {
+        return None; // a cycle: some participant never reached in-degree zero
+    }
+
+    let mut ordered: Vec<&(K, K)> = claims.iter().collect();
+    ordered.sort_by(|a, b| {
+        rank[&a.0]
+            .cmp(&rank[&b.0])
+            .then_with(|| a.0.cmp(&b.0))
+            .then_with(|| a.1.cmp(&b.1))
+    });
+    Some(ordered.into_iter().cloned().collect())
+}
+
 // ── The trait (§7.2) ───────────────────────────────────────────────
 
 /// A store of RELATIONS (§7.2): the unit is the predicate, not the key. To be
@@ -633,10 +746,13 @@ mod hygiene_tests {
     /// liveness authority on the read path. The mechanical guard: outside
     /// `src/facts/` there exists NO consumer of the FactStore read surface at
     /// all — any reference to the `FactStore` trait or the `LsmFactStore`
-    /// backend outside the facts module is an offender and is listed. (The
-    /// single permitted foreign coupling is the `SortOrder` TYPE import in
-    /// derive/{catalog,plan,exec} — a dispatch key, not a read path — and it
-    /// does not contain the guarded tokens.) When the fixpoint engine moves
+    /// backend outside the facts module is an offender and is listed. (Two
+    /// foreign couplings are permitted and neither is a read path, so neither
+    /// contains the guarded tokens: the `SortOrder` TYPE import in
+    /// derive/{catalog,plan,exec} — a dispatch key — and the
+    /// [`super::resolve_supersession`] / [`super::supersession_order`] PURE
+    /// FUNCTIONS in derive/reflect, which take claims as arguments and read
+    /// nothing.) When the fixpoint engine moves
     /// onto this seam (P6/P7), its call sites must route liveness through
     /// live_filter and extend this guard's allowlist EXPLICITLY.
     #[test]
@@ -788,5 +904,82 @@ mod tests {
         assert_eq!(base, aid(f, "analyzer", 7));
         // Length-prefixed name: no concatenation ambiguity with the tick bytes.
         assert_ne!(aid(f, "a", 0x62), aid(f, "ab", 0x62));
+    }
+
+    /// The supersession law is ORDER-SENSITIVE, and the order is what
+    /// [`supersession_order`] hands it. A chain c → b → a is the case that
+    /// separates the two: `c` supersedes `b`, `b` supersedes `a`. `b` is dead,
+    /// so `b`'s own claim must NOT count and `a` must stay alive — §2.4 says an
+    /// assertion dies only to a LIVE claim.
+    ///
+    /// The positive control against a vacuous pass: the SAME claims fed in the
+    /// wrong order kill a DIFFERENT non-empty set. Both answers are non-empty,
+    /// so this is not «something vs nothing», it is «the right two vs the wrong
+    /// two» — and the ordering step is what stands between them.
+    #[test]
+    fn the_supersession_law_ignores_a_claim_whose_owner_is_itself_dead() {
+        let claims = vec![
+            ("b".to_string(), "a".to_string()),
+            ("c".to_string(), "b".to_string()),
+        ];
+
+        let ordered = supersession_order(&claims).expect("an acyclic chain must order");
+        assert_eq!(
+            ordered,
+            vec![
+                ("c".to_string(), "b".to_string()),
+                ("b".to_string(), "a".to_string()),
+            ],
+            "a superseder must be settled before its own claim is read"
+        );
+        let (killed, live) = resolve_supersession(&ordered);
+        assert_eq!(
+            killed,
+            ["b".to_string()].into_iter().collect::<std::collections::HashSet<_>>(),
+            "only b dies: c is unopposed, and a is named only by the dead b"
+        );
+        assert_eq!(live, vec![true, false], "b's claim is the one that does not count");
+
+        // Positive control: unordered, the same input kills {a, b} — a different
+        // non-empty answer, which is exactly what ordering exists to prevent.
+        let (killed_unordered, _) = resolve_supersession(&claims);
+        assert_eq!(
+            killed_unordered,
+            ["a".to_string(), "b".to_string()]
+                .into_iter()
+                .collect::<std::collections::HashSet<_>>(),
+        );
+        assert_ne!(killed, killed_unordered);
+    }
+
+    /// Mutual supersession has TWO stable models — «the first one won» and «the
+    /// second one won» — and a store cannot hold a question with two answers.
+    /// The fact layer makes cycles unconstructible through strict tick
+    /// monotonicity; rules have no tick, so the ordering function is where the
+    /// impossibility lives, and it must report the cycle rather than pick.
+    #[test]
+    fn a_supersession_cycle_has_no_order_and_says_so() {
+        let cycle = vec![
+            ("x".to_string(), "y".to_string()),
+            ("y".to_string(), "x".to_string()),
+        ];
+        assert!(
+            supersession_order(&cycle).is_none(),
+            "mutual supersession must be refused, not resolved by luck of the order"
+        );
+
+        // Positive control: drop ONE claim and the very same call succeeds, so
+        // the None above is the cycle, not a function that never returns Some.
+        let acyclic = vec![("x".to_string(), "y".to_string())];
+        assert_eq!(supersession_order(&acyclic), Some(acyclic.clone()));
+
+        // A longer cycle, to pin that the check is a real graph traversal and
+        // not a two-element special case.
+        let long_cycle = vec![
+            ("x".to_string(), "y".to_string()),
+            ("y".to_string(), "z".to_string()),
+            ("z".to_string(), "x".to_string()),
+        ];
+        assert!(supersession_order(&long_cycle).is_none());
     }
 }
