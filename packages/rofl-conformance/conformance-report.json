@@ -4,7 +4,7 @@
       "rev": "052a4c5"
     },
     "rfdb": {
-      "gitSha": "09dbe1cfe460677513fecf8f8348de0ac06fb7c1",
+      "gitSha": "6b51dbecdb7a248a8c68940bda28e4d27785024d",
       "binary": "/home/dev/grafema-rofl/packages/rfdb-server/target/release/rfdb-server",
       "serverVersion": "0.4.1",
       "protocolVersion": 3
@@ -45,7 +45,7 @@
       "tier": "tier1",
       "verdict": "RED",
       "reason_code": "missing:compound-terms",
-      "evidence": "functor term 'cons(…)' in clause 2: RFDB v1 has no compound term form (datalog/types.rs:12-14)"
+      "evidence": "functor term 'cons(…)' in clause 2: the derive program parser has no functor form — parse_term accepts wildcard, quoted const, variable, bare const and number, nothing else (datalog/parser.rs:146-173). Live-probed R15/P2: 'u_p(f(a, b)).' in a fact, in a body and in a head each come back \"Datalog parse error\"; the ~term: tag (datalog/wire.rs:31) is a WIRE form, rejected in program text"
     },
     {
       "id": "p1-async-reject",
@@ -93,7 +93,7 @@
       "tier": "tier1",
       "verdict": "RED",
       "reason_code": "missing:whynot-shape",
-      "evidence": "v0 why() is a recursive tree '<key> <= r<fnv1a> @tick N' (api.ts:250-277); RFDB witness for path(a,c) is flat {ruleAstHash, body[]} (exec.rs:248) — witness EXISTS but the tree shape is unrepresentable"
+      "evidence": "v0 why() is a recursive tree '<key> <= r<fnv1a> @tick N' (api.ts:250-277); RFDB witness for path(a,c) is flat {ruleAstHash, body[]} (derive/exec.rs:279-287) — witness EXISTS but the tree shape is unrepresentable. Live-probed R15/P5a: explainDatalogFact on u_r ← u_q ← u_p returns ONE level (body=[u_q(a)], no nesting into u_p) and carries no tick, and the rule id is a 64-hex ast hash, not v0's r<fnv1a>"
     },
     {
       "id": "p2-persp-isolation",
@@ -277,7 +277,7 @@
       "expected": "red:missing:compound-terms",
       "found": "red:missing:compound-terms",
       "match": true,
-      "note": "functor term 'cons(…)' in clause 2: RFDB v1 has no compound term form (datalog/types.rs:12-14)"
+      "note": "functor term 'cons(…)' in clause 2: the derive program parser has no functor form — parse_term accepts wildcard, quoted const, variable, bare const and number, "
     },
     {
       "claim": "exp_phase1_arith_red",

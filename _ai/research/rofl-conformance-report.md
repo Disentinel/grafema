@@ -1,7 +1,7 @@
 # ROFL v0 ↔ RFDB conformance report (P0 harness)
 
-- run: `rofl-conformance-1787494475633` (identity in `conformance-run-meta.json`; the machine report `conformance-report.json` is byte-reproducible and carries no run identity)
-- oracle: ROFL v0 vendored at `052a4c5` (main); subject: rfdb-server 0.4.1 (protocol v3, derive engine, repo `09dbe1cfe460`)
+- run: `rofl-conformance-1787502480903` (identity in `conformance-run-meta.json`; the machine report `conformance-report.json` is byte-reproducible and carries no run identity)
+- oracle: ROFL v0 vendored at `052a4c5` (main); subject: rfdb-server 0.4.1 (protocol v3, derive engine, repo `6b51dbecdb7a`)
 - a RED verdict is a SUCCESS of the harness: it is a machine-readable migration-roadmap entry, not a failure. Harness failures are crashes, fake greens, silent skips — gated by the oracle self-check (30/30 must pass on vendored v0) and the scenario-count check.
 
 ## Tier-0 — 120-seed TS↔RFDB differential (common subset)
@@ -20,13 +20,13 @@
 |---|---|---|---|---|
 | p1-tc-seminaive | test/phase1.test.ts:12 | GREEN | — | all ported assertions passed against the RfdbRofl adapter (answers delegated to rfdb-server over the wire; 1 wire round-trips) |
 | p1-tc-naive | test/phase1.test.ts:22 | RED | dialect:untranslatable | naive evaluation mode is a v0 engine-internal toggle; RFDB has a single evaluation mode (v0 modes agree on fact sets, LIMITS.md:48) |
-| p1-functor-append | test/phase1.test.ts:30 | RED | missing:compound-terms | functor term 'cons(…)' in clause 2: RFDB v1 has no compound term form (datalog/types.rs:12-14) |
+| p1-functor-append | test/phase1.test.ts:30 | RED | missing:compound-terms | functor term 'cons(…)' in clause 2: the derive program parser has no functor form — parse_term accepts wildcard, quoted const, variable, bare const and number, nothing else (datalog/parser.rs:146-173). Live-probed R15/P2 |
 | p1-async-reject | test/phase1.test.ts:45 | GREEN | — | all ported assertions passed via the SHARED vendored v0 parser front-end (rejection at load(); no engine delegation involved — zero wire round-trips) |
 | p1-next-body-reject | test/phase1.test.ts:52 | GREEN | — | all ported assertions passed via the SHARED vendored v0 parser front-end (rejection at load(); no engine delegation involved — zero wire round-trips) |
 | p1-arith | test/phase1.test.ts:58 | RED | dialect:untranslatable | builtin 'is' in clause 3: the v0 arithmetic/comparison semantics (unify.ts:96-113, JS trunc) → RFDB builtin mapping is unverified in P0 (first P1 flip candidate) |
 | p2-diff-positive | test/phase2.test.ts:63 | GREEN | — | all ported assertions passed against the RfdbRofl adapter (answers delegated to rfdb-server over the wire; 962 wire round-trips) |
 | p2-diff-negation | test/phase2.test.ts:74 | GREEN | — | all ported assertions passed against the RfdbRofl adapter (answers delegated to rfdb-server over the wire; 487 wire round-trips) |
-| p2-why-tree | test/phase2.test.ts:102 | RED | missing:whynot-shape | v0 why() is a recursive tree '<key> <= r<fnv1a> @tick N' (api.ts:250-277); RFDB witness for path(a,c) is flat {ruleAstHash, body[]} (exec.rs:248) — witness EXISTS but the tree shape is unrepresentable |
+| p2-why-tree | test/phase2.test.ts:102 | RED | missing:whynot-shape | v0 why() is a recursive tree '<key> <= r<fnv1a> @tick N' (api.ts:250-277); RFDB witness for path(a,c) is flat {ruleAstHash, body[]} (derive/exec.rs:279-287) — witness EXISTS but the tree shape is unrepresentable. Live-pr |
 | p2-persp-isolation | test/phase2.test.ts:118 | RED | missing:perspectives | perspective [vault] in clause 1: RFDB has no perspective dimension |
 | p2-stratum-order | test/phase2.test.ts:129 | RED | missing:rules-as-data | reflection-vocabulary relation 'has_conclusion' in clause 1: RFDB has no rules-as-data / provenance relations |
 | p2-noboot-null-plan | test/phase2.test.ts:150 | RED | missing:rules-as-data | v0 strata come from boot-derived stratum/2 + unstratified/1 FACTS (engine.ts:2-4, boot.rofl:17-21); RFDB stratification is internal, not queryable |
@@ -54,7 +54,7 @@
 | claim | expected | found | match | note |
 |---|---|---|---|---|
 | exp_phase1_tc_parse_green | green | green | ✓ | p1-tc-seminaive=GREEN, p1-async-reject=GREEN, p1-next-body-reject=GREEN |
-| exp_phase1_functor_red | red:missing:compound-terms | red:missing:compound-terms | ✓ | functor term 'cons(…)' in clause 2: RFDB v1 has no compound term form (datalog/types.rs:12-14) |
+| exp_phase1_functor_red | red:missing:compound-terms | red:missing:compound-terms | ✓ | functor term 'cons(…)' in clause 2: the derive program parser has no functor form — parse_term accepts wildcard, quoted const, variable, bare const and number,  |
 | exp_phase1_arith_red | red:dialect:untranslatable | red:dialect:untranslatable | ✓ | builtin 'is' in clause 3: the v0 arithmetic/comparison semantics (unify.ts:96-113, JS trunc) → RFDB builtin mapping is unverified in P0 (first P1 flip candidate |
 | exp_phase2_differentials_green | green | green | ✓ | p2-diff-positive=GREEN, p2-diff-negation=GREEN |
 | exp_phase2_whytree_persp_strata_red | red | red | ✓ | p2-why-tree=RED(missing:whynot-shape), p2-persp-isolation=RED(missing:perspectives), p2-stratum-order=RED(missing:rules-as-data), p2-noboot-null-plan=RED(missing:rules-as-data), p2-unstrat-reject=RED( |

@@ -26,10 +26,17 @@
 //     no longer rejects ground body literals); a rule body whose
 //     variable-carrying positive premises are DISCONNECTED is still rejected
 //     by the structural cross-join guard (E-PLAN-003, by design);
-//   • all-digit wire strings re-type to Value::Id (rfdb_server.rs:3205-3210)
-//     and v0 atom/int/string all collapse to wire strings → only ATOM
-//     constants translate; int/string constants are dialect:untranslatable
-//     in P0 (ints beyond i64/2^53 are missing:bignum, checked first).
+//   • v0 ATOM and v0 INTEGER constants both translate and stay DISTINCT: an
+//     atom goes out as a quoted const, an integer as a BARE numeric literal
+//     that the program parser types as Value::Int (datalog/parser.rs:165-223)
+//     and that comes back tagged `~int:N`. Live-probed (R15/P1, see
+//     run-migration/R15-citation-audit.md): `u_p(1)` and `u_p("1")` dump as
+//     `~int:1` and `1` and do NOT join; an int literal also works as a body
+//     filter, in a rule head, and as an explain key. v0 STRING constants still
+//     do NOT translate — program text has a single quoted-const surface, so a
+//     v0 string and the v0 atom of the same spelling become one value
+//     (live-probed R15/P3a). Integers past i64/2^53 stay missing:bignum: that
+//     is the ORACLE's ceiling (LIMITS.md:49-51), checked first.
 
 import type { Clause, Lit, BodyElem, Term } from './neutral.ts';
 import { RESERVED, IFACE } from '../vendor/rofl-v0/src/reflect.ts';
@@ -79,8 +86,12 @@ export interface Translation {
   ok: true;
   /** Translated rules, original order; use with facts via renderSource(). */
   rules: TransRule[];
-  /** original rel → deduped ground-fact tuples (atom names, positional). */
+  /** original rel → deduped ground-fact tuples in v0-CANONICAL text
+   *  (atom → name, integer → decimal), positional. */
   groundFacts: Map<string, string[][]>;
+  /** the same tuples in RFDB PROGRAM text (atom → quoted const, integer → bare
+   *  numeric literal) — what renderSource() puts on the wire. */
+  groundFactTerms: Map<string, string[][]>;
   /** original rel → arity. */
   relArity: Map<string, number>;
   /** all original rels mentioned anywhere in the program. */
@@ -105,22 +116,68 @@ function isWildcard(t: Term): boolean {
   return t.k === 'v' && t.name.startsWith('_$');
 }
 
+/** RFDB program text for a checked constant term: a v0 atom becomes a quoted
+ *  const, a v0 integer a BARE numeric literal, which the program parser types
+ *  as `Value::Int` rather than as a string const or a node id
+ *  (datalog/parser.rs:165-223). */
+function constText(t: Term): string {
+  if (t.k === 'a') return `"${t.name}"`;
+  if (t.k === 'i') return String(t.v);
+  throw new Error(`unreachable constant kind ${t.k} after checks`);
+}
+
+/** v0-canonical text for a checked constant term — exactly unify.ts:79-87
+ *  canonTerm: an atom renders as its name, an integer as its decimal. The two
+ *  never collide, because a v0 atom is lexed as `[a-z][A-Za-z0-9_]*` and can
+ *  never be all-digit (a leading digit is lexed as an int, parser.ts:52-63). */
+function constCanon(t: Term): string {
+  if (t.k === 'a') return t.name;
+  if (t.k === 'i') return String(t.v);
+  throw new Error(`unreachable constant kind ${t.k} after checks`);
+}
+
+/** Wire value → the v0-canonical constant text it denotes. A translated program
+ *  can put only two constant shapes on the wire: a quoted const (an atom, echoed
+ *  verbatim) and a bare numeric literal (an integer, echoed tagged as `~int:N`,
+ *  live-probed R15/P1a). Injective, by the same all-digit argument as
+ *  [`constCanon`]. */
+export function wireToCanon(w: string): string {
+  const m = /^~int:(-?\d+)$/.exec(w);
+  return m ? m[1] : w;
+}
+
+/** v0-canonical constant text → the v0 Term it denotes; the inverse of
+ *  [`constCanon`], used to re-unify engine-returned tuples against a query
+ *  literal whose integer args are `{k:'i'}`, not atoms. */
+export function canonToTerm(s: string): Term {
+  return /^-?\d+$/.test(s) ? { k: 'i', v: Number(s) } : { k: 'a', name: s };
+}
+
+/** Checked ground constant → its wire form for an `explain` key (the READ
+ *  direction of the protocol's value surface, rfdb_server.rs:3202-3213): an
+ *  atom is its bare name, an integer is `~int:N` (live-probed R15/P1f). */
+export function constToWireKey(t: Term): string {
+  if (t.k === 'a') return t.name;
+  if (t.k === 'i') return `~int:${t.v}`;
+  throw new Error(`unreachable constant kind ${t.k} in an explain key`);
+}
+
 /** Check a single literal's terms for untranslatable constants; returns a
  *  failure or null. Shared by translate() and the adapter's query-literal path. */
 export function checkLitTerms(lit: Lit, where: string): TranslationFailure | null {
   for (const a of lit.args) {
     if (a.k === 'f') {
-      return fail('missing:compound-terms', `functor term '${a.name}(…)' in ${where}: RFDB v1 has no compound term form (datalog/types.rs:12-14)`);
+      return fail('missing:compound-terms', `functor term '${a.name}(…)' in ${where}: the derive program parser has no functor form — parse_term accepts wildcard, quoted const, variable, bare const and number, nothing else (datalog/parser.rs:146-173). Live-probed R15/P2: 'u_p(f(a, b)).' in a fact, in a body and in a head each come back "Datalog parse error"; the ~term: tag (datalog/wire.rs:31) is a WIRE form, rejected in program text`);
     }
     if (a.k === 'i') {
       const abs = BigInt(Math.abs(a.v));
       if (abs > I64_MAX || Math.abs(a.v) > Number.MAX_SAFE_INTEGER) {
-        return fail('missing:bignum', `integer ${a.v} in ${where} exceeds the i64/2^53 range representable by both engines`);
+        return fail('missing:bignum', `integer ${a.v} in ${where} exceeds the safe-integer range the v0 ORACLE can hold (LIMITS.md:49-51 — no bignums, JS safe-integer range), so the two engines would disagree by construction; RFDB itself holds it exactly (live-probed R15/P1e: 2^68 dumps as ~big:295147905179352825856)`);
       }
-      return fail('dialect:untranslatable', `integer constant ${a.v} in ${where}: v0 atom/int/string collapse to RFDB wire strings (all-digit strings re-type to Value::Id, rfdb_server.rs:3205-3210); numeric-constant round-trip is unverified P1 work`);
+      continue; // translates as a bare numeric literal — see constText()
     }
     if (a.k === 's') {
-      return fail('dialect:untranslatable', `string constant ${JSON.stringify(a.v)} in ${where}: collides with the atom→quoted-string encoding; reverse mapping ambiguous in P0`);
+      return fail('dialect:untranslatable', `string constant ${JSON.stringify(a.v)} in ${where}: derive program text has exactly ONE quoted-const surface (datalog/parser.rs:154-164), so a v0 string and the v0 atom of the same spelling become the same engine value — live-probed R15/P3a, u_p("hello") joins u_q(hello) and yields a row. The ~str: tag that separates them on the wire (datalog/wire.rs:30) is not program-text syntax (R15/P3c: parse error)`);
     }
   }
   return null;
@@ -181,7 +238,7 @@ export function translate(clauses: Clause[]): TranslateResult {
     for (const lit of litsOf(c)) {
       for (const a of lit.args) {
         if (a.k === 'i' && Math.abs(a.v) > Number.MAX_SAFE_INTEGER) {
-          return fail('missing:bignum', `integer ${a.v} in clause ${ci + 1} exceeds the i64/2^53 range representable by both engines`);
+          return fail('missing:bignum', `integer ${a.v} in clause ${ci + 1} exceeds the safe-integer range the v0 ORACLE can hold (LIMITS.md:49-51 — no bignums, JS safe-integer range), so the two engines would disagree by construction; RFDB itself holds it exactly (live-probed R15/P1e: 2^68 dumps as ~big:295147905179352825856)`);
         }
       }
     }
@@ -274,38 +331,41 @@ export function translate(clauses: Clause[]): TranslateResult {
         }
       }
       if (reached.size !== varLits.length) {
-        return fail('dialect:untranslatable', `disconnected rule body in clause ${ci + 1}: a positive premise shares no variable with the rest — RFDB's structural cross-join guard rejects it (E-PLAN-003, plan.rs:460-473)`);
+        return fail('dialect:untranslatable', `disconnected rule body in clause ${ci + 1}: a positive premise shares no variable with the rest — RFDB's §3 structural cross-join guard rejects it (derive/plan.rs:599-613). Live-probed R15/P4: two, three-leg and non-leading shapes all come back "[E-PLAN-003] cross-join: literal \`u_q\` shares no bound variable with the preceding body"`);
       }
     }
   }
 
   // ── Construction ───────────────────────────────────────────────
   const groundFacts = new Map<string, string[][]>();
+  const groundFactTerms = new Map<string, string[][]>();
   const factSeen = new Set<string>();
   const rules: TransRule[] = [];
 
   for (const c of clauses) {
     if (c.body.length === 0) {
       const rel = c.head.rel;
-      const args = c.head.args.map((a) => (a as { name: string }).name); // atoms only (checked)
+      const args = c.head.args.map(constCanon);  // atoms and ints only (checked)
+      const terms = c.head.args.map(constText);
       const key = `${rel}(${args.join(',')})`;
       if (!factSeen.has(key)) {
         factSeen.add(key);
         if (!groundFacts.has(rel)) groundFacts.set(rel, []);
         groundFacts.get(rel)!.push(args);
+        if (!groundFactTerms.has(rel)) groundFactTerms.set(rel, []);
+        groundFactTerms.get(rel)!.push(terms);
       }
       continue;
     }
     // rename variables clause-locally: V0, V1, … in order of first occurrence
     const varMap = new Map<string, string>();
     const rn = (t: Term): string => {
-      if (t.k === 'a') return `"${t.name}"`;
       if (t.k === 'v') {
         if (isWildcard(t)) return '_';
         if (!varMap.has(t.name)) varMap.set(t.name, `V${varMap.size}`);
         return varMap.get(t.name)!;
       }
-      throw new Error(`unreachable term kind ${t.k} after checks`);
+      return constText(t);
     };
     const headArgs = c.head.args.map(rn);
     const bodyParts: string[] = [];
@@ -335,6 +395,7 @@ export function translate(clauses: Clause[]): TranslateResult {
     ok: true,
     rules,
     groundFacts,
+    groundFactTerms,
     relArity,
     programRels,
   };
@@ -351,9 +412,9 @@ export function renderSource(t: Translation, hoistRel?: string): string {
   }
   const lines: string[] = ordered.map((r) => r.text);
   const factLines: string[] = [];
-  for (const [rel, tuples] of t.groundFacts) {
+  for (const [rel, tuples] of t.groundFactTerms) {
     for (const args of tuples) {
-      factLines.push(`${PFX}${rel}(${args.map((a) => `"${a}"`).join(', ')}).`);
+      factLines.push(`${PFX}${rel}(${args.join(', ')}).`);
     }
   }
   factLines.sort();

@@ -2,7 +2,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseProgram } from '../src/neutral.ts';
-import { translate, renderSource, renderDumpSource, type Translation } from '../src/translate.ts';
+import {
+  translate, renderSource, renderDumpSource,
+  wireToCanon, canonToTerm, constToWireKey, type Translation,
+} from '../src/translate.ts';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -60,8 +63,36 @@ test('rejects builtins → dialect:untranslatable', () => {
   assert.equal((r as { code: string }).code, 'dialect:untranslatable');
 });
 
-test('rejects in-range integer constants → dialect:untranslatable (wire collapse)', () => {
-  const r = t('n(7).\nm(X) :- n(X).');
+test('in-range integer constants TRANSLATE as bare numeric literals (R15)', () => {
+  // The engine types a bare number as Value::Int, distinct from a quoted const
+  // and from a node id (datalog/parser.rs:165-223; live-probed R15/P1: `u_p(1)`
+  // and `u_p("1")` dump as `~int:1` and `1` and do NOT join).
+  const tr = okT('n(7).\nn(-3).\nm(X) :- n(X).');
+  const src = renderSource(tr);
+  assert.ok(src.includes('u_n(7).'), src);
+  assert.ok(src.includes('u_n(-3).'), src);
+  assert.ok(!src.includes('u_n("7").'), `an int must NOT be quoted (that is a node id): ${src}`);
+  assert.deepEqual(tr.groundFacts.get('n'), [['7'], ['-3']]);
+});
+
+test('an integer constant inside a rule body stays a bare literal (R15)', () => {
+  const tr = okT('pair(a, 1).\npair(b, 2).\nq(X) :- pair(X, 1).');
+  const src = renderSource(tr);
+  assert.ok(src.includes('u_q(V0) :- u_pair(V0, 1).'), src);
+});
+
+test('atoms and integers survive the wire round-trip distinctly (R15)', () => {
+  assert.equal(wireToCanon('~int:1'), '1');
+  assert.equal(wireToCanon('~int:-7'), '-7');
+  assert.equal(wireToCanon('one'), 'one');
+  assert.deepEqual(canonToTerm('1'), { k: 'i', v: 1 });
+  assert.deepEqual(canonToTerm('one'), { k: 'a', name: 'one' });
+  assert.equal(constToWireKey({ k: 'i', v: 1 }), '~int:1');
+  assert.equal(constToWireKey({ k: 'a', name: 'one' }), 'one');
+});
+
+test('string constants are STILL untranslatable (one quoted-const surface)', () => {
+  const r = t('s("hello").\nm(X) :- s(X).');
   assert.equal(r.ok, false);
   assert.equal((r as { code: string }).code, 'dialect:untranslatable');
 });

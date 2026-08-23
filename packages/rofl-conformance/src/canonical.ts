@@ -11,6 +11,7 @@
 import type { Rofl } from '../vendor/rofl-v0/src/api.ts';
 import { RESERVED, IFACE } from '../vendor/rofl-v0/src/reflect.ts';
 import type { FactWitness, GapWitness } from './rfdb-client.ts';
+import { wireToCanon } from './translate.ts';
 
 /** v0 side: canonical user-visible fact lines (domainFacts mask ∩ program rels). */
 export function v0FactSet(r: Rofl, programRels?: Set<string>): string[] {
@@ -116,7 +117,7 @@ function sortChildren(n: WhyNode): void {
  *  leaves, sorted). `unprefix` strips the u_ namespace back to v0 rel names. */
 export function witnessToTree(fact: string, w: FactWitness, unprefix: (pred: string) => string): WhyNode {
   const children: WhyNode[] = w.body.map((b) => ({
-    label: `${unprefix(b.predicate)}(${b.tuple.join(',')})`,
+    label: `${unprefix(b.predicate)}(${b.tuple.map(wireToCanon).join(',')})`,
     kind: 'info' as const,
     children: [],
   }));
@@ -127,7 +128,7 @@ export function witnessToTree(fact: string, w: FactWitness, unprefix: (pred: str
 
 export function gapToTree(fact: string, g: GapWitness, unprefix: (pred: string) => string): WhyNode {
   const children: WhyNode[] = g.satisfied.map((b) => ({
-    label: `${unprefix(b.predicate)}(${b.tuple.join(',')})`,
+    label: `${unprefix(b.predicate)}(${b.tuple.map(wireToCanon).join(',')})`,
     kind: 'info' as const,
     children: [],
   }));
@@ -147,7 +148,7 @@ export function gapToTree(fact: string, g: GapWitness, unprefix: (pred: string) 
 export function witnessSound(w: FactWitness, v0Facts: Set<string>, unprefix: (pred: string) => string): { sound: boolean; missing: string[] } {
   const missing: string[] = [];
   for (const b of w.body) {
-    const line = `${unprefix(b.predicate)}(${b.tuple.join(',')})`;
+    const line = `${unprefix(b.predicate)}(${b.tuple.map(wireToCanon).join(',')})`;
     if (!v0Facts.has(line)) missing.push(line);
   }
   return { sound: missing.length === 0, missing };
@@ -162,7 +163,7 @@ export function witnessSound(w: FactWitness, v0Facts: Set<string>, unprefix: (pr
 export function gapSound(g: GapWitness, v0Facts: Set<string>, unprefix: (pred: string) => string): { sound: boolean; missing: string[] } {
   const missing: string[] = [];
   for (const b of g.satisfied) {
-    const line = `${unprefix(b.predicate)}(${b.tuple.join(',')})`;
+    const line = `${unprefix(b.predicate)}(${b.tuple.map(wireToCanon).join(',')})`;
     if (!v0Facts.has(line)) missing.push(line);
   }
   return { sound: missing.length === 0, missing };
