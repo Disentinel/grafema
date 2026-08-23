@@ -16,6 +16,11 @@ memmap2 = "0.9"
 # Cryptographic hashing for deterministic IDs
 blake3 = "1.5"
 
+# External-evidence hashing for the P6 converter (round-012-pre F5): input
+# immutability probes and per-segment content digests, comparable with
+# `sha256sum`. BLAKE3 stays the identity hash (§9.1); sha256 is audit-only.
+sha2 = "0.10"
+
 # Inline small vectors (FactRow assertions, rofl-fact-model.md §2.2)
 smallvec = "1.15"
 
@@ -122,6 +127,10 @@ path = "src/bin/bench_lock_contention.rs"
 [[bin]]
 name = "bench_manifest_growth"
 path = "src/bin/bench_manifest_growth.rs"
+
+[[bin]]
+name = "rofl-convert"
+path = "src/bin/rofl_convert.rs"
 
 [[bench]]
 name = "graph_operations"

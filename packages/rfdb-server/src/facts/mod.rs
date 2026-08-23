@@ -23,6 +23,7 @@
 //! their §7.2 payload in `Result<_, FactStoreError>`; the payload shapes (FactRow —
 //! THE read unit — yielding iterators) are §7.2-verbatim.
 
+pub mod convert;
 pub mod lsm;
 
 #[cfg(test)]

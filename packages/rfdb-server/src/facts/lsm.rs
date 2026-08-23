@@ -332,9 +332,11 @@ impl LsmFactStore {
             .expect("derived commit")
     }
 
-    /// Test seam: the pinned MVCC read snapshot inside `s` (for building the
-    /// StorageView oracle on the IDENTICAL snapshot).
-    #[cfg(test)]
+    /// Crate seam: the pinned MVCC read snapshot inside `s` (for building the
+    /// StorageView oracle on the IDENTICAL snapshot). Also the P6 converter's
+    /// record-enumeration pin (round-012-pre S1): the §6.2 decomposition needs
+    /// whole RECORDS (metadata blob included), which the base-five fact
+    /// projection cannot serve losslessly.
     pub(crate) fn read_snapshot_of(&self, s: &Snapshot) -> ReadSnapshot {
         self.payload(s)
             .expect("snapshot of this store")
@@ -342,8 +344,8 @@ impl LsmFactStore {
             .clone()
     }
 
-    /// Test seam: read access to the underlying store (oracle construction).
-    #[cfg(test)]
+    /// Crate seam: read access to the underlying store (oracle construction;
+    /// P6 converter record enumeration — see [`Self::read_snapshot_of`]).
     pub(crate) fn store_read(&self) -> std::sync::RwLockReadGuard<'_, MultiShardStore> {
         self.store.read().unwrap()
     }
