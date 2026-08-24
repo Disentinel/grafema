@@ -9,9 +9,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
-import { RUN_OUTPUTS, treeDirtyBeyondOwnOutputs } from '../src/report.ts';
+import { RUN_OUTPUTS, gitPorcelain, treeDirtyBeyondOwnOutputs } from '../src/report.ts';
 
 const PKG = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const REPO = path.resolve(PKG, '../..');
@@ -71,5 +73,48 @@ test('every path the run writes is on the discount list, and every discounted pa
   assert.equal(RUN_OUTPUTS.length, 3);
   for (const rel of RUN_OUTPUTS) {
     assert.equal(fs.existsSync(path.join(REPO, rel)), true, `${rel} is named but not there`);
+  }
+});
+
+/** A scratch repository, so the format under test is the one git actually prints — the
+ *  hand-written lines above cannot catch a caller that mangles the output before the
+ *  classifier ever sees it. */
+function scratchRepo(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rofl-provenance-'));
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
+  git('init', '-q');
+  git('config', 'user.email', 'provenance@test');
+  git('config', 'user.name', 'provenance test');
+  for (const rel of RUN_OUTPUTS) {
+    fs.mkdirSync(path.join(dir, path.dirname(rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, rel), 'committed\n');
+  }
+  fs.mkdirSync(path.join(dir, 'packages/rfdb-server/src'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'packages/rfdb-server/src/engine.rs'), 'committed\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'base');
+  return dir;
+}
+
+test('real git output: a tree changed only by the run\'s own reports is not dirty', () => {
+  const dir = scratchRepo();
+  try {
+    for (const rel of RUN_OUTPUTS) fs.writeFileSync(path.join(dir, rel), 'rewritten by the run\n');
+    const porcelain = gitPorcelain(dir);
+    assert.equal(porcelain.split('\n').filter((l) => l !== '').length, RUN_OUTPUTS.length);
+    assert.equal(treeDirtyBeyondOwnOutputs(porcelain), false, porcelain);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('real git output: an engine source changed alongside them IS dirty', () => {
+  const dir = scratchRepo();
+  try {
+    for (const rel of RUN_OUTPUTS) fs.writeFileSync(path.join(dir, rel), 'rewritten by the run\n');
+    fs.writeFileSync(path.join(dir, 'packages/rfdb-server/src/engine.rs'), 'edited\n');
+    assert.equal(treeDirtyBeyondOwnOutputs(gitPorcelain(dir)), true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });

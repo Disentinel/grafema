@@ -140,6 +140,19 @@ export const RUN_OUTPUTS: readonly string[] = [
   '_ai/research/rofl-conformance-report.md',
 ];
 
+/**
+ * `git status --porcelain`, VERBATIM — not trimmed.
+ *
+ * The two status columns are part of every line, and an unmodified-in-index file leads
+ * with a space. Trimming the output eats that space on the FIRST line only, after which
+ * its path parses one character short and matches nothing — the failure is invisible in
+ * a test that hand-writes well-formed lines, which is how it got through the first time
+ * (measured: a tree whose only change was this run's own report read `dirtyTree: true`).
+ */
+export function gitPorcelain(cwd: string = REPO): string {
+  return execSync('git status --porcelain', { cwd, encoding: 'utf8' });
+}
+
 /** The path a `git status --porcelain` line is about: two status letters, a space, then
  *  the path — quoted when it has odd bytes, and `old -> new` for a rename, where the NEW
  *  name is the one that exists in the tree. */
@@ -276,7 +289,7 @@ export function buildReport(
 ): Report {
   const v0Rev = fs.readFileSync(path.join(PKG, 'vendor/rofl-v0/REV'), 'utf8').trim();
   const gitSha = sh('git rev-parse HEAD');
-  const dirtyTree = treeDirtyBeyondOwnOutputs(sh('git status --porcelain'));
+  const dirtyTree = treeDirtyBeyondOwnOutputs(gitPorcelain());
   const binarySha256 = crypto
     .createHash('sha256')
     .update(fs.readFileSync(server.binary))
