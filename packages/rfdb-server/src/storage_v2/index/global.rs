@@ -64,23 +64,46 @@ impl GlobalIndex {
 
     /// Build from a flat entry list, grouping by `entry.shard`.
     ///
-    /// Each shard's run takes its identity from the FIRST entry seen for that
-    /// shard; the maintained path never mixes segments within one shard, so this
-    /// only matters for hand-made lists. Every entry keeps its own `segment_id`
-    /// field regardless.
+    /// A run's identity is the segment its entries describe, so all of a shard's
+    /// entries must agree on it. On the maintained path they always do: every
+    /// entry of a run is stamped with that run's segment id when it is created.
+    ///
+    /// A list where one shard's entries DISAGREE describes no single segment, so
+    /// no identity is truthful for it — and a half-truthful identity is worse than
+    /// none, because `maintain_global_index` decides "still in step" by comparing
+    /// that one id: a run claiming a segment that only some of its entries came
+    /// from would be waved through as fresh, keeping foreign entries forever.
+    /// Such a shard therefore gets NO run. That is the module's rule applied
+    /// literally — incompleteness only costs a slower answer, wrongness returns
+    /// the wrong record — and it keeps the door safe for a future path that
+    /// restores an index from disk through `from_bytes`.
     pub fn build(entries: Vec<IndexEntry>) -> Self {
         let mut idx = Self::new();
+        let mut disagrees: Vec<bool> = Vec::new();
         for entry in entries {
             let shard = entry.shard;
             idx.ensure_slot(shard);
+            if disagrees.len() < idx.runs.len() {
+                disagrees.resize(idx.runs.len(), false);
+            }
             match &mut idx.runs[shard as usize] {
-                Some(run) => run.entries.push(entry),
+                Some(run) => {
+                    if run.segment_id != entry.segment_id {
+                        disagrees[shard as usize] = true;
+                    }
+                    run.entries.push(entry);
+                }
                 None => {
                     idx.runs[shard as usize] = Some(ShardRun {
                         segment_id: entry.segment_id,
                         entries: vec![entry],
                     })
                 }
+            }
+        }
+        for (shard, mixed) in disagrees.iter().enumerate() {
+            if *mixed {
+                idx.runs[shard] = None;
             }
         }
         for run in idx.runs.iter_mut().flatten() {
@@ -250,10 +273,12 @@ mod tests {
 
     #[test]
     fn test_global_index_roundtrip() {
+        // Shard 0's two entries share segment 1, shard 1's entry is segment 2 —
+        // the shape the maintained path always produces (one segment per shard run).
         let entries = vec![
             IndexEntry::new(50, 1, 0, 0),
+            IndexEntry::new(250, 1, 2, 0),
             IndexEntry::new(150, 2, 1, 1),
-            IndexEntry::new(250, 3, 2, 0),
         ];
 
         let idx = GlobalIndex::build(entries);
@@ -265,8 +290,39 @@ mod tests {
         // Verify lookups still work after roundtrip
         assert_eq!(idx2.lookup(50).unwrap().segment_id, 1);
         assert_eq!(idx2.lookup(150).unwrap().segment_id, 2);
-        assert_eq!(idx2.lookup(250).unwrap().segment_id, 3);
+        assert_eq!(idx2.lookup(250).unwrap().offset, 2);
         assert!(idx2.lookup(999).is_none());
+        // Run identities survive too, which is what "still in step" is decided on.
+        assert_eq!(idx2.shard_run_segment(0), Some(1));
+        assert_eq!(idx2.shard_run_segment(1), Some(2));
+    }
+
+    /// A list whose entries for ONE shard name different segments describes no
+    /// single segment for that shard. Giving the run one of those ids anyway would
+    /// make `maintain_global_index` wave it through as "still in step" — it decides
+    /// on that id alone — and the foreign entries would survive every later round.
+    /// So that shard gets no run at all: a missing run only costs a fan-out, a
+    /// mislabelled one costs correctness.
+    #[test]
+    fn test_build_refuses_a_run_whose_entries_disagree_on_the_segment() {
+        let idx = GlobalIndex::build(vec![
+            IndexEntry::new(10, 5, 0, 0),
+            IndexEntry::new(20, 9, 1, 0), // same shard, DIFFERENT segment
+            IndexEntry::new(30, 7, 0, 1), // a clean shard alongside it
+        ]);
+
+        assert!(
+            idx.shard_run(0).is_none(),
+            "shard 0's entries named segments 5 and 9; the run must be dropped, not \
+             labelled with one of them"
+        );
+        assert!(idx.lookup(10).is_none());
+        assert!(idx.lookup(20).is_none());
+
+        // The clean shard is unaffected: one bad shard does not cost the others.
+        assert_eq!(idx.shard_run_segment(1), Some(7));
+        assert_eq!(idx.lookup(30).unwrap().offset, 0);
+        assert_eq!(idx.len(), 1);
     }
 
     #[test]

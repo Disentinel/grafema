@@ -7164,6 +7164,249 @@ mod tests {
         assert_index_positions_are_true(&store, "after the cost phases");
     }
 
+    /// A shard loses its L1 ENTIRELY: every node it held is deleted, and a full
+    /// merge then physically drops them, leaving the shard with no L1 node segment
+    /// at all. The index must drop that shard's run.
+    ///
+    /// WHY THIS NEEDS ITS OWN TEST: `assert_index_equals_scratch` already carries a
+    /// message written for exactly this state ("keeps a run of N entries ... but the
+    /// shard has no L1 node segment at all — stale run"), but no scenario in the
+    /// suite ever produced the state, so the message never fired and the branch that
+    /// prevents it (`index.clear_shard_run`) was never executed. Deleting that call
+    /// left the whole suite green — a guard whose sensor is fine and whose reach was
+    /// short. This test supplies the reach.
+    #[test]
+    fn test_index_drops_the_run_of_a_shard_that_lost_its_l1() {
+        const SHARDS: u16 = 2;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("index_l1_vanishes.rfdb");
+        std::fs::create_dir_all(&db).unwrap();
+        let mut manifest = ManifestStore::create(&db).unwrap();
+        let mut store = MultiShardStore::create(&db, SHARDS).unwrap();
+        let dirs: Vec<String> = (0..SHARDS).map(|s| dir_for_shard(s, SHARDS)).collect();
+        let force_full = CompactionConfig {
+            segment_threshold: 1,
+            l1_fanout: f64::INFINITY,
+        };
+
+        let doomed_ids = add_index_batch(&mut store, &dirs[0], "wipe", 40);
+        add_index_batch(&mut store, &dirs[1], "keep", 40);
+        store.flush_all(&mut manifest).unwrap();
+        store.compact(&mut manifest, &force_full).unwrap();
+        assert!(
+            store.shards[0].l1_node_segment().is_some(),
+            "shard 0 must START with an L1, otherwise this test proves nothing"
+        );
+        assert_index_equals_scratch(&store, "before wiping shard 0");
+
+        // Delete everything shard 0 holds. The extra node exists to give shard 0 an
+        // L0 segment, without which the round would not touch the shard at all — it
+        // is deleted too, so the merge output is empty.
+        let mut doomed: HashSet<u128> = doomed_ids.into_iter().collect();
+        doomed.extend(add_index_batch(&mut store, &dirs[0], "wipe_last", 1));
+        store.set_tombstones(&doomed, &HashSet::new());
+        store.flush_all(&mut manifest).unwrap();
+        store.compact(&mut manifest, &force_full).unwrap();
+
+        // POSITIVE CONTROL: the state this test exists for must actually have been
+        // reached. If shard 0 still has an L1, the assertions below are vacuous.
+        assert!(
+            store.shards[0].l1_node_segment().is_none(),
+            "shard 0 still has an L1 of {:?} records — the wipe did not happen, so \
+             the stale-run case was never created and this test proved nothing",
+            store.shards[0].l1_node_segment().map(|s| s.record_count())
+        );
+
+        assert_index_equals_scratch(&store, "after wiping shard 0");
+        assert!(
+            store
+                .global_index
+                .as_ref()
+                .unwrap()
+                .shard_run(0)
+                .is_none(),
+            "the index kept a run for shard 0 after that shard's L1 disappeared"
+        );
+        // Shard 1 was never touched and must still be indexed.
+        assert!(
+            store.global_index.as_ref().unwrap().shard_run(1).is_some(),
+            "shard 1's run was dropped although its L1 never changed"
+        );
+        for id in &doomed {
+            assert!(
+                store.get_node(*id).is_none(),
+                "deleted node {} is still readable after its shard's L1 was dropped",
+                id
+            );
+        }
+    }
+
+    /// A shard's L1 is swapped BEHIND THE MAINTAINER'S BACK — not by this round's
+    /// merge, so no `fresh_run` announces it. The next round must notice and rebuild.
+    ///
+    /// WHY THIS NEEDS ITS OWN TEST: `maintain_global_index` documents its own
+    /// trustworthiness as "it does not believe any bookkeeping about who was
+    /// compacted — it compares the segment id the run was built from against the one
+    /// the shard has installed right now". Nothing in the suite distinguished that
+    /// claim from the much weaker "does this shard have a run at all?": replacing the
+    /// segment-id comparison with a mere `is_some()` check left every test green.
+    /// The swap below goes through the same production method compaction uses.
+    #[test]
+    fn test_index_notices_an_l1_swapped_behind_its_back() {
+        const SHARDS: u16 = 2;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("index_oob_swap.rfdb");
+        std::fs::create_dir_all(&db).unwrap();
+        let mut manifest = ManifestStore::create(&db).unwrap();
+        let mut store = MultiShardStore::create(&db, SHARDS).unwrap();
+        let dirs: Vec<String> = (0..SHARDS).map(|s| dir_for_shard(s, SHARDS)).collect();
+        let force_full = CompactionConfig {
+            segment_threshold: 1,
+            l1_fanout: f64::INFINITY,
+        };
+
+        // Two shards with DIFFERENT record counts, so a kept-stale run is wrong about
+        // its length as well as its identity.
+        add_index_batch(&mut store, &dirs[0], "oob_small", 30);
+        add_index_batch(&mut store, &dirs[1], "oob_big", 55);
+        store.flush_all(&mut manifest).unwrap();
+        store.compact(&mut manifest, &force_full).unwrap();
+        assert_index_equals_scratch(&store, "before the out-of-band swap");
+
+        let old_seg_id = store.shards[0].l1_node_descriptor().unwrap().segment_id;
+        let donor_desc = store.shards[1].l1_node_descriptor().unwrap().clone();
+        assert_ne!(
+            old_seg_id, donor_desc.segment_id,
+            "the donor segment must differ from shard 0's own, or nothing is swapped"
+        );
+
+        // Install shard 1's L1 segment on shard 0, through the same production
+        // setter compaction uses, without telling the index.
+        let donor_path = shard_dir(&db, 1).join(format!(
+            "seg_{:06}_nodes.seg",
+            donor_desc.segment_id
+        ));
+        let donor_seg = NodeSegmentV2::open(&donor_path).unwrap();
+        let donor_records = donor_seg.record_count();
+        let old_records = store.shards[0].l1_node_segment().unwrap().record_count();
+        assert_ne!(
+            old_records, donor_records,
+            "the swap must change the record count too"
+        );
+        store.shards[0].set_l1_segments(Some(donor_seg), Some(donor_desc), None, None);
+
+        // POSITIVE CONTROL: the index is now out of step, and does not know it.
+        assert_eq!(
+            store.global_index.as_ref().unwrap().shard_run_segment(0),
+            Some(old_seg_id),
+            "the index was supposed to still describe the OLD segment at this point"
+        );
+
+        // A round happens that compacts nothing at all. Even so, the maintainer must
+        // catch the swap — it re-checks identity, it does not wait to be told.
+        let noop = CompactionConfig {
+            segment_threshold: 1_000_000,
+            l1_fanout: 4.0,
+        };
+        let result = store.compact(&mut manifest, &noop).unwrap();
+        assert!(
+            result.shards_compacted.is_empty(),
+            "this round was supposed to compact nothing"
+        );
+
+        assert_index_equals_scratch(&store, "after an out-of-band swap and one round");
+        assert_index_positions_are_true(&store, "after an out-of-band swap and one round");
+    }
+
+    /// A DRIFTED index entry — right node id, wrong offset — must never make
+    /// `get_node` return the record that happens to sit at that offset.
+    ///
+    /// WHY THIS NEEDS ITS OWN TEST: the index is maintained rather than rebuilt, so
+    /// the read path verifies the id at the offset before trusting an entry, turning
+    /// any drift into a slower correct answer instead of a wrong one. That check was
+    /// the most valuable line of the change and the only one nothing tested: deleting
+    /// it left the whole suite green, while `get_node` silently returned a NEIGHBOUR
+    /// of the requested node. The suite could not tell, because every other test
+    /// exercises an index that is already correct.
+    #[test]
+    fn test_get_node_rejects_a_drifted_index_entry() {
+        const SHARDS: u16 = 2;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("index_drift.rfdb");
+        std::fs::create_dir_all(&db).unwrap();
+        let mut manifest = ManifestStore::create(&db).unwrap();
+        let mut store = MultiShardStore::create(&db, SHARDS).unwrap();
+        let dirs: Vec<String> = (0..SHARDS).map(|s| dir_for_shard(s, SHARDS)).collect();
+        let force_full = CompactionConfig {
+            segment_threshold: 1,
+            l1_fanout: f64::INFINITY,
+        };
+        add_index_batch(&mut store, &dirs[0], "drift", 40);
+        add_index_batch(&mut store, &dirs[1], "other", 10);
+        store.flush_all(&mut manifest).unwrap();
+        store.compact(&mut manifest, &force_full).unwrap();
+
+        let seg_id = store.shards[0].l1_node_descriptor().unwrap().segment_id;
+        let l1 = store.shards[0].l1_node_segment().unwrap();
+        let records = l1.record_count();
+        assert!(records >= 4, "need several records to shift entries between");
+
+        // Rotate the run by one position: every entry keeps its own node id but points
+        // at its neighbour's slot. This is exactly the shape of drift the self-check
+        // names — a segment rewritten under an entry that was not refreshed.
+        let drifted: Vec<IndexEntry> = (0..records)
+            .map(|i| IndexEntry::new(l1.get_id(i), seg_id, ((i + 1) % records) as u32, 0))
+            .collect();
+        let wanted = l1.get_id(0);
+        let occupant = l1.get_id(1);
+        assert_ne!(
+            wanted, occupant,
+            "the trap must point at a DIFFERENT node, otherwise it traps nothing"
+        );
+        store
+            .global_index
+            .as_mut()
+            .unwrap()
+            .set_shard_run(0, seg_id, drifted);
+
+        // Force the index path: the O(1) routing map would otherwise answer first and
+        // the index would never be consulted.
+        assert!(
+            store.node_to_shard.remove(&wanted).is_some(),
+            "the node was not in the routing map, so removing it proves nothing"
+        );
+        // POSITIVE CONTROL: the trap is armed — the index now points this node at a
+        // slot holding someone else.
+        let planted = store
+            .global_index
+            .as_ref()
+            .unwrap()
+            .lookup_in_shard(0, wanted)
+            .expect("the planted run must still answer for this node");
+        assert_eq!(
+            store.shards[0]
+                .l1_node_segment()
+                .unwrap()
+                .get_id(planted.offset as usize),
+            occupant,
+            "the planted entry does not actually point at another node"
+        );
+
+        let got = store.get_node(wanted);
+        assert_eq!(
+            got.map(|n| n.id),
+            Some(wanted),
+            "get_node returned a DIFFERENT node than the one asked for (node {} sits \
+             where the drifted entry pointed). The point-lookup index was trusted \
+             without verifying the id at the offset: a maintained index that drifts \
+             must cost a slower answer, never a wrong one",
+            occupant
+        );
+    }
+
     // -- RFD-15: Enrichment Virtual Shards Tests ----------------------------------
 
     fn make_enrichment_edge(
