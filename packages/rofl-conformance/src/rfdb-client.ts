@@ -114,10 +114,10 @@ export class RfdbClient {
   }
 
   /** Execute a derive program; returns rows of variable bindings for the FIRST
-   *  rule head's predicate (rfdb_server.rs:3219-3222 ⟦Some(program.rules()[0].head().clone())⟧ — callers hoist the wanted
+   *  rule head's predicate (rfdb_server.rs:3231-3234 ⟦Some(program.rules()[0].head().clone())⟧ — callers hoist the wanted
    *  predicate's first rule to the top). explain is ALWAYS false: explain=true
    *  silently reroutes to the legacy v1 query engine
-   *  (rfdb_server.rs:3218 ⟦if derive_engine_enabled() && !explain⟧). */
+   *  (rfdb_server.rs:3230 ⟦if derive_engine_enabled() && !explain⟧). */
   async executeDatalog(source: string): Promise<Record<string, string>[]> {
     const r = (await this.call({ cmd: 'executeDatalog', source, explain: false })) as { [k: string]: MpValue };
     if (typeof r['error'] === 'string') throw new RfdbError(r['error']);
@@ -223,7 +223,7 @@ export class RfdbClient {
   /** Names of the databases the server currently holds.
    *
    *  Closing the last connection to an EPHEMERAL database removes it
-   *  (`rfdb_server.rs:3060-3064` ⟦Cleanup ephemeral database if no connections remain⟧), so this is
+   *  (`rfdb_server.rs:3075-3079` ⟦Cleanup ephemeral database if no connections remain⟧), so this is
    *  how a caller proves its per-seed databases went away instead of piling up behind it. */
   async listDatabases(): Promise<string[]> {
     const r = (await this.call({ cmd: 'listDatabases' })) as { [k: string]: MpValue };

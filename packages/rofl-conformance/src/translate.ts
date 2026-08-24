@@ -155,7 +155,7 @@ export function canonToTerm(s: string): Term {
 }
 
 /** Checked ground constant → its wire form for an `explain` key (the READ
- *  direction of the protocol's value surface, rfdb_server.rs:3629
+ *  direction of the protocol's value surface, rfdb_server.rs:3641
  *  ⟦resolves the bare-decimal ambiguity⟧): an
  *  atom is its bare name, an integer is `~int:N` (live-probed R15/P1f). */
 export function constToWireKey(t: Term): string {

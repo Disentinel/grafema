@@ -304,7 +304,7 @@ function oracleFor(prog: GeneratedProgram, ctx: SeedContext): OracleEngine {
  *  Without it, "0 programs were unreflectable" is unfalsifiable: a door that refused nothing
  *  at all would produce the same zero. The annotation is the same one the bundled
  *  `depends.dl` opens with, so it PARSES — what comes back is Projection T's own gate and
- *  not a syntax error wearing its clothes (`rfdb_server.rs:9094-9096` ⟦A well-formed `@materialize` program — it PARSES⟧). */
+ *  not a syntax error wearing its clothes (`rfdb_server.rs:9106-9108` ⟦A well-formed `@materialize` program — it PARSES⟧). */
 const UNREFLECTABLE_CONTROL = '@materialize(edge_type="DEPENDS_ON")\np(X, Y) :- edge(X, Y, "IMPORTS_FROM").';
 
 /** Prove the refusal path is live before counting how many programs it refused. */
@@ -327,7 +327,7 @@ export async function assertRefusalDetectorWorks(store: StorePassContext): Promi
     );
   } finally {
     // Closing the last connection to an ephemeral database IS the deletion
-    // (`rfdb_server.rs:3060-3064` ⟦Cleanup ephemeral database if no connections remain⟧) —
+    // (`rfdb_server.rs:3075-3079` ⟦Cleanup ephemeral database if no connections remain⟧) —
     // measured: a dropDatabase after this close answers "Database … not found".
     await store.client.closeDatabase();
   }
@@ -490,7 +490,7 @@ export async function runSeedStorePass(
     return result;
   } finally {
     // The ephemeral database dies with its last connection
-    // (`rfdb_server.rs:3060-3064` ⟦Cleanup ephemeral database if no connections remain⟧);
+    // (`rfdb_server.rs:3075-3079` ⟦Cleanup ephemeral database if no connections remain⟧);
     // {@link runTier0} proves at the end of the pass that none of them survived.
     await store.client.closeDatabase();
   }
