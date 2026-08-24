@@ -4248,6 +4248,269 @@ mod tests {
         }
     }
 
+    /// The GOLDEN TABLE (all five operations × the reference's four inputs, plus both
+    /// zero-divisor rows) end to end through the FULL engine.
+    ///
+    /// Deliberately NOT the builtin surface: `run()` calls `lookup(name).expect(..)`, so a
+    /// missing or misnamed registration PANICS there and can never masquerade as an empty
+    /// result. Through `evaluate` it can — an unknown 3-ary body predicate is served as a
+    /// legal EMPTY relation and the join collapses silently, which makes every "expected
+    /// empty" assertion here indistinguishable from a broken bench on its own. So each
+    /// empty row carries its PAIRED POSITIVE CONTROL: the same rule shape, same fixture,
+    /// same builtin name, only the divisor repaired — and it must return rows.
+    ///
+    /// This is also the live proof that `mod` is spellable as a predicate name in the
+    /// derive dialect (it is a Rust keyword, not a dialect one).
+    #[test]
+    fn rule_level_golden_table_with_paired_positive_controls() {
+        use crate::datalog::EvalLimits;
+        use crate::derive::evaluate;
+        use crate::derive::events::EventLog;
+
+        const FACTS: &str = "n(7).\n n(10).\n n(-7).\n n(0).";
+        let v = edge_attr_fixture();
+        let stats = Stats {
+            total_nodes: 3,
+            total_edges: 2,
+            ..Default::default()
+        };
+
+        // One body leg → the sorted (X, Y) pairs the rule derives.
+        let pairs = |leg: &str| -> Vec<(i64, i64)> {
+            let src = format!("m(X, Y) :- n(X), {leg}.\n{FACTS}");
+            let eval = evaluate(
+                &v,
+                &src,
+                stats.clone(),
+                EvalLimits::none(),
+                EventLog::discard(),
+            )
+            .unwrap_or_else(|e| panic!("evaluate `{leg}`: {e:?}"));
+            let mut got: Vec<(i64, i64)> = eval
+                .facts("m")
+                .iter()
+                .map(|f| match (&f[0], &f[1]) {
+                    (Value::Int(x), Value::Int(y)) => (*x, *y),
+                    other => panic!("`{leg}` must derive two typed Ints, got {other:?}"),
+                })
+                .collect();
+            got.sort_unstable();
+            got
+        };
+
+        // v0 `Y is X + 1`
+        assert_eq!(
+            pairs("add(X, 1, Y)"),
+            vec![(-7, -6), (0, 1), (7, 8), (10, 11)]
+        );
+        // v0 `Y is 0 - X` (v0 has no unary minus on a variable)
+        assert_eq!(
+            pairs("sub(0, X, Y)"),
+            vec![(-7, 7), (0, 0), (7, -7), (10, -10)]
+        );
+        // v0 `Y is X * 3`
+        assert_eq!(
+            pairs("mul(X, 3, Y)"),
+            vec![(-7, -21), (0, 0), (7, 21), (10, 30)]
+        );
+        // v0 `Y is X / 3` — TRUNCATES TOWARD ZERO: -7 / 3 is -2, not the floor -3.
+        assert_eq!(
+            pairs("div(X, 3, Y)"),
+            vec![(-7, -2), (0, 0), (7, 2), (10, 3)]
+        );
+        // v0 `Y is X mod 3` — the remainder's SIGN FOLLOWS THE DIVIDEND: -7 mod 3 is -1,
+        // not the Euclidean 2.
+        assert_eq!(
+            pairs("mod(X, 3, Y)"),
+            vec![(-7, -1), (0, 0), (7, 1), (10, 1)]
+        );
+
+        // v0 `Y is X / 0` → []. Not an error, not a panic: a quiet premise failure.
+        assert_eq!(pairs("div(X, 0, Y)"), vec![], "X / 0 derives nothing");
+        assert_eq!(
+            pairs("div(X, 3, Y)").len(),
+            4,
+            "PAIRED CONTROL for X / 0: the identical rule with a sound divisor MUST derive"
+        );
+        // v0 `Y is X mod 0` → [].
+        assert_eq!(pairs("mod(X, 0, Y)"), vec![], "X mod 0 derives nothing");
+        assert_eq!(
+            pairs("mod(X, 3, Y)").len(),
+            4,
+            "PAIRED CONTROL for X mod 0: the identical rule with a sound divisor MUST derive"
+        );
+    }
+
+    /// The reference's own type probe through the FULL engine: from `p(a). p(1).` a `+1`
+    /// rule derives EXACTLY ONE row — the one for the integer. A bare lowercase leaf is a
+    /// §5 string const (`parser.rs` `parse_term`), never a number, so its premise quietly
+    /// fails. Run live against v0 rev 052a4c5: `X = 1, Y = 2` and nothing else.
+    #[test]
+    fn rule_level_non_integer_operand_derives_exactly_one_row() {
+        use crate::datalog::EvalLimits;
+        use crate::derive::evaluate;
+        use crate::derive::events::EventLog;
+
+        let v = edge_attr_fixture();
+        let stats = Stats {
+            total_nodes: 3,
+            total_edges: 2,
+            ..Default::default()
+        };
+
+        let eval = evaluate(
+            &v,
+            "m(X, Y) :- p(X), add(X, 1, Y).\n p(a).\n p(1).",
+            stats.clone(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("evaluate");
+        let facts = eval.facts("m");
+        assert_eq!(facts.len(), 1, "only the integer leaf derives");
+        assert_eq!(facts[0][0], Value::Int(1));
+        assert_eq!(facts[0][1], Value::Int(2));
+
+        // PAIRED CONTROL for the absent `a` row: `p(a)` really is in the relation, so the
+        // row missing above is the arithmetic refusing a string — not a fact that never
+        // loaded and not a builtin that was never registered.
+        let control = evaluate(
+            &v,
+            "m(X) :- p(X).\n p(a).\n p(1).",
+            stats,
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("evaluate");
+        let got: Vec<Value> = control.facts("m").iter().map(|f| f[0].clone()).collect();
+        assert_eq!(got.len(), 2, "both leaves are in `p`");
+        assert!(got.contains(&s("a")), "including the string leaf: {got:?}");
+    }
+
+    /// Integer overflow never panics and never wraps: it is the SAME quiet premise failure
+    /// as a zero divisor — no row, and NO coercion miss (the operands coerced fine; it is
+    /// the result that does not exist). Each ceiling case is paired with the identical call
+    /// one step inside the domain, which must produce its exact value.
+    #[test]
+    fn arithmetic_overflow_is_a_quiet_premise_failure_with_paired_controls() {
+        for (name, a, b) in [
+            ("add", i128::MAX, 1),
+            ("sub", i128::MIN, 1),
+            ("mul", i128::MAX, 2),
+            ("div", i128::MIN, -1),
+            ("mod", i128::MIN, -1),
+        ] {
+            let out = free3_val(name, Value::big_int(a), Value::big_int(b));
+            assert_eq!(
+                out.rows.len(),
+                0,
+                "{name}: an unrepresentable result derives nothing"
+            );
+            assert_eq!(
+                out.coercion_misses, 0,
+                "{name}: overflow is NOT a coercion miss — both operands were integers"
+            );
+        }
+        // PAIRED CONTROLS: same builtin, same call shape, one step inside the ceiling.
+        for (name, a, b, want) in [
+            ("add", i128::MAX - 1, 1, i128::MAX),
+            ("sub", i128::MIN + 1, 1, i128::MIN),
+            ("mul", i128::MAX / 2, 2, i128::MAX - 1),
+            ("div", i128::MIN + 1, -1, i128::MAX),
+            ("mod", i128::MIN + 1, -1, 0),
+        ] {
+            let out = free3_val(name, Value::big_int(a), Value::big_int(b));
+            assert_eq!(out.rows.len(), 1, "{name}: the control MUST produce a row");
+            assert_eq!(out.rows[0][0], Value::big_int(want), "{name} control value");
+            assert_eq!(out.coercion_misses, 0, "{name} control: nothing to coerce");
+        }
+    }
+
+    /// Overflow through the FULL engine, with the control built into the same query: an
+    /// `i64`-overflowing literal parses to a canonical `BigInt` (`parser.rs`
+    /// `parse_number`), so the `i128` ceiling is reachable from rule text. The ceiling row
+    /// drops; the row one below it derives — one query, both halves.
+    #[test]
+    fn rule_level_overflow_drops_only_the_overflowing_row() {
+        use crate::datalog::EvalLimits;
+        use crate::derive::evaluate;
+        use crate::derive::events::EventLog;
+
+        let v = edge_attr_fixture();
+        let stats = Stats {
+            total_nodes: 3,
+            total_edges: 2,
+            ..Default::default()
+        };
+        let eval = evaluate(
+            &v,
+            "m(Y) :- n(X), add(X, 1, Y).\n\
+             n(170141183460469231731687303715884105727).\n\
+             n(170141183460469231731687303715884105726).",
+            stats,
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("evaluate");
+
+        let facts = eval.facts("m");
+        assert_eq!(
+            facts.len(),
+            1,
+            "i128::MAX + 1 drops; i128::MAX - 1 + 1 derives (its own paired control)"
+        );
+        assert_eq!(
+            facts[0][0].as_str(),
+            "170141183460469231731687303715884105727",
+            "exact, never wrapped and never rounded"
+        );
+    }
+
+    /// The bound-output FILTER mode across ALL FIVE operations — the mode that lets a
+    /// computed value be checked rather than produced. The negative rows are the load
+    /// bearing ones: they re-prove truncation-toward-zero and the dividend-signed remainder
+    /// on the filtering path, which runs its own comparison ([`bind_or_check_int`]).
+    #[test]
+    fn arithmetic_bound_output_filters_all_five_operations() {
+        let chk = |name: &str, a: i64, b: i64, out: i64| {
+            run(
+                name,
+                ArgSpec::new(vec![
+                    ArgValue::Bound(Value::Int(a)),
+                    ArgValue::Bound(Value::Int(b)),
+                    ArgValue::Bound(Value::Int(out)),
+                ]),
+            )
+            .rows
+            .len()
+        };
+        for (name, a, b, right, wrong) in [
+            ("add", -7, 1, -6, -8),
+            ("sub", 0, -7, 7, -7),
+            ("mul", -7, 3, -21, 21),
+            // -3 is the FLOOR quotient — the reference truncates toward zero, so it fails.
+            ("div", -7, 3, -2, -3),
+            // 2 is the Euclidean remainder — the reference's sign follows the dividend.
+            ("mod", -7, 3, -1, 2),
+        ] {
+            assert_eq!(
+                chk(name, a, b, right),
+                1,
+                "{name}({a},{b},{right}) must pass"
+            );
+            assert_eq!(
+                chk(name, a, b, wrong),
+                0,
+                "{name}({a},{b},{wrong}) must not"
+            );
+        }
+        // A zero divisor under a BOUND output still passes nothing, whatever is claimed.
+        assert_eq!(chk("div", 7, 0, 0), 0, "no quotient to check against");
+        assert_eq!(chk("mod", 7, 0, 0), 0, "no remainder to check against");
+        // PAIRED CONTROLS for those two: identical call shape, divisor repaired.
+        assert_eq!(chk("div", 7, 1, 7), 1, "control: 7 / 1 checks against 7");
+        assert_eq!(chk("mod", 7, 1, 0), 1, "control: 7 mod 1 checks against 0");
+    }
     /// The `boot.rofl` shape this round needs (`boot.rofl:19-20`): a stratum number that
     /// CLIMBS through a recursive rule whose only progress is `+1`. In v0 that body leg is
     /// `N is M + 1`; in the derive dialect it is `add(M, 1, N)`. The fixpoint must both
