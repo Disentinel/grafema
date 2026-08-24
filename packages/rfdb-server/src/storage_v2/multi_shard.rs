@@ -272,9 +272,15 @@ pub struct MultiShardStore {
     /// Built during add_nodes() and rebuilt from all_node_ids() on open().
     node_to_shard: HashMap<u128, u16>,
 
-    /// Global index for O(log N) point lookups across shards.
-    /// Built during compaction from all shards' L1 entries.
+    /// Point-lookup index over the shards' L1 node segments, one sorted run per
+    /// shard. MAINTAINED by compaction (`maintain_global_index`), not rebuilt:
+    /// a shard whose L1 segment did not change keeps its run untouched.
     global_index: Option<GlobalIndex>,
+
+    /// L1 records read to keep `global_index` in step, counted since this store
+    /// was opened. Read it with [`Self::index_maintenance_records`]; see there
+    /// for what a healthy number looks like.
+    index_maintenance_records: u64,
 
     /// Enrichment edge index: maps source node ID to shard IDs
     /// containing enrichment edges FROM that node.
@@ -470,6 +476,7 @@ impl MultiShardStore {
             shards,
             node_to_shard: HashMap::new(),
             global_index: None,
+            index_maintenance_records: 0,
             enrichment_edge_to_shard: HashMap::new(),
             file_to_node_ids: HashMap::new(),
             edge_type_intern: HashMap::new(),
@@ -608,6 +615,7 @@ impl MultiShardStore {
             shards,
             node_to_shard,
             global_index: None,
+            index_maintenance_records: 0,
             enrichment_edge_to_shard,
             file_to_node_ids,
             edge_type_intern: HashMap::new(),
@@ -645,6 +653,7 @@ impl MultiShardStore {
             shards,
             node_to_shard: HashMap::new(),
             global_index: None,
+            index_maintenance_records: 0,
             enrichment_edge_to_shard: HashMap::new(),
             file_to_node_ids: HashMap::new(),
             edge_type_intern: HashMap::new(),
@@ -943,17 +952,43 @@ impl MultiShardStore {
             return self.shards[shard_id as usize].get_node(id);
         }
 
-        // O(log N) path: global index for L1 direct lookup
+        // O(log N) path: the point-lookup index goes straight to the record's
+        // position in a shard's L1, instead of the fan-out below, whose last step
+        // walks an L1 id column record by record.
+        //
+        // Shards are pruned by their L1 bloom filter first, so this pays ONE
+        // binary search plus a handful of bloom probes, not one binary search per
+        // shard. A bloom "no" is a definite no for that L1, so pruning can only
+        // skip shards that could not have answered anyway.
+        //
+        // SELF-CHECK, and why it is not optional: the index is maintained across
+        // compaction rounds rather than rebuilt from the whole database, so an
+        // entry could in principle point at a position in a segment that has since
+        // been rewritten. Reading a record by position cannot notice that — it
+        // would return SOME record, i.e. the wrong node, silently. Verifying the
+        // id at the offset (a 16-byte read, no record reconstruction) turns any
+        // such drift from a wrong answer into a slower correct one: fall through
+        // to the fan-out.
         if let Some(global_idx) = &self.global_index {
-            if let Some(entry) = global_idx.lookup(id) {
-                let shard = &self.shards[entry.shard as usize];
-                if let Some(l1) = shard.l1_node_segment() {
-                    // Check tombstone before returning
-                    if !shard.tombstones().contains_node(id) {
-                        return Some(l1.get_record(entry.offset as usize));
-                    } else {
-                        return None;
-                    }
+            for (shard_idx, shard) in self.shards.iter().enumerate() {
+                let Some(l1) = shard.l1_node_segment() else {
+                    continue;
+                };
+                if !l1.maybe_contains(id) {
+                    continue;
+                }
+                let Some(entry) = global_idx.lookup_in_shard(shard_idx as u16, id) else {
+                    continue;
+                };
+                let offset = entry.offset as usize;
+                if offset >= l1.record_count() || l1.get_id(offset) != id {
+                    continue; // drifted entry: let the fan-out answer
+                }
+                // Check tombstone before returning
+                if !shard.tombstones().contains_node(id) {
+                    return Some(l1.get_record(offset));
+                } else {
+                    return None;
                 }
             }
         }
@@ -3931,7 +3966,8 @@ impl MultiShardStore {
     /// 5. Swap shard state: set L1, clear L0 + tombstones
     ///
     /// After all shards are processed:
-    /// 6. Build global index from all L1 entries for O(log N) point lookups
+    /// 6. Bring the point-lookup index back in step — per shard, and only for the
+    ///    shards whose L1 segment actually changed (`maintain_global_index`)
     ///
     /// Then commit a new manifest with:
     /// - L0 segments removed (compacted into L1)
@@ -3981,17 +4017,27 @@ impl MultiShardStore {
         // Track which shards were compacted so we know which L0 segments to remove
         let mut compacted_shard_ids: HashSet<u16> = HashSet::new();
 
-        // Collect entries for global index from all compacted shards
-        let mut global_index_entries: Vec<IndexEntry> = Vec::new();
+        // Fresh point-lookup runs produced by this round, one per shard that
+        // rewrote its L1. Applied after the result loop by
+        // `maintain_global_index`; shards absent from this list keep the run they
+        // already have, and are never re-read.
+        let mut fresh_index_runs: Vec<(u16, u64, Vec<IndexEntry>)> = Vec::new();
 
         // ── Phase 1: Classify shards ────────────────────────────────────
         // Collect non-compacted shard data and identify compaction targets.
+        //
+        // NOTE what is deliberately NOT here: a walk of the non-compacted shards'
+        // L1 to re-collect their point-lookup entries. Their L1 segment is not
+        // being touched this round, so their entries cannot have changed. Walking
+        // them made every round cost O(whole database) no matter how little was
+        // compacted — the same defect class as the full scan removed from the
+        // write path in 1237cdca / e04349ca, and it cancelled out the very
+        // property the size-tiered cheap path exists for ("cost is O(|L0|),
+        // independent of DB size", compaction/coordinator.rs).
 
         let mut shards_to_compact: Vec<usize> = Vec::new();
 
         for shard_idx in 0..self.shards.len() {
-            let shard_id = shard_idx as u16;
-
             if !should_compact(&self.shards[shard_idx], config) {
                 // Preserve existing L1 descriptors for non-compacted shards
                 if let Some(desc) = self.shards[shard_idx].l1_node_descriptor() {
@@ -3999,20 +4045,6 @@ impl MultiShardStore {
                 }
                 if let Some(desc) = self.shards[shard_idx].l1_edge_descriptor() {
                     l1_edge_descs.push(desc.clone());
-                }
-                // Collect existing L1 entries for global index
-                if let Some(l1_seg) = self.shards[shard_idx].l1_node_segment() {
-                    let l1_seg_id = self.shards[shard_idx]
-                        .l1_node_descriptor()
-                        .map_or(0, |d| d.segment_id);
-                    for i in 0..l1_seg.record_count() {
-                        global_index_entries.push(IndexEntry::new(
-                            l1_seg.get_id(i),
-                            l1_seg_id,
-                            i as u32,
-                            shard_id,
-                        ));
-                    }
                 }
                 continue;
             }
@@ -4139,15 +4171,18 @@ impl MultiShardStore {
                         by_name_idx = Some(InvertedIndex::from_bytes(&built.by_name)?);
                         token_idx = Some(TokenIndex::from_bytes(&built.by_token)?);
 
-                        // Collect entries for global index
-                        for (offset, record) in records.iter().enumerate() {
-                            global_index_entries.push(IndexEntry::new(
-                                record.id,
-                                seg_id,
-                                offset as u32,
-                                shard_id,
-                            ));
-                        }
+                        // This shard's fresh point-lookup run. Free: the records
+                        // are already in hand for the inverted indexes above, and
+                        // their count is exactly what this round rewrote.
+                        let run: Vec<IndexEntry> = records
+                            .iter()
+                            .enumerate()
+                            .map(|(offset, record)| {
+                                IndexEntry::new(record.id, seg_id, offset as u32, shard_id)
+                            })
+                            .collect();
+                        self.index_maintenance_records += run.len() as u64;
+                        fresh_index_runs.push((shard_id, seg_id, run));
 
                         l1_node_descs.push(desc.clone());
                         total_nodes_merged += meta.record_count;
@@ -4262,21 +4297,11 @@ impl MultiShardStore {
                     if let Some(desc) = self.shards[shard_idx].l1_edge_descriptor() {
                         l1_edge_descs.push(desc.clone());
                     }
-                    // Keep this shard's existing L1 entries in the global index
-                    // (point-lookup oracle); the L1 segment is unchanged.
-                    if let Some(l1_seg) = self.shards[shard_idx].l1_node_segment() {
-                        let l1_seg_id = self.shards[shard_idx]
-                            .l1_node_descriptor()
-                            .map_or(0, |d| d.segment_id);
-                        for i in 0..l1_seg.record_count() {
-                            global_index_entries.push(IndexEntry::new(
-                                l1_seg.get_id(i),
-                                l1_seg_id,
-                                i as u32,
-                                shard_id,
-                            ));
-                        }
-                    }
+                    // The point-lookup run of this shard is left ALONE: an L0-only
+                    // consolidation does not read, move or rewrite a single L1
+                    // record, so every entry describing that L1 is still exactly
+                    // right. Re-collecting them here is what used to make the
+                    // cheap tier pay the price of the whole database.
 
                     // Install the consolidated run as the shard's sole L0; L1 and
                     // tombstones are intentionally preserved.
@@ -4296,6 +4321,14 @@ impl MultiShardStore {
             shards_compacted.push(shard_id);
         }
 
+        // Bring the point-lookup index back in step BEFORE the "nothing was
+        // compacted" exit: the exit means no shard changed, and the maintainer
+        // then costs O(shard count) — it compares segment ids and finds every run
+        // already correct. Doing it here is what keeps the index equal, entry for
+        // entry, to one built from scratch at ANY moment, not just after a round
+        // that happened to compact something.
+        self.maintain_global_index(fresh_index_runs);
+
         if compacted_shard_ids.is_empty() {
             return Ok(CompactionResult {
                 shards_compacted: Vec::new(),
@@ -4304,11 +4337,6 @@ impl MultiShardStore {
                 tombstones_removed: 0,
                 duration_ms: start.elapsed().as_millis() as u64,
             });
-        }
-
-        // Build global index from all L1 entries (compacted + preserved)
-        if !global_index_entries.is_empty() {
-            self.global_index = Some(GlobalIndex::build(global_index_entries));
         }
 
         // Build new manifest L0 lists:
@@ -4385,6 +4413,105 @@ impl MultiShardStore {
             tombstones_removed: total_tombstones_removed,
             duration_ms: start.elapsed().as_millis() as u64,
         })
+    }
+
+    /// Bring the point-lookup index back in step after a compaction round.
+    ///
+    /// COST: proportional to what the round rewrote, not to the size of the
+    /// database. Shards that kept their L1 segment are recognised by segment id
+    /// and skipped without reading a single record.
+    ///
+    /// HOW IT DECIDES, and why that is trustworthy: it does not believe any
+    /// bookkeeping about "who was compacted". It compares, per shard, the segment
+    /// id the run was built from against the segment id the shard has installed
+    /// RIGHT NOW, and rebuilds only on disagreement. So a future code path that
+    /// swaps an L1 without telling anyone is caught at the next round instead of
+    /// silently drifting. The only two ways in:
+    ///   - `fresh_runs` — this round's freshly merged L1s, whose entries came for
+    ///     free from records already in memory;
+    ///   - the sweep below — a shard whose L1 the index has never seen (the first
+    ///     round after `open()`, where the index starts empty) or whose L1 changed
+    ///     behind the maintainer's back. The first-round case reads each existing
+    ///     L1 once per store lifetime, which is exactly what the old code did on
+    ///     EVERY round.
+    ///
+    /// The result is equal, entry for entry, to an index built from scratch out of
+    /// the shards' current L1 segments — proven over many rounds by
+    /// `test_maintained_global_index_equals_scratch`.
+    fn maintain_global_index(&mut self, fresh_runs: Vec<(u16, u64, Vec<IndexEntry>)>) {
+        let index = self.global_index.get_or_insert_with(GlobalIndex::new);
+
+        for (shard_id, segment_id, entries) in fresh_runs {
+            index.set_shard_run(shard_id, segment_id, entries);
+        }
+
+        for shard_idx in 0..self.shards.len() {
+            let shard_id = shard_idx as u16;
+            let shard = &self.shards[shard_idx];
+
+            let Some(l1_seg) = shard.l1_node_segment() else {
+                // No L1 node segment on this shard: nothing to point at.
+                index.clear_shard_run(shard_id);
+                continue;
+            };
+            let segment_id = shard.l1_node_descriptor().map_or(0, |d| d.segment_id);
+
+            if index.shard_run_segment(shard_id) == Some(segment_id) {
+                continue; // already describes this exact segment
+            }
+
+            let entries: Vec<IndexEntry> = (0..l1_seg.record_count())
+                .map(|i| IndexEntry::new(l1_seg.get_id(i), segment_id, i as u32, shard_id))
+                .collect();
+            self.index_maintenance_records += entries.len() as u64;
+            index.set_shard_run(shard_id, segment_id, entries);
+        }
+    }
+
+    /// L1 records read to keep the point-lookup index in step since this store was
+    /// opened. The cost sensor for compaction's index maintenance.
+    ///
+    /// Read it before and after a workload and take the difference. What the
+    /// difference must look like:
+    /// - a round that compacts nothing, and a round that consolidates L0 only:
+    ///   ZERO — no L1 record moved, so no entry can have changed;
+    /// - a round that fully merges one shard: that shard's new L1 record count,
+    ///   and nothing from the other shards;
+    /// - the FIRST round after `open()`: every existing L1 once, because the index
+    ///   is not persisted and has to learn the segments it inherited.
+    ///
+    /// A difference that tracks the size of the DATABASE rather than the size of
+    /// the round is the defect this sensor exists to catch: it makes an
+    /// eviction-heavy load, which compacts on nearly every commit, quadratic.
+    /// Guard: `test_index_maintenance_cost_is_proportional_to_the_round`.
+    ///
+    /// Deliberately separate from [`FullScanMeter`]: that meter's claim is "the
+    /// write path never answers a QUESTION by walking the database", and
+    /// compaction's own rewriting is legitimately excluded from it. This counter
+    /// makes a different claim — that the rewriting itself stays proportional to
+    /// the rewrite.
+    pub fn index_maintenance_records(&self) -> u64 {
+        self.index_maintenance_records
+    }
+
+    /// Build the point-lookup index from scratch out of the shards' CURRENT L1
+    /// segments — the definition the maintained index is checked against.
+    #[cfg(test)]
+    fn global_index_from_scratch(&self) -> GlobalIndex {
+        let mut index = GlobalIndex::new();
+        for shard_idx in 0..self.shards.len() {
+            let shard_id = shard_idx as u16;
+            let shard = &self.shards[shard_idx];
+            let Some(l1_seg) = shard.l1_node_segment() else {
+                continue;
+            };
+            let segment_id = shard.l1_node_descriptor().map_or(0, |d| d.segment_id);
+            let entries: Vec<IndexEntry> = (0..l1_seg.record_count())
+                .map(|i| IndexEntry::new(l1_seg.get_id(i), segment_id, i as u32, shard_id))
+                .collect();
+            index.set_shard_run(shard_id, segment_id, entries);
+        }
+        index
     }
 }
 
@@ -6589,6 +6716,452 @@ mod tests {
                 "global index should contain fn_{}_b", i
             );
         }
+    }
+
+    // -- Point-lookup index: maintained, not rebuilt ------------------------------
+    //
+    // Two properties are guarded here, and they pull in opposite directions, which
+    // is the whole point:
+    //   1. TRUTH — the maintained index must equal, entry for entry, one built
+    //      from scratch out of the shards' current L1 segments. Maintenance error
+    //      accumulates, so this is checked after EVERY round of many, with inserts
+    //      and deletes in between, not once at the end.
+    //   2. COST — a round must only read what it rewrote. The old code re-read
+    //      every shard's L1 on every round, which made the cost of a round follow
+    //      the size of the DATABASE instead of the size of the round.
+    // A fix for (2) that quietly breaks (1) would be worse than the defect: a wrong
+    // index does not answer slower, it answers WRONG.
+
+    /// A directory the planner routes to `shard`, so a test can dirty one shard on
+    /// purpose and leave the others alone. Routing is by parent directory
+    /// (`shard_planner.rs:43-51`), so every file inside lands on the same shard.
+    fn dir_for_shard(shard: u16, shard_count: u16) -> String {
+        let planner = ShardPlanner::new(shard_count);
+        for i in 0..100_000u32 {
+            let dir = format!("src/pkg{}", i);
+            if planner.compute_shard_id(&format!("{}/f.ts", dir)) == shard {
+                return dir;
+            }
+        }
+        panic!("no directory out of 100000 routes to shard {}", shard);
+    }
+
+    /// Add `count` nodes under `dir` (all of them land on that dir's shard).
+    /// Returns their ids.
+    fn add_index_batch(
+        store: &mut MultiShardStore,
+        dir: &str,
+        tag: &str,
+        count: usize,
+    ) -> Vec<u128> {
+        let nodes: Vec<NodeRecordV2> = (0..count)
+            .map(|i| {
+                let file = format!("{}/f{}.ts", dir, i / 10);
+                make_node(
+                    &format!("FUNCTION:{}_{}@{}", tag, i, file),
+                    "FUNCTION",
+                    &format!("{}_{}", tag, i),
+                    &file,
+                )
+            })
+            .collect();
+        let ids: Vec<u128> = nodes.iter().map(|n| n.id).collect();
+        store.add_nodes(nodes);
+        ids
+    }
+
+    /// THE EQUALITY CHECK: maintained == built from scratch, run by run, entry by
+    /// entry, including which segment each run claims to describe.
+    fn assert_index_equals_scratch(store: &MultiShardStore, when: &str) {
+        let maintained = store
+            .global_index
+            .as_ref()
+            .unwrap_or_else(|| panic!("{}: no point-lookup index at all", when));
+        let scratch = store.global_index_from_scratch();
+        let slots = maintained.shard_slots().max(scratch.shard_slots());
+        for shard in 0..slots as u16 {
+            match (maintained.shard_run(shard), scratch.shard_run(shard)) {
+                (None, None) => {}
+                (Some((m_seg, m_entries)), Some((s_seg, s_entries))) => {
+                    assert_eq!(
+                        m_seg, s_seg,
+                        "{}: shard {} run says it describes segment {}, but the shard \
+                         has segment {} installed — the run was not refreshed when \
+                         the L1 changed",
+                        when, shard, m_seg, s_seg
+                    );
+                    assert_eq!(
+                        m_entries.len(),
+                        s_entries.len(),
+                        "{}: shard {} run has {} entries, a from-scratch build of the \
+                         same segment has {}",
+                        when,
+                        shard,
+                        m_entries.len(),
+                        s_entries.len()
+                    );
+                    assert_eq!(
+                        m_entries, s_entries,
+                        "{}: shard {} run differs from a from-scratch build entry for \
+                         entry",
+                        when, shard
+                    );
+                }
+                (Some((m_seg, m_entries)), None) => panic!(
+                    "{}: shard {} keeps a run of {} entries for segment {}, but the \
+                     shard has no L1 node segment at all — stale run",
+                    when,
+                    shard,
+                    m_entries.len(),
+                    m_seg
+                ),
+                (None, Some((s_seg, s_entries))) => panic!(
+                    "{}: shard {} has an L1 (segment {}, {} records) that the index \
+                     never learned — a lookup for those nodes falls back to the \
+                     record-by-record fan-out",
+                    when,
+                    shard,
+                    s_seg,
+                    s_entries.len()
+                ),
+            }
+        }
+    }
+
+    /// THE POSITION CHECK: every entry must point at a record that really carries
+    /// that node id. This is the property whose violation returns the WRONG NODE
+    /// (`get_node` reads by position), so it is checked entry by entry, not sampled.
+    fn assert_index_positions_are_true(store: &MultiShardStore, when: &str) {
+        let index = store
+            .global_index
+            .as_ref()
+            .unwrap_or_else(|| panic!("{}: no point-lookup index at all", when));
+        let mut checked = 0usize;
+        for shard_idx in 0..store.shards.len() {
+            let Some((seg_id, entries)) = index.shard_run(shard_idx as u16) else {
+                continue;
+            };
+            let shard = &store.shards[shard_idx];
+            let l1 = shard
+                .l1_node_segment()
+                .unwrap_or_else(|| panic!("{}: shard {} run without L1", when, shard_idx));
+            assert_eq!(
+                seg_id,
+                shard.l1_node_descriptor().map_or(0, |d| d.segment_id),
+                "{}: shard {} run describes a segment the shard no longer has",
+                when,
+                shard_idx
+            );
+            for entry in entries {
+                let offset = entry.offset as usize;
+                assert!(
+                    offset < l1.record_count(),
+                    "{}: shard {} entry for node {} points at offset {}, past the end \
+                     of a {}-record segment",
+                    when,
+                    shard_idx,
+                    entry.node_id,
+                    offset,
+                    l1.record_count()
+                );
+                assert_eq!(
+                    l1.get_id(offset),
+                    entry.node_id,
+                    "{}: shard {} entry says node {} sits at offset {}, but that \
+                     position holds node {} — a point lookup would return the wrong \
+                     record",
+                    when,
+                    shard_idx,
+                    entry.node_id,
+                    offset,
+                    l1.get_id(offset)
+                );
+                checked += 1;
+            }
+        }
+        assert!(
+            checked > 0,
+            "{}: the index held no entries, so this check proved nothing",
+            when
+        );
+    }
+
+    /// Many rounds, inserts AND deletes in between, both compaction tiers
+    /// exercised: the maintained index must never drift from a from-scratch build.
+    ///
+    /// One round would prove nothing — a maintenance bug that forgets one shard
+    /// only shows once that shard's L1 changes, which happens rounds later.
+    #[test]
+    fn test_maintained_global_index_equals_scratch() {
+        const SHARDS: u16 = 4;
+        const ROUNDS: usize = 14;
+        const SEED_PER_SHARD: usize = 500;
+        const PER_FLUSH: usize = 50;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("index_equality.rfdb");
+        std::fs::create_dir_all(&db).unwrap();
+        let mut manifest = ManifestStore::create(&db).unwrap();
+        let mut store = MultiShardStore::create(&db, SHARDS).unwrap();
+
+        let dirs: Vec<String> = (0..SHARDS).map(|s| dir_for_shard(s, SHARDS)).collect();
+
+        // Seed: give every shard a sizeable L1 (infinite fanout forces the full fold).
+        let force_full = CompactionConfig {
+            segment_threshold: 1,
+            l1_fanout: f64::INFINITY,
+        };
+        let mut live: Vec<u128> = Vec::new();
+        for (s, dir) in dirs.iter().enumerate() {
+            live.extend(add_index_batch(
+                &mut store,
+                dir,
+                &format!("seed{}", s),
+                SEED_PER_SHARD,
+            ));
+        }
+        store.flush_all(&mut manifest).unwrap();
+        store.compact(&mut manifest, &force_full).unwrap();
+        assert_index_equals_scratch(&store, "after seeding");
+        assert_index_positions_are_true(&store, "after seeding");
+
+        // Rounds: dirty ONE shard at a time, so most shards are untouched — exactly
+        // the situation where maintenance is allowed to skip work and therefore
+        // exactly where it can go wrong.
+        let mixed = CompactionConfig {
+            segment_threshold: 2,
+            l1_fanout: 4.0,
+        };
+        let mut tombstoned: HashSet<u128> = HashSet::new();
+        let mut full_merge_rounds = 0usize;
+        let mut consolidate_rounds = 0usize;
+
+        for round in 0..ROUNDS {
+            let dir = dirs[round % dirs.len()].clone();
+            for half in 0..2 {
+                add_index_batch(
+                    &mut store,
+                    &dir,
+                    &format!("r{}_{}", round, half),
+                    PER_FLUSH,
+                );
+                store.flush_all(&mut manifest).unwrap();
+            }
+
+            // Deletes every third round: tombstoned records are physically dropped
+            // by a full merge, which shifts every later record's offset — the most
+            // likely way for a stale run to start lying about positions.
+            if round % 3 == 2 && live.len() > 20 {
+                let doomed: Vec<u128> = live.drain(0..7).collect();
+                tombstoned.extend(doomed);
+                store.set_tombstones(&tombstoned, &HashSet::new());
+            }
+
+            let result = store.compact(&mut manifest, &mixed).unwrap();
+            if result.nodes_merged > 0 {
+                full_merge_rounds += 1;
+            } else if !result.shards_compacted.is_empty() {
+                consolidate_rounds += 1;
+            }
+
+            let when = format!("round {}", round);
+            assert_index_equals_scratch(&store, &when);
+            assert_index_positions_are_true(&store, &when);
+        }
+
+        // The test is only as good as the situations it actually produced.
+        assert!(
+            full_merge_rounds > 0,
+            "no round did a full merge, so the 'L1 was rewritten' case was never \
+             exercised ({} consolidations)",
+            consolidate_rounds
+        );
+        assert!(
+            consolidate_rounds > 0,
+            "no round did an L0-only consolidation, so the 'L1 untouched, run must \
+             be kept' case was never exercised ({} full merges)",
+            full_merge_rounds
+        );
+        assert!(
+            !tombstoned.is_empty(),
+            "no deletes happened, so offset shifting was never exercised"
+        );
+
+        // And the index actually answers: every live node is found at its recorded
+        // position, every deleted one is gone.
+        let index = store.global_index.as_ref().unwrap();
+        let mut found_via_index = 0usize;
+        for &id in &live {
+            if let Some(entry) = index.lookup(id) {
+                let l1 = store.shards[entry.shard as usize].l1_node_segment().unwrap();
+                assert_eq!(l1.get_id(entry.offset as usize), id);
+                assert_eq!(store.get_node(id).map(|n| n.id), Some(id));
+                found_via_index += 1;
+            }
+        }
+        assert!(
+            found_via_index > 0,
+            "not one live node was reachable through the index"
+        );
+        for id in &tombstoned {
+            assert!(
+                store.get_node(*id).is_none(),
+                "deleted node {} still readable",
+                id
+            );
+        }
+    }
+
+    /// THE COST GUARD: a round reads only what it rewrote.
+    ///
+    /// Every number below is exact, and each phase is a different claim. Phase 0 is
+    /// the positive control: if the counter never moved at all, the zeros in the
+    /// other phases would prove nothing.
+    #[test]
+    fn test_index_maintenance_cost_is_proportional_to_the_round() {
+        const SHARDS: u16 = 4;
+        const SEED_PER_SHARD: usize = 400;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("index_cost.rfdb");
+        std::fs::create_dir_all(&db).unwrap();
+        let mut manifest = ManifestStore::create(&db).unwrap();
+        let mut store = MultiShardStore::create(&db, SHARDS).unwrap();
+        let dirs: Vec<String> = (0..SHARDS).map(|s| dir_for_shard(s, SHARDS)).collect();
+
+        let force_full = CompactionConfig {
+            segment_threshold: 1,
+            l1_fanout: f64::INFINITY,
+        };
+        for (s, dir) in dirs.iter().enumerate() {
+            add_index_batch(&mut store, dir, &format!("seed{}", s), SEED_PER_SHARD);
+        }
+        store.flush_all(&mut manifest).unwrap();
+        store.compact(&mut manifest, &force_full).unwrap();
+        drop(store);
+
+        // ── Phase 0. POSITIVE CONTROL: a cold index learns every inherited L1
+        // exactly once. The index is not persisted, so a freshly opened store must
+        // read the L1s it inherited — once per store, where the old code did it on
+        // every round.
+        let mut store = MultiShardStore::open(&db, &manifest).unwrap();
+        assert_eq!(
+            store.index_maintenance_records(),
+            0,
+            "a freshly opened store has read nothing yet"
+        );
+        let total_l1: u64 = (0..SHARDS)
+            .map(|s| {
+                store.shards[s as usize]
+                    .l1_node_segment()
+                    .map_or(0, |seg| seg.record_count() as u64)
+            })
+            .sum();
+        assert!(total_l1 > 0, "the seeded database must have L1 records");
+
+        let noop = CompactionConfig {
+            segment_threshold: 1_000_000,
+            l1_fanout: 4.0,
+        };
+        let result = store.compact(&mut manifest, &noop).unwrap();
+        assert!(
+            result.shards_compacted.is_empty(),
+            "this round was supposed to compact nothing"
+        );
+        assert_eq!(
+            store.index_maintenance_records(),
+            total_l1,
+            "the first round after open must read each inherited L1 record exactly \
+             once ({} in this database); if this is 0 the counter is dead and every \
+             other phase of this test is vacuous",
+            total_l1
+        );
+
+        // ── Phase 1. A round that compacts NOTHING must read nothing.
+        // This is where the defect lived: the old code walked every shard's L1 to
+        // rebuild the index, then threw the result away when it turned out there was
+        // nothing to compact.
+        let before = store.index_maintenance_records();
+        let result = store.compact(&mut manifest, &noop).unwrap();
+        assert!(result.shards_compacted.is_empty());
+        assert_eq!(
+            store.index_maintenance_records() - before,
+            0,
+            "a no-op round read L1 records. Nothing changed, so no entry can have \
+             changed: the cost of a round must follow the size of the round, not the \
+             size of the database ({} L1 records here)",
+            total_l1
+        );
+
+        // ── Phase 2. An L0-only consolidation must read nothing either: it does not
+        // touch a single L1 record. This is the tier whose stated cost is O(|L0|),
+        // "independent of DB size" (compaction/coordinator.rs) — a rebuild here
+        // cancels exactly that property.
+        add_index_batch(&mut store, &dirs[0], "phase2a", 50);
+        store.flush_all(&mut manifest).unwrap();
+        add_index_batch(&mut store, &dirs[0], "phase2b", 50);
+        store.flush_all(&mut manifest).unwrap();
+        let consolidate_only = CompactionConfig {
+            segment_threshold: 2,
+            l1_fanout: 0.001, // L0 is nowhere near L1 ⇒ never fold
+        };
+        let before = store.index_maintenance_records();
+        let result = store.compact(&mut manifest, &consolidate_only).unwrap();
+        assert_eq!(
+            result.shards_compacted,
+            vec![0],
+            "phase 2 was supposed to consolidate shard 0 and nothing else"
+        );
+        assert_eq!(
+            result.nodes_merged, 0,
+            "phase 2 must be an L0-only consolidation, not a full merge"
+        );
+        assert_eq!(
+            store.index_maintenance_records() - before,
+            0,
+            "an L0-only consolidation read L1 records although it rewrote none"
+        );
+
+        // ── Phase 3. A full merge of ONE shard charges that shard's records and
+        // nothing from the other three.
+        add_index_batch(&mut store, &dirs[0], "phase3", 50);
+        store.flush_all(&mut manifest).unwrap();
+        let before = store.index_maintenance_records();
+        let result = store.compact(&mut manifest, &force_full).unwrap();
+        assert_eq!(
+            result.shards_compacted,
+            vec![0],
+            "phase 3 was supposed to fully merge shard 0 and nothing else"
+        );
+        let shard0_l1 = store.shards[0]
+            .l1_node_segment()
+            .map_or(0, |seg| seg.record_count() as u64);
+        let charged = store.index_maintenance_records() - before;
+        assert_eq!(
+            charged, shard0_l1,
+            "a round that rewrote shard 0's L1 ({} records) charged {} records — it \
+             must charge exactly the records it wrote and nothing from the shards it \
+             never opened",
+            shard0_l1, charged
+        );
+        let all_l1: u64 = (0..SHARDS)
+            .map(|s| {
+                store.shards[s as usize]
+                    .l1_node_segment()
+                    .map_or(0, |seg| seg.record_count() as u64)
+            })
+            .sum();
+        assert!(
+            charged < all_l1,
+            "the round charged {} records out of {} in the database — that is a \
+             whole-database walk, which is the defect this guard exists to catch",
+            charged,
+            all_l1
+        );
+
+        // Truth is not sacrificed for cost: the cheap rounds left the index exact.
+        assert_index_equals_scratch(&store, "after the cost phases");
+        assert_index_positions_are_true(&store, "after the cost phases");
     }
 
     // -- RFD-15: Enrichment Virtual Shards Tests ----------------------------------
