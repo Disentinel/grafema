@@ -74,10 +74,12 @@ export interface Report {
     v0: { rev: string };
     rfdb: {
       gitSha: string;
-      /** Whether the working tree carried UNCOMMITTED changes when the run happened.
-       *  Without it `gitSha` reads as «measured at this commit» when what was measured
-       *  was a binary built from that commit plus whatever was in the tree — and a reader
-       *  rebuilding from the sha would get a different engine and no warning. */
+      /** Whether the working tree carried UNCOMMITTED changes THE RUN READ when it
+       *  happened. Without it `gitSha` reads as «measured at this commit» when what was
+       *  measured was a binary built from that commit plus whatever was in the tree — and
+       *  a reader rebuilding from the sha would get a different engine and no warning.
+       *  The run's own three report files are discounted: they are what the run WRITES,
+       *  and counting them would light the flag on every run after the first. */
       dirtyTree: boolean;
       binary: string;
       /** SHA-256 of the binary that was actually measured. This is the provenance that
@@ -128,6 +130,42 @@ const REPO = path.resolve(PKG, '../..');
 
 function sh(cmd: string): string {
   return execSync(cmd, { cwd: REPO, encoding: 'utf8' }).trim();
+}
+
+/** The files THIS RUN rewrites, repo-relative. One list, used both to write them and to
+ *  discount them in `dirtyTree` — so the two can never drift apart. */
+export const RUN_OUTPUTS: readonly string[] = [
+  'packages/rofl-conformance/conformance-report.json',
+  'packages/rofl-conformance/conformance-run-meta.json',
+  '_ai/research/rofl-conformance-report.md',
+];
+
+/** The path a `git status --porcelain` line is about: two status letters, a space, then
+ *  the path — quoted when it has odd bytes, and `old -> new` for a rename, where the NEW
+ *  name is the one that exists in the tree. */
+function porcelainPath(line: string): string {
+  let p = line.slice(3);
+  const arrow = p.indexOf(' -> ');
+  if (arrow >= 0) p = p.slice(arrow + 4);
+  if (p.startsWith('"') && p.endsWith('"')) p = p.slice(1, -1);
+  return p;
+}
+
+/**
+ * Is anything uncommitted that the measurement actually READ?
+ *
+ * The run's own three report files are outputs, not inputs: after the first run they sit
+ * uncommitted in the tree, and a flag that counted them would read «dirty» on every run
+ * from then on — a warning that is always on warns about nothing. Everything else counts,
+ * including untracked files, because an untracked `.rs` under the engine is exactly the
+ * case the flag exists for.
+ */
+export function treeDirtyBeyondOwnOutputs(porcelain: string): boolean {
+  const own = new Set(RUN_OUTPUTS);
+  return porcelain
+    .split('\n')
+    .filter((l) => l.trim() !== '')
+    .some((l) => !own.has(porcelainPath(l)));
 }
 
 /** Join actual results against the round-001 pre-registered claims. */
@@ -238,7 +276,7 @@ export function buildReport(
 ): Report {
   const v0Rev = fs.readFileSync(path.join(PKG, 'vendor/rofl-v0/REV'), 'utf8').trim();
   const gitSha = sh('git rev-parse HEAD');
-  const dirtyTree = sh('git status --porcelain').length > 0;
+  const dirtyTree = treeDirtyBeyondOwnOutputs(sh('git status --porcelain'));
   const binarySha256 = crypto
     .createHash('sha256')
     .update(fs.readFileSync(server.binary))
@@ -299,16 +337,16 @@ export function buildReport(
 }
 
 export function writeReports(report: Report): { jsonPath: string; mdPath: string; metaPath: string; runId: string } {
-  const jsonPath = path.join(PKG, 'conformance-report.json');
+  const jsonPath = path.join(REPO, RUN_OUTPUTS[0]);
   fs.writeFileSync(jsonPath, assertNoAnchors(JSON.stringify(report, null, 2), jsonPath) + '\n');
 
   // Run identity lives in the sidecar so the report file itself is
   // byte-reproducible evidence (same seeds + same commit ⇒ same bytes).
-  const metaPath = path.join(PKG, 'conformance-run-meta.json');
+  const metaPath = path.join(REPO, RUN_OUTPUTS[1]);
   const runId = `rofl-conformance-${Date.now()}`;
   fs.writeFileSync(metaPath, JSON.stringify({ run_id: runId, timestamp: new Date().toISOString() }, null, 2) + '\n');
 
-  const mdPath = path.join(REPO, '_ai/research/rofl-conformance-report.md');
+  const mdPath = path.join(REPO, RUN_OUTPUTS[2]);
   const t1 = report.tier1;
   const green = t1.filter((r) => r.verdict === 'GREEN');
   const red = t1.filter((r) => r.verdict === 'RED');
