@@ -64,6 +64,16 @@ impl Db {
     fn view(&self) -> BorrowedLsmStorageView<'_> {
         BorrowedLsmStorageView::new(&self.store, self.store.snapshot(&self.manifest))
     }
+
+    /// Drop the live store and manifest and OPEN THE SAME BYTES AGAIN — a process
+    /// restart, as far as the store is concerned. Nothing in-memory survives it, so
+    /// anything readable afterwards was really on disk.
+    fn reopen(&mut self) {
+        self.flush();
+        let path = self._dir.path().to_path_buf();
+        self.manifest = ManifestStore::open(&path).expect("reopen manifest");
+        self.store = MultiShardStore::open(&path, &self.manifest).expect("reopen store");
+    }
 }
 
 fn base_node_row_count(view: &dyn StorageView) -> usize {
@@ -1023,6 +1033,140 @@ fn the_superseded_rule_survives_a_full_compaction() {
     assert_eq!(store_mode_p(&db).len(), 1, "and the live answer is unchanged by compaction");
 }
 
+/// The gate above locks a FORM (a directive must arrive with a rule). This test states
+/// what that buys — and, just as importantly, what it does not.
+///
+/// A superseding rule that happens to derive NOTHING on today's data is accepted, and the
+/// live answer really does go to zero. Read on its own that looks like the retraction the
+/// spec forbids: «take this rule out, put nothing in its place». It is not, and the
+/// difference is mechanical rather than rhetorical — SOMETHING was put in its place, and
+/// the store can be asked what:
+///
+///   * the replacement is on record as a rule in force, with its clause;
+///   * the superseded rule is on record as history, with the clause that used to run;
+///   * the claim names which rule replaced which;
+///   * and because supersession is a live-claim law and not a «dead» bit, superseding the
+///     replacement brings the original back — which a deletion could never do.
+///
+/// A gate on «the replacement must derive something» is deliberately NOT added: derivability
+/// is a property of the data, so such a gate would refuse a program today and accept the
+/// identical one tomorrow.
+#[test]
+fn a_superseding_rule_that_derives_nothing_is_still_a_supersession() {
+    let mut db = supersession_fixture();
+    let old = parse_one("p(X) :- node(X, \"FUNCTION\").");
+    let old_id = rule_id(&old);
+    let vacuous = parse_one("p(X) :- node(X, \"NOSUCHTYPE\").");
+    let vacuous_id = rule_id(&vacuous);
+    reflect_into(&mut db, "p(X) :- node(X, \"FUNCTION\").").expect("reflect");
+    assert_eq!(store_mode_p(&db).len(), 2, "control: the old rule answers 2 before");
+
+    reflect_into(
+        &mut db,
+        &format!("p(X) :- node(X, \"NOSUCHTYPE\").\nsupersedes(\"{old_id}\")."),
+    )
+    .expect("a replacement that derives nothing is still a replacement");
+
+    // The live answer really did go to zero — this test is not dodging the uncomfortable
+    // half of the measurement.
+    assert_eq!(store_mode_p(&db).len(), 0, "the old rule is out of force");
+
+    // And here is what makes it a supersession and not a retraction.
+    let decoded = decode_rules(&db.view());
+    assert_eq!(
+        decoded.ids,
+        vec![vacuous_id.clone()],
+        "a successor is IN FORCE — the store is not left ruleless"
+    );
+    assert_eq!(
+        decoded.superseded_ids,
+        vec![old_id.clone()],
+        "and the old rule is history, not absence"
+    );
+    assert_eq!(
+        decoded.superseded_rules,
+        vec![old.clone()],
+        "history still decodes to the clause that used to run"
+    );
+    assert_eq!(
+        decoded.claims,
+        vec![(vacuous_id.clone(), old_id.clone())],
+        "the record says exactly which rule replaced which"
+    );
+
+    // The sharpest evidence: supersede the replacement and the original is back. A rule
+    // that had been RETRACTED could not return.
+    reflect_into(
+        &mut db,
+        &format!("p(X) :- node(X, \"CLASS\").\nsupersedes(\"{vacuous_id}\")."),
+    )
+    .expect("supersede the replacement");
+    assert_eq!(
+        store_mode_p(&db).len(),
+        3,
+        "the original (2 FUNCTIONs) is live again beside the new rule (1 CLASS) — 1 would \
+         mean the original stayed dead, 0 that the store broke"
+    );
+}
+
+/// (б) again, past the OTHER event that can quietly undo it: a RESTART.
+///
+/// The compaction test above proves the record survives a segment rewrite; it does not
+/// prove it survives being read back from scratch. Everything in the fixture up to that
+/// point has passed through one live `MultiShardStore` — memtables, caches and all — so a
+/// history that lived only in memory would have looked exactly the same. Here the store
+/// and the manifest are dropped and re-opened on the same bytes, and history is asked for
+/// again on the other side.
+#[test]
+fn the_superseded_rule_survives_a_restart() {
+    let mut db = supersession_fixture();
+    let old = parse_one("p(X) :- node(X, \"FUNCTION\").");
+    let old_id = rule_id(&old);
+    reflect_into(&mut db, "p(X) :- node(X, \"FUNCTION\").").expect("reflect");
+    reflect_into(
+        &mut db,
+        &format!("p(X) :- node(X, \"CLASS\").\nsupersedes(\"{old_id}\")."),
+    )
+    .expect("reflect the superseding rule");
+
+    let before = db.view().reflected_facts().len();
+    assert!(before >= 7, "control: the store carries both rules and the claim, got {before}");
+    assert_eq!(store_mode_p(&db).len(), 1, "control: the new rule is the one in force");
+
+    db.reopen();
+
+    // (б): the superseded rule is still on record, and still decodes to the clause that
+    // used to run — read off disk by a store that never saw it written.
+    let decoded = decode_rules(&db.view());
+    assert_eq!(
+        decoded.superseded_ids,
+        vec![old_id.clone()],
+        "the superseded rule must still be reported as history after a restart"
+    );
+    assert_eq!(
+        decoded.superseded_rules,
+        vec![old],
+        "and it must still decode to the clause that used to run"
+    );
+    assert_eq!(decoded.rules.len(), 1, "exactly one rule is in force after the restart");
+    assert_eq!(decoded.claims.len(), 1, "the supersession claim is on disk too");
+    assert_eq!(
+        db.view().reflected_facts().len(),
+        before,
+        "the restart must not have lost a single reflected record"
+    );
+
+    // (а) survived with it: the old rule is still OUT of force, not resurrected by the
+    // reload. 2 here would be the old rule answering again, 0 a store read that failed.
+    assert_eq!(store_mode_p(&db).len(), 1, "the supersession is still in effect");
+
+    // And the write door still knows the dead id is taken.
+    assert!(
+        rule_index(&db.view()).canon_by_rule_id.contains_key(&old_id),
+        "a superseded rule keeps its id reserved across a restart"
+    );
+}
+
 /// The recursion, not a flag: supersede the SUPERSEDER and the first rule is back in force.
 ///
 /// This is the fact layer's §2.4 rule verbatim — an utterance is live unless a LIVE
@@ -1066,8 +1210,18 @@ fn superseding_the_superseder_brings_the_first_rule_back() {
 /// «No retract — supersede only», enforced at the write door rather than asserted in a
 /// comment: a supersession with no rule to carry it is REFUSED.
 ///
-/// A bare `supersedes(rX).` is exactly the retraction the spec forbids — "take this rule
-/// out, put nothing in its place" — so it must not be writable at all.
+/// What this gate actually holds, stated precisely because the loose version of it is
+/// wrong: a supersession must ARRIVE WITH A REPLACEMENT RULE. A program that is nothing
+/// but `supersedes(rX).` names no successor, so the store would end up with a rule out of
+/// force and no record of what replaced it — a deletion with extra steps.
+///
+/// What it deliberately does NOT hold: that the replacement must DERIVE something. A rule
+/// deriving nothing today is a property of the DATA, not of the rule — add a matching node
+/// tomorrow and the same clause fires — so a gate on derivability would refuse legitimate
+/// rules today and pass the identical program tomorrow. The invariant that survives that
+/// is the one measured in
+/// [`a_superseding_rule_that_derives_nothing_is_still_a_supersession`]: whatever the
+/// replacement derives, it is ON RECORD, and the audit trail names it as the successor.
 #[test]
 fn a_supersession_with_no_superseding_rule_is_refused() {
     let mut db = supersession_fixture();

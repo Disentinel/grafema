@@ -19,6 +19,7 @@
 // the sha256 of the report bytes it archives per round.
 
 import * as fs from 'node:fs';
+import * as crypto from 'node:crypto';
 import * as path from 'node:path';
 import { execSync } from 'node:child_process';
 import type { ScenarioResult } from './suite-runner.ts';
@@ -71,7 +72,20 @@ export function storePassShortfall(tier0: Tier0Summary): string | null {
 export interface Report {
   engines: {
     v0: { rev: string };
-    rfdb: { gitSha: string; binary: string; serverVersion: string; protocolVersion: number };
+    rfdb: {
+      gitSha: string;
+      /** Whether the working tree carried UNCOMMITTED changes when the run happened.
+       *  Without it `gitSha` reads as «measured at this commit» when what was measured
+       *  was a binary built from that commit plus whatever was in the tree — and a reader
+       *  rebuilding from the sha would get a different engine and no warning. */
+      dirtyTree: boolean;
+      binary: string;
+      /** SHA-256 of the binary that was actually measured. This is the provenance that
+       *  cannot drift: the sha above names source, this names the artifact. */
+      binarySha256: string;
+      serverVersion: string;
+      protocolVersion: number;
+    };
   };
   tier0: {
     seeds: number;
@@ -224,10 +238,18 @@ export function buildReport(
 ): Report {
   const v0Rev = fs.readFileSync(path.join(PKG, 'vendor/rofl-v0/REV'), 'utf8').trim();
   const gitSha = sh('git rev-parse HEAD');
+  const dirtyTree = sh('git status --porcelain').length > 0;
+  const binarySha256 = crypto
+    .createHash('sha256')
+    .update(fs.readFileSync(server.binary))
+    .digest('hex');
   return stripAnchorsDeep({
     engines: {
       v0: { rev: v0Rev },
-      rfdb: { gitSha, binary: server.binary, serverVersion: server.serverVersion, protocolVersion: server.protocolVersion },
+      rfdb: {
+        gitSha, dirtyTree, binary: server.binary, binarySha256,
+        serverVersion: server.serverVersion, protocolVersion: server.protocolVersion,
+      },
     },
     tier0: {
       seeds: tier0.seedsRun,
@@ -299,7 +321,7 @@ export function writeReports(report: Report): { jsonPath: string; mdPath: string
   lines.push('# ROFL v0 ↔ RFDB conformance report (P0 harness)');
   lines.push('');
   lines.push(`- run: \`${runId}\` (identity in \`conformance-run-meta.json\`; the machine report \`conformance-report.json\` is byte-reproducible and carries no run identity)`);
-  lines.push(`- oracle: ROFL v0 vendored at \`${report.engines.v0.rev}\` (main); subject: rfdb-server ${report.engines.rfdb.serverVersion} (protocol v${report.engines.rfdb.protocolVersion}, derive engine, repo \`${report.engines.rfdb.gitSha.slice(0, 12)}\`)`);
+  lines.push(`- oracle: ROFL v0 vendored at \`${report.engines.v0.rev}\` (main); subject: rfdb-server ${report.engines.rfdb.serverVersion} (protocol v${report.engines.rfdb.protocolVersion}, derive engine, repo \`${report.engines.rfdb.gitSha.slice(0, 12)}${report.engines.rfdb.dirtyTree ? '-dirty' : ''}\`, binary sha256 \`${report.engines.rfdb.binarySha256.slice(0, 12)}\`)`);
   lines.push(`- a RED verdict is a SUCCESS of the harness: it is a machine-readable migration-roadmap entry, not a failure. Harness failures are crashes, fake greens, silent skips — gated by the oracle self-check (30/30 must pass on vendored v0) and the scenario-count check.`);
   lines.push('');
   lines.push('## Tier-0 — 120-seed TS↔RFDB differential (common subset)');

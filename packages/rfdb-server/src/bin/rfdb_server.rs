@@ -357,6 +357,19 @@ pub enum Request {
     /// one database, so answering it in the handshake would be answering about nothing.
     GetRuleSource,
 
+    /// READ the store's rule catalogue: the rules IN FORCE, the rules that have been
+    /// SUPERSEDED, and the supersession claims that put them there.
+    ///
+    /// The read half of «supersede only». The criterion is not just «the superseded rule
+    /// stays in the store» — it is that one can find out THAT IT ONCE HELD. Without this
+    /// door a client can list the rule records (`queryNodesByFile`) and get undecoded
+    /// blobs: the history is on disk and out of reach, which is indistinguishable from a
+    /// deletion for every purpose except a hex dump.
+    ///
+    /// A read door, and only a read door. It carries no argument, and there is no shape of
+    /// it that removes anything — asking what used to hold cannot take a rule out of force.
+    GetReflectedRules,
+
     // Cypher queries
     CypherQuery {
         query: String,
@@ -618,6 +631,14 @@ pub enum Response {
     RuleSourceMode {
         #[serde(rename = "ruleSource")]
         rule_source: rfdb::derive::RuleSource,
+    },
+    /// Reply for `GetReflectedRules`. Told apart from every other variant by its field
+    /// set (`Response` is `#[serde(untagged)]`): no other reply carries `inForce`.
+    ReflectedRules {
+        #[serde(rename = "inForce")]
+        in_force: Vec<WireRule>,
+        superseded: Vec<WireRule>,
+        claims: Vec<WireSupersession>,
     },
     CypherResult {
         columns: Vec<String>,
@@ -931,6 +952,23 @@ pub struct WireNode {
     pub metadata: Option<String>,
 }
 
+/// One rule of the store's catalogue: its enumerated id and the canonical clause it
+/// decodes to. The clause is rendered from the DECODED rule, not echoed from whatever
+/// text was reflected, so what a reader sees is what the executor would run.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct WireRule {
+    pub id: String,
+    pub clause: String,
+}
+
+/// One `supersedes(New, Old)` claim the store carries. Both sides are rule ids, so a
+/// reader can follow a chain: what replaced what, and in which order.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct WireSupersession {
+    pub superseder: String,
+    pub superseded: String,
+}
+
 /// Edge representation for wire protocol
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1118,14 +1156,63 @@ fn id_to_string(id: u128) -> String {
 // Conversion functions
 // ============================================================================
 
-fn wire_node_to_record(node: WireNode) -> NodeRecord {
+/// The storage id a wire node will land on — the SAME arithmetic
+/// [`wire_node_to_record`] uses, factored out so the supersede-only guard
+/// ([`refuse_rule_record_write`]) reads the destination without consuming the node.
+fn wire_node_id(node: &WireNode) -> u128 {
     // If client sends semanticId (v3), use it for both the semantic_id field
     // and to compute the u128 hash (ensuring consistency).
-    let id = if node.semantic_id.is_some() {
-        string_to_id(node.semantic_id.as_ref().unwrap())
-    } else {
-        string_to_id(&node.id)
-    };
+    match node.semantic_id.as_deref() {
+        Some(sid) => string_to_id(sid),
+        None => string_to_id(&node.id),
+    }
+}
+
+/// ROFL supersede-only, held at the two GENERIC node-write doors (`AddNodes` and
+/// `CommitBatch`'s node list) instead of only at the delete doors.
+///
+/// A reflected rule record is content-addressed, and its numeric id is readable with an
+/// ordinary `QueryNodesByFile("$rofl/rules")`. Handing that id straight back to `AddNodes`
+/// with different content OVERWRITES the record in place: the clause stops decoding, the
+/// rule leaves force having superseded nobody, and the history it was supposed to keep is
+/// gone. That is a retraction wearing a write's clothes — the delete doors above refuse
+/// the honest spelling of it, so this door must refuse the disguised one.
+///
+/// Minting the reserved type by hand is refused by the same gate. Rules enter the store
+/// through `ReflectProgram`, which is where the supersession gate lives
+/// (`derive/reflect.rs` ⟦fn encode_rules_to_records_beside⟧: id-collision, victim-resolves
+/// and no-cycle). A record smuggled past that gate would carry none of those checks, so a
+/// hand-built `supersedes` fact could take a rule out of force with nothing replacing it.
+fn refuse_rule_record_write(engine: &dyn GraphStore, nodes: &[WireNode]) -> Option<Response> {
+    let reserved = rfdb::derive::reflect::REFLECT_NODE_TYPE;
+    for node in nodes {
+        if node.node_type.as_deref() == Some(reserved) {
+            return Some(Response::Error {
+                error: format!(
+                    "E-ROFL-NORETRACT: {reserved} is the reflected rule record type; rule \
+                     records are written by reflectProgram, which holds the supersession \
+                     gate — a hand-written one would carry no gate at all",
+                ),
+            });
+        }
+        if let Some(existing) = engine.get_node(wire_node_id(node)) {
+            if existing.node_type.as_deref() == Some(reserved) {
+                return Some(Response::Error {
+                    error: format!(
+                        "E-ROFL-NORETRACT: {} is a reflected rule record ({reserved}); \
+                         overwriting it in place would take its rule out of force with \
+                         nothing superseding it — rules are superseded, never overwritten",
+                        node.id,
+                    ),
+                });
+            }
+        }
+    }
+    None
+}
+
+fn wire_node_to_record(node: WireNode) -> NodeRecord {
+    let id = wire_node_id(&node);
     NodeRecord {
         id,
         node_type: node.node_type,
@@ -1316,6 +1403,7 @@ fn get_operation_name(request: &Request) -> String {
         Request::ReflectProgram { .. } => "ReflectProgram".to_string(),
         Request::SetRuleSource { .. } => "SetRuleSource".to_string(),
         Request::GetRuleSource => "GetRuleSource".to_string(),
+        Request::GetReflectedRules => "GetReflectedRules".to_string(),
         Request::IsEndpoint { .. } => "IsEndpoint".to_string(),
         Request::GetNodeIdentifier { .. } => "GetNodeIdentifier".to_string(),
         Request::UpdateNodeVersion { .. } => "UpdateNodeVersion".to_string(),
@@ -1480,6 +1568,9 @@ fn handle_request_with_cancel(
 
         Request::AddNodes { nodes } => {
             with_engine_write(session, |engine| {
+                if let Some(refusal) = refuse_rule_record_write(engine, &nodes) {
+                    return refusal;
+                }
                 let records: Vec<NodeRecord> = nodes.into_iter().map(wire_node_to_record).collect();
                 engine.add_nodes(records);
                 Response::Ok { ok: true }
@@ -1738,7 +1829,11 @@ fn handle_request_with_cancel(
         Request::Clear => {
             // W8 Part 2: clear is DURABLE on the v2 engine — it truncates the on-disk
             // database (segments + manifest + tombstones + engine caches incl. the D2
-            // pins), so a subsequent reload sees an EMPTY graph. The old behavior
+            // pins), so a subsequent reload sees an empty GRAPH. Empty of graph data:
+            // the reflected rule records are lifted out and re-committed by
+            // `clear_durable` (they are the PROGRAM, not the data), so a store-mode
+            // database keeps answering with the same rules over a fresh graph — measured
+            // by `clear_wipes_the_graph_and_carries_the_rules_across`. The old behavior
             // (ephemeral swap, disk untouched) made `analyze --clear` a placebo: the old
             // disk resurrected on reload. Calling `clear_durable` directly (instead of
             // the infallible trait `clear()`) surfaces a truncation failure to the
@@ -1935,6 +2030,18 @@ fn handle_request_with_cancel(
             })
         }
 
+        Request::GetReflectedRules => {
+            // READ path: decoding the catalogue takes a pinned view and writes nothing.
+            with_engine_read(session, |engine| {
+                match dispatch_get_reflected_rules(engine) {
+                    Ok((in_force, superseded, claims)) => {
+                        Response::ReflectedRules { in_force, superseded, claims }
+                    }
+                    Err(e) => Response::Error { error: e },
+                }
+            })
+        }
+
         Request::CypherQuery { query, explain: _ } => {
             let cf = cancel_flag.clone();
             with_engine_read(session, |engine| {
@@ -2086,6 +2193,21 @@ fn handle_request_with_cancel(
                 protected_types.push(reserved.to_string());
             }
 
+            // ... and protecting the records from the batch's file-scoped SWEEP is only
+            // half of it: the batch's own node list goes through the same
+            // `wire_node_to_record` as `AddNodes`, so it can overwrite a rule record by
+            // its id without the sweep ever running. Same guard, same refusal — placed
+            // INSIDE each commit path, under the lock that path already holds.
+            //
+            // Why not once, up front: a guard that takes the read lock, drops it, and
+            // only then commits leaves a window. `ReflectProgram` runs under the
+            // EXCLUSIVE write lock, so it cannot interleave with either commit path once
+            // that path holds its lock — but it can interleave with a check made before
+            // the lock is taken. A rule record written in that window was not there to
+            // be seen, and the batch would overwrite it: a retraction let through by the
+            // timing rather than by the door. Checking under the same lock acquisition
+            // as the write closes it.
+
             // MVCC B4: prefer the CONCURRENT V2 commit path. It runs under a
             // SHARED read() lock (so N commits proceed in parallel; only the
             // short manifest commit-point is serialized inside the engine) and
@@ -2117,6 +2239,12 @@ fn handle_request_with_cancel(
                 } else {
                     let db = session.current_db.as_ref().unwrap();
                     let engine = db.engine.read().unwrap();
+                    // Under the SHARED read lock this commit runs under: `ReflectProgram`
+                    // needs the exclusive lock, so no rule record can appear between this
+                    // look and the write below.
+                    if let Some(refusal) = refuse_rule_record_write(&**engine, &nodes) {
+                        return refusal;
+                    }
                     let v2 = engine.as_any().downcast_ref::<GraphEngineV2>().unwrap();
                     handle_commit_batch_v2_concurrent(
                         v2, changed_files, nodes, edges, file_context, defer_index, protected_types,
@@ -2124,6 +2252,11 @@ fn handle_request_with_cancel(
                 }
             } else {
                 with_engine_write(session, |engine| {
+                    // Under the EXCLUSIVE write lock this commit runs under — same
+                    // reason as the concurrent branch above, one lock for look and write.
+                    if let Some(refusal) = refuse_rule_record_write(engine, &nodes) {
+                        return refusal;
+                    }
                     // Try V2 native path (O(batch_size) via file_to_node_ids index)
                     match engine.as_any_mut().downcast_mut::<GraphEngineV2>() {
                         Some(v2) => handle_commit_batch_v2(
@@ -3346,6 +3479,54 @@ fn dispatch_explain_datalog_gap(
         failing_predicate: g.failing_predicate,
         failing_is_negative: g.failing_is_negative,
     }))
+}
+
+/// `GetReflectedRules` dispatch (READ path): the store's rule catalogue, decoded — what is
+/// in force, what has been superseded, and the claims that put it there. derive-engine-ONLY
+/// and kill-switch-gated like its siblings; with the switch off there is no Projection T to
+/// read a catalogue out of, and answering an EMPTY catalogue would be a lie shaped exactly
+/// like «this database has no rules».
+///
+/// Takes `&dyn GraphStore`, not `&mut`. That is the whole point of the door: the history of
+/// a rule must be answerable without touching it.
+fn dispatch_get_reflected_rules(
+    engine: &dyn GraphStore,
+) -> std::result::Result<(Vec<WireRule>, Vec<WireRule>, Vec<WireSupersession>), String> {
+    if !derive_engine_enabled() {
+        return Err("RFDB_DERIVE_ENGINE: getReflectedRules is a derive-engine-only path; with \
+                    the kill switch off there is no reflected rule catalogue to read"
+            .to_string());
+    }
+    let v2 = engine
+        .as_any()
+        .downcast_ref::<GraphEngineV2>()
+        .ok_or_else(|| {
+            "RFDB_DERIVE_ENGINE: getReflectedRules requires a storage_v2 GraphEngineV2 backend"
+                .to_string()
+        })?;
+
+    let decoded = v2.reflected_rule_catalogue();
+    let render = |ids: &[String], rules: &[rfdb::datalog::Rule]| -> Vec<WireRule> {
+        ids.iter()
+            .zip(rules.iter())
+            .map(|(id, r)| WireRule {
+                id: id.clone(),
+                clause: rfdb::derive::reflect::canon_clause(r),
+            })
+            .collect()
+    };
+    Ok((
+        render(&decoded.ids, &decoded.rules),
+        render(&decoded.superseded_ids, &decoded.superseded_rules),
+        decoded
+            .claims
+            .iter()
+            .map(|(new, old)| WireSupersession {
+                superseder: new.clone(),
+                superseded: old.clone(),
+            })
+            .collect(),
+    ))
 }
 
 /// `ReflectProgram` dispatch (WRITE path): reflect a derive program's rules into the current
@@ -7913,11 +8094,22 @@ mod protocol_tests {
     /// and Rust runs tests in parallel, so the two router tests must not race on it.
     static DERIVE_ENGINE_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+    /// Take [`DERIVE_ENGINE_ENV_LOCK`] WITHOUT inheriting a poisoning.
+    ///
+    /// The mutex guards a `std::env` slot, not an invariant: a test that panics while
+    /// holding it leaves the env var restored by the guard's `Drop` and nothing else
+    /// half-written. With a plain `.unwrap()` that panic re-panics every later test in
+    /// the same binary, so ONE real failure was reported as sixteen, at a line that is
+    /// the same for all of them — a triage bill for regressions that do not exist.
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        DERIVE_ENGINE_ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     /// The kill-switch predicate (Final #12 default flip): the derive engine by default,
     /// the query engine only with the explicit off-switch `RFDB_DERIVE_ENGINE=off`.
     #[test]
     fn derive_router_on_by_default() {
-        let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
 
         // Unset → derive (THE default since Final #12).
@@ -7949,7 +8141,7 @@ mod protocol_tests {
     /// is refused, not worked around).
     #[test]
     fn hello_advertises_derive_materialize_by_default_and_not_when_off() {
-        let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
         let (_dir, manager) = setup_test_manager();
 
@@ -7995,7 +8187,7 @@ mod protocol_tests {
     /// in-process derivation.
     #[test]
     fn dispatch_materialize_datalog_gated_and_writes_edges() {
-        let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
 
         // Real ephemeral v2 engine: module `a` IMPORTS_FROM module `b`.
@@ -8074,7 +8266,7 @@ mod protocol_tests {
     /// READ dispatchers share the same resolver.
     #[test]
     fn dispatch_materialize_datalog_resolves_stdlib_packs() {
-        let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
         std::env::set_var("RFDB_DERIVE_ENGINE", "on");
 
@@ -8184,7 +8376,7 @@ mod protocol_tests {
     /// program cannot derive — a true negative, distinct from an error.
     #[test]
     fn dispatch_explain_datalog_fact_returns_witness_and_gates_off() {
-        let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
 
         // Module `a` (file a.js) imports module `b` (file b.js) → depends(a,b) via depends.dl.
@@ -8259,7 +8451,7 @@ mod protocol_tests {
     /// the untagged `1` correctly names the DIFFERENT (non-existent) `Id(1)` fact.
     #[test]
     fn explain_fact_reads_a_typed_integer_key_off_the_wire() {
-        let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
         std::env::set_var("RFDB_DERIVE_ENGINE", "on");
 
@@ -8326,7 +8518,7 @@ mod protocol_tests {
     /// which the explain path reads as the node id `Id(1)`, so the witness comes back `None`.
     #[test]
     fn a_query_row_element_is_a_valid_explain_key_for_the_same_fact() {
-        let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
         std::env::set_var("RFDB_DERIVE_ENGINE", "on");
 
@@ -8425,7 +8617,7 @@ one(X, 1) :- node(X, "MODULE")."#;
     /// by sim ∖ base). A follow-up read proves nothing was written.
     #[test]
     fn dispatch_sim_datalog_predicts_new_facts_without_commit_and_gates_off() {
-        let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
 
         let mut engine = GraphEngineV2::create_ephemeral();
@@ -8518,7 +8710,7 @@ one(X, 1) :- node(X, "MODULE")."#;
     /// and is derive-engine-only (coded refusal with the switch off, I5).
     #[test]
     fn dispatch_explain_datalog_gap_names_missing_premise_and_gates_off() {
-        let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
 
         let mut engine = GraphEngineV2::create_ephemeral();
@@ -8588,7 +8780,7 @@ one(X, 1) :- node(X, "MODULE")."#;
     /// derivation that is correct on the `MODULE#` sids the legacy parser drops.
     #[test]
     fn dispatch_materialize_empty_source_runs_bundled_depends() {
-        let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
 
         let mut engine = GraphEngineV2::create_ephemeral();
@@ -8650,7 +8842,7 @@ one(X, 1) :- node(X, "MODULE")."#;
     /// in-memory fixture.
     #[test]
     fn derive_router_selects_engine_path() {
-        let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
 
         // Build a real ephemeral v2 engine: one CLASS contains fnA; fnB is orphaned.
@@ -8827,7 +9019,7 @@ one(X, 1) :- node(X, "MODULE")."#;
     ///   which is also the positive control proving the graph could always yield 3.
     #[test]
     fn wire_reflect_program_then_store_mode_answers_from_the_store() {
-        let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
         std::env::set_var("RFDB_DERIVE_ENGINE", "on");
 
@@ -8907,7 +9099,7 @@ p(X) :- node(X, "CLASS")."#;
     /// session usable — the very next request is served normally.
     #[test]
     fn wire_reflect_program_refuses_an_annotated_program_as_a_coded_error() {
-        let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
         std::env::set_var("RFDB_DERIVE_ENGINE", "on");
 
@@ -8965,7 +9157,7 @@ p(X, Y) :- edge(X, Y, "IMPORTS_FROM")."#;
     /// answering every `executeDatalog` with a silent zero.
     #[test]
     fn wire_get_rule_source_reads_the_state_and_changes_nothing() {
-        let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
         std::env::set_var("RFDB_DERIVE_ENGINE", "on");
 
@@ -9054,7 +9246,7 @@ p(X, Y) :- edge(X, Y, "IMPORTS_FROM")."#;
     /// store-mode rules refuses UP FRONT rather than reading empty answers as zeros.
     #[test]
     fn hello_advertises_rules_as_data_and_the_doors_gate_off_together() {
-        let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+        let _guard = env_lock();
         let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
         let (_dir, manager) = setup_test_manager();
 
@@ -9139,7 +9331,7 @@ p(X, Y) :- edge(X, Y, "IMPORTS_FROM")."#;
 
     impl DeriveEngineOn {
         fn new() -> Self {
-            let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+            let _guard = env_lock();
             let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
             std::env::set_var("RFDB_DERIVE_ENGINE", "on");
             Self { _guard, prev }
@@ -9179,6 +9371,19 @@ p(X, Y) :- edge(X, Y, "IMPORTS_FROM")."#;
         wire_rule_record_ids(manager, session).len()
     }
 
+    /// The store's rule catalogue, read through the wire door.
+    fn wire_rule_catalogue(
+        manager: &DatabaseManager,
+        session: &mut ClientSession,
+    ) -> (Vec<WireRule>, Vec<WireRule>, Vec<WireSupersession>) {
+        match handle_request(manager, session, Request::GetReflectedRules, &None) {
+            Response::ReflectedRules { in_force, superseded, claims } => {
+                (in_force, superseded, claims)
+            }
+            other => panic!("expected ReflectedRules, got {other:?}"),
+        }
+    }
+
     /// The id a supersede directive has to name. It is a pure function of the
     /// rule TEXT (content-addressed, the ROFL v0 `ruleIdOf`), so a client that
     /// once wrote a rule can always compute the id of the rule it wants to
@@ -9213,6 +9418,9 @@ p(X, Y) :- edge(X, Y, "IMPORTS_FROM")."#;
     /// 3 — the count itself tells us which side answered.
     const BOTH_RULES: &str = r#"p(X) :- node(X, "FUNCTION").
 p(X) :- node(X, "CLASS")."#;
+    /// A probe over a type NOTHING in the fixture has: it reads 0 before an overwrite
+    /// lands and 1 after, which is what makes an overwrite control non-vacuous.
+    const WIDGETS: &str = r#"w(X) :- node(X, "WIDGET")."#;
 
     /// The acceptance criterion end to end: a rule declared as superseding an
     /// older one takes the old rule's derivations out of force, and the old
@@ -9543,6 +9751,532 @@ p(X) :- node(X, "CLASS")."#;
         );
     }
 
+    /// `Clear` is in the pinned list, and the human argument beside it says why it is
+    /// not a retraction. That argument is a CLAIM ABOUT BEHAVIOUR, so it gets measured
+    /// here rather than being left to be re-read and believed.
+    ///
+    /// What the door actually does: it wipes the graph and CARRIES THE RULES ACROSS
+    /// (`graph/engine_v2.rs` ⟦Lift the reflected RULES out before the data goes⟧). The
+    /// rows drop to 0 because the FACTS the rules ran over are gone, not because a rule
+    /// left force — and the distinction is exactly what this test separates.
+    #[test]
+    fn clear_wipes_the_graph_and_carries_the_rules_across() {
+        let _env = DeriveEngineOn::new();
+        let (_dir, manager) = setup_test_manager();
+        let mut session = rules_as_data_session(&manager);
+        assert!(reflect_on_wire(&manager, &mut session, OLD_RULE) > 0);
+        handle_request(
+            &manager,
+            &mut session,
+            Request::SetRuleSource { mode: rfdb::derive::RuleSource::Store },
+            &None,
+        );
+        let ids_before = wire_rule_record_ids(&manager, &mut session);
+        assert!(!ids_before.is_empty(), "control: there are rule records to lose");
+        assert_eq!(
+            wire_datalog_rows(&manager, &mut session, BOTH_RULES),
+            2,
+            "control: the store rule answers BEFORE the clear"
+        );
+
+        match handle_request(&manager, &mut session, Request::Clear, &None) {
+            Response::Ok { ok } => assert!(ok),
+            other => panic!("expected Ok from clear, got {other:?}"),
+        }
+
+        // The rules are still there — the SAME ids, not merely the same count.
+        assert_eq!(
+            wire_rule_record_ids(&manager, &mut session),
+            ids_before,
+            "clear must carry every rule record across verbatim"
+        );
+        // And the graph really did go: the only nodes left ARE the rule records, so the
+        // 0 rows below is the missing FACTS, not a rule that left force.
+        match handle_request(&manager, &mut session, Request::NodeCount, &None) {
+            Response::Count { count } => assert_eq!(
+                count as usize,
+                ids_before.len(),
+                "clear must leave exactly the rule records and nothing else"
+            ),
+            other => panic!("expected Count, got {other:?}"),
+        }
+        assert_eq!(wire_datalog_rows(&manager, &mut session, BOTH_RULES), 0);
+
+        // THE POINT: put the facts back and the SAME rule answers again — which it
+        // could not do if the clear had retracted it.
+        handle_request(
+            &manager,
+            &mut session,
+            Request::AddNodes {
+                nodes: vec![WireNode {
+                    id: string_to_id("f").to_string(),
+                    semantic_id: Some("f".to_string()),
+                    node_type: Some("FUNCTION".to_string()),
+                    name: Some("f".to_string()),
+                    file: Some("f.js".to_string()),
+                    exported: false,
+                    metadata: None,
+                }],
+            },
+            &None,
+        );
+        handle_request(&manager, &mut session, Request::Flush, &None);
+        assert_eq!(
+            wire_datalog_rows(&manager, &mut session, BOTH_RULES),
+            1,
+            "the rule survived the clear in FORCE, not merely as a record"
+        );
+    }
+
+    /// Requirement (б) AT THE PRODUCT SURFACE, not just in the library: after a
+    /// supersession a client can ask the wire what USED to hold and be told.
+    ///
+    /// «The superseded rule stays in the store» is only a guarantee if something can ask
+    /// for it. Before this door the records were on disk and out of reach — a client saw
+    /// the undecoded blobs of `queryNodesByFile` and nothing that said which rule they
+    /// once were, which is indistinguishable from a deletion for every purpose except a
+    /// hex dump.
+    #[test]
+    fn the_wire_reads_back_the_superseded_rule_as_history() {
+        let _env = DeriveEngineOn::new();
+        let (_dir, manager) = setup_test_manager();
+        let mut session = rules_as_data_session(&manager);
+
+        let old_id = id_of_rule(OLD_RULE);
+        let new_id = id_of_rule(NEW_RULE);
+        assert_ne!(old_id, new_id, "control: the two rules have different ids");
+        assert!(reflect_on_wire(&manager, &mut session, OLD_RULE) > 0);
+
+        // BEFORE: the old rule is in force and nothing is history. A door that always
+        // answered «superseded: []» would pass the after-check by accident; this is the
+        // reading that stops it.
+        let (in_force, superseded, claims) = wire_rule_catalogue(&manager, &mut session);
+        assert_eq!(
+            in_force.iter().map(|r| r.id.clone()).collect::<Vec<_>>(),
+            vec![old_id.clone()],
+            "before the supersession the old rule is the one in force"
+        );
+        assert!(superseded.is_empty(), "and nothing is history yet");
+        assert!(claims.is_empty(), "and no claim has been made");
+        let old_clause = in_force[0].clause.clone();
+        assert!(
+            old_clause.contains("FUNCTION"),
+            "control: the clause is rendered, not empty: {old_clause:?}"
+        );
+
+        assert!(
+            reflect_on_wire(
+                &manager,
+                &mut session,
+                &format!("{NEW_RULE}\nsupersedes(\"{old_id}\")."),
+            ) > 0
+        );
+
+        // AFTER: the two rules SWAPPED sides, and the claim names both.
+        let (in_force, superseded, claims) = wire_rule_catalogue(&manager, &mut session);
+        assert_eq!(
+            in_force.iter().map(|r| r.id.clone()).collect::<Vec<_>>(),
+            vec![new_id.clone()],
+            "only the new rule is in force"
+        );
+        assert_eq!(
+            superseded.iter().map(|r| r.id.clone()).collect::<Vec<_>>(),
+            vec![old_id.clone()],
+            "and the old one is reported as history — not missing"
+        );
+        assert_eq!(
+            superseded[0].clause, old_clause,
+            "history is the CLAUSE that used to run, byte for byte, not just an id"
+        );
+        assert_eq!(
+            claims
+                .iter()
+                .map(|c| (c.superseder.clone(), c.superseded.clone()))
+                .collect::<Vec<_>>(),
+            vec![(new_id, old_id)],
+            "and the claim says WHICH rule replaced it"
+        );
+    }
+
+    /// «No retract API» at the GENERIC node-write door.
+    ///
+    /// The retraction this closes is not spelled `delete`. A rule record's numeric id is
+    /// readable with `queryNodesByFile`, and handing it back to `addNodes` with other
+    /// content overwrites the record: the clause stops decoding, the rule leaves force,
+    /// and nothing superseded it.
+    #[test]
+    fn the_wire_refuses_to_overwrite_a_rule_record_by_its_own_id() {
+        let _env = DeriveEngineOn::new();
+        let (_dir, manager) = setup_test_manager();
+        let mut session = rules_as_data_session(&manager);
+        assert!(reflect_on_wire(&manager, &mut session, OLD_RULE) > 0);
+        handle_request(
+            &manager,
+            &mut session,
+            Request::SetRuleSource { mode: rfdb::derive::RuleSource::Store },
+            &None,
+        );
+        let ids_before = wire_rule_record_ids(&manager, &mut session);
+        assert!(!ids_before.is_empty());
+        assert_eq!(
+            wire_datalog_rows(&manager, &mut session, BOTH_RULES),
+            2,
+            "control: the rule answers before the attempt"
+        );
+
+        // The attacker's node: the rule record's OWN id, no semanticId (so the id is
+        // taken verbatim), ordinary type, junk payload.
+        let junk = |id: &str| WireNode {
+            id: id.to_string(),
+            semantic_id: None,
+            node_type: Some("WIDGET".to_string()),
+            name: Some("junk".to_string()),
+            file: Some("junk.js".to_string()),
+            exported: false,
+            metadata: None,
+        };
+        for victim in &ids_before {
+            match handle_request(
+                &manager,
+                &mut session,
+                Request::AddNodes { nodes: vec![junk(victim)] },
+                &None,
+            ) {
+                Response::Error { error } => assert!(
+                    error.contains("E-ROFL-NORETRACT"),
+                    "the refusal must name itself: {error}"
+                ),
+                other => panic!("overwriting a rule record must be refused, got {other:?}"),
+            }
+        }
+        handle_request(&manager, &mut session, Request::Flush, &None);
+        assert_eq!(wire_rule_record_ids(&manager, &mut session), ids_before);
+        assert_eq!(
+            wire_datalog_rows(&manager, &mut session, BOTH_RULES),
+            2,
+            "the rule still answers — 0 here would be the retraction going through"
+        );
+
+        // Positive control: the SAME door, the SAME shape, aimed at an ORDINARY node's
+        // id really does overwrite it — so the refusals above are the guard, not a door
+        // that rejects everything. Measured two ways, because either alone would be
+        // weak: the record itself changed type, AND a live query that answered 0 before
+        // now answers 1. The query runs in TEXT mode: in store mode the request text is
+        // (correctly) ignored, so a probe written there would read 0 whatever happened.
+        handle_request(
+            &manager,
+            &mut session,
+            Request::SetRuleSource { mode: rfdb::derive::RuleSource::Text },
+            &None,
+        );
+        assert_eq!(
+            wire_datalog_rows(&manager, &mut session, WIDGETS),
+            0,
+            "control: nothing is a WIDGET yet"
+        );
+        let ordinary = string_to_id("g").to_string();
+        match handle_request(
+            &manager,
+            &mut session,
+            Request::AddNodes { nodes: vec![junk(&ordinary)] },
+            &None,
+        ) {
+            Response::Ok { ok } => assert!(ok),
+            other => panic!("an ordinary node must still be overwritable, got {other:?}"),
+        }
+        handle_request(&manager, &mut session, Request::Flush, &None);
+        match handle_request(&manager, &mut session, Request::GetNode { id: ordinary }, &None) {
+            Response::Node { node } => assert_eq!(
+                node.expect("the overwritten node is still there").node_type.as_deref(),
+                Some("WIDGET"),
+                "the control overwrite really landed on the ordinary node"
+            ),
+            other => panic!("expected Node, got {other:?}"),
+        }
+        assert_eq!(
+            wire_datalog_rows(&manager, &mut session, WIDGETS),
+            1,
+            "and the overwrite is visible to a live query — the door really works"
+        );
+    }
+
+    /// The other half of the same door: the reserved type may not be MINTED by hand.
+    /// Rule records are written by `reflectProgram`, which is where the supersession gate
+    /// lives; a hand-built record would carry no gate — no id-collision check, no
+    /// victim-resolves check, no cycle check — so a forged `supersedes` fact could take a
+    /// rule out of force with nothing replacing it.
+    #[test]
+    fn the_wire_refuses_a_hand_written_rule_record() {
+        let _env = DeriveEngineOn::new();
+        let (_dir, manager) = setup_test_manager();
+        let mut session = rules_as_data_session(&manager);
+        assert!(reflect_on_wire(&manager, &mut session, OLD_RULE) > 0);
+        let ids_before = wire_rule_record_ids(&manager, &mut session);
+
+        let forged = |ty: &str| WireNode {
+            id: string_to_id("forged").to_string(),
+            semantic_id: Some("forged".to_string()),
+            node_type: Some(ty.to_string()),
+            name: Some("forged".to_string()),
+            file: Some(rfdb::derive::reflect::REFLECT_FILE.to_string()),
+            exported: false,
+            metadata: None,
+        };
+        match handle_request(
+            &manager,
+            &mut session,
+            Request::AddNodes {
+                nodes: vec![forged(rfdb::derive::reflect::REFLECT_NODE_TYPE)],
+            },
+            &None,
+        ) {
+            Response::Error { error } => assert!(
+                error.contains("E-ROFL-NORETRACT"),
+                "the refusal must name itself: {error}"
+            ),
+            other => panic!("minting a rule record must be refused, got {other:?}"),
+        }
+        handle_request(&manager, &mut session, Request::Flush, &None);
+        assert_eq!(
+            wire_rule_record_ids(&manager, &mut session),
+            ids_before,
+            "and nothing was written into the rules file"
+        );
+
+        // Positive control: the SAME node with an ORDINARY type goes in, so the refusal
+        // is about the reserved type and not about the request shape.
+        match handle_request(
+            &manager,
+            &mut session,
+            Request::AddNodes { nodes: vec![forged("WIDGET")] },
+            &None,
+        ) {
+            Response::Ok { ok } => assert!(ok),
+            other => panic!("an ordinary node must still be writable, got {other:?}"),
+        }
+        handle_request(&manager, &mut session, Request::Flush, &None);
+        let after = wire_rule_record_ids(&manager, &mut session);
+        assert_eq!(
+            after.len(),
+            ids_before.len() + 1,
+            "the control node really landed in the rules FILE — so the door was reachable \
+             all along and the refusal above turned on the TYPE"
+        );
+    }
+
+    /// The batch door carries the same node list through the same conversion, so it
+    /// carries the same overwrite. Protecting the batch's file-scoped SWEEP (the test
+    /// above) does not protect the batch's own nodes.
+    #[test]
+    fn a_commit_batch_cannot_overwrite_a_rule_record_by_its_own_id() {
+        let _env = DeriveEngineOn::new();
+        let (_dir, manager) = setup_test_manager();
+        let mut session = rules_as_data_session(&manager);
+        assert!(reflect_on_wire(&manager, &mut session, OLD_RULE) > 0);
+        handle_request(
+            &manager,
+            &mut session,
+            Request::SetRuleSource { mode: rfdb::derive::RuleSource::Store },
+            &None,
+        );
+        let ids_before = wire_rule_record_ids(&manager, &mut session);
+        assert!(!ids_before.is_empty());
+        assert_eq!(wire_datalog_rows(&manager, &mut session, BOTH_RULES), 2);
+
+        let victim = ids_before.iter().next().expect("a rule record to aim at").clone();
+        let junk = |id: &str| WireNode {
+            id: id.to_string(),
+            semantic_id: None,
+            node_type: Some("WIDGET".to_string()),
+            name: Some("junk".to_string()),
+            file: Some("junk.js".to_string()),
+            exported: false,
+            metadata: None,
+        };
+        let batch = |nodes: Vec<WireNode>| Request::CommitBatch {
+            changed_files: vec!["junk.js".to_string()],
+            nodes,
+            edges: vec![],
+            tags: None,
+            file_context: None,
+            defer_index: false,
+            protected_types: vec![],
+        };
+        match handle_request(&manager, &mut session, batch(vec![junk(&victim)]), &None) {
+            Response::Error { error } => assert!(
+                error.contains("E-ROFL-NORETRACT"),
+                "the refusal must name itself: {error}"
+            ),
+            other => panic!("a batch overwriting a rule record must be refused, got {other:?}"),
+        }
+        assert_eq!(wire_rule_record_ids(&manager, &mut session), ids_before);
+        assert_eq!(
+            wire_datalog_rows(&manager, &mut session, BOTH_RULES),
+            2,
+            "the rule still answers after the refused batch"
+        );
+
+        // Positive control: the SAME batch shape, aimed at an ordinary id, commits and
+        // really lands. Read back through the node door AND through a live query in
+        // TEXT mode (store mode ignores the request text, so a probe written there
+        // would read 0 whatever happened).
+        handle_request(
+            &manager,
+            &mut session,
+            Request::SetRuleSource { mode: rfdb::derive::RuleSource::Text },
+            &None,
+        );
+        assert_eq!(
+            wire_datalog_rows(&manager, &mut session, WIDGETS),
+            0,
+            "control: nothing is a WIDGET yet"
+        );
+        let ordinary = string_to_id("g").to_string();
+        match handle_request(&manager, &mut session, batch(vec![junk(&ordinary)]), &None) {
+            Response::BatchCommitted { ok, .. } => assert!(ok),
+            other => panic!("an ordinary batch must still commit, got {other:?}"),
+        }
+        match handle_request(&manager, &mut session, Request::GetNode { id: ordinary }, &None) {
+            Response::Node { node } => assert_eq!(
+                node.expect("the committed node is there").node_type.as_deref(),
+                Some("WIDGET"),
+                "the control batch really landed on the ordinary node"
+            ),
+            other => panic!("expected Node, got {other:?}"),
+        }
+        assert_eq!(
+            wire_datalog_rows(&manager, &mut session, WIDGETS),
+            1,
+            "and the control batch is visible to a live query — the door really works"
+        );
+    }
+
+
+    /// The batch door has TWO commit paths, and a guard on one of them is a guard on
+    /// neither.
+    ///
+    /// The test above exercises the CONCURRENT path — a disk-backed v2 engine takes it by
+    /// default. Arming bulk load moves the very same request onto the SERIAL path
+    /// (`bulk_load_active()` disqualifies the concurrent one): a different function, a
+    /// different lock, and one that a guard written beside the other would never see. The
+    /// path choice is MEASURED here with the same predicate the handler uses, so this
+    /// stays a two-path test even if the selection rule is rewritten.
+    #[test]
+    fn a_commit_batch_on_the_serial_path_cannot_overwrite_a_rule_record_either() {
+        let _env = DeriveEngineOn::new();
+        let (_dir, manager) = setup_test_manager();
+        let mut session = rules_as_data_session(&manager);
+        assert!(reflect_on_wire(&manager, &mut session, OLD_RULE) > 0);
+        handle_request(
+            &manager,
+            &mut session,
+            Request::SetRuleSource { mode: rfdb::derive::RuleSource::Store },
+            &None,
+        );
+        let ids_before = wire_rule_record_ids(&manager, &mut session);
+        assert!(!ids_before.is_empty(), "control: there are rule records to aim at");
+        assert_eq!(
+            wire_datalog_rows(&manager, &mut session, BOTH_RULES),
+            2,
+            "control: the store rule answers BEFORE the attempt"
+        );
+        // The WIDGET control is read here, before bulk load is armed, so it measures the
+        // graph and not a bulk-load reader's view of it.
+        handle_request(
+            &manager,
+            &mut session,
+            Request::SetRuleSource { mode: rfdb::derive::RuleSource::Text },
+            &None,
+        );
+        assert_eq!(
+            wire_datalog_rows(&manager, &mut session, WIDGETS),
+            0,
+            "control: nothing is a WIDGET yet"
+        );
+
+        match handle_request(&manager, &mut session, Request::BeginBulkLoad, &None) {
+            Response::Ok { ok } => assert!(ok),
+            other => panic!("expected Ok from beginBulkLoad, got {other:?}"),
+        }
+        // The path really did change — asserted with the handler's own predicate, not
+        // assumed from the name of the request.
+        {
+            let db = session.current_db.as_ref().expect("a database is open");
+            let engine = db.engine.read().unwrap();
+            let v2 = engine
+                .as_any()
+                .downcast_ref::<GraphEngineV2>()
+                .expect("the test manager builds a v2 engine");
+            assert!(
+                v2.supports_concurrent_commit(),
+                "control: this engine WOULD otherwise take the concurrent path"
+            );
+            assert!(v2.bulk_load_active(), "and bulk load is what takes it off that path");
+        }
+
+        let victim = ids_before.iter().next().expect("a rule record to aim at").clone();
+        let junk = |id: &str| WireNode {
+            id: id.to_string(),
+            semantic_id: None,
+            node_type: Some("WIDGET".to_string()),
+            name: Some("junk".to_string()),
+            file: Some("junk.js".to_string()),
+            exported: false,
+            metadata: None,
+        };
+        let batch = |nodes: Vec<WireNode>| Request::CommitBatch {
+            changed_files: vec!["junk.js".to_string()],
+            nodes,
+            edges: vec![],
+            tags: None,
+            file_context: None,
+            defer_index: false,
+            protected_types: vec![],
+        };
+        match handle_request(&manager, &mut session, batch(vec![junk(&victim)]), &None) {
+            Response::Error { error } => assert!(
+                error.contains("E-ROFL-NORETRACT"),
+                "the refusal must name itself: {error}"
+            ),
+            other => {
+                panic!("a serial-path batch overwriting a rule record must be refused, got {other:?}")
+            }
+        }
+        // Positive control on the SAME path: the same batch aimed at an ordinary id
+        // commits, so the refusal above is the guard and not bulk load turning writes off.
+        // The id is one the fixture does not use — overwriting a fixture FUNCTION would
+        // move the rule's own answer and confuse the last assertion of this test with it.
+        let ordinary = string_to_id("spare").to_string();
+        match handle_request(&manager, &mut session, batch(vec![junk(&ordinary)]), &None) {
+            Response::BatchCommitted { ok, .. } => assert!(ok),
+            other => panic!("an ordinary serial-path batch must still commit, got {other:?}"),
+        }
+
+        handle_request(&manager, &mut session, Request::EndBulkLoad, &None);
+        handle_request(&manager, &mut session, Request::Flush, &None);
+        assert_eq!(
+            wire_rule_record_ids(&manager, &mut session),
+            ids_before,
+            "every rule record survived the refused batch"
+        );
+        assert_eq!(
+            wire_datalog_rows(&manager, &mut session, WIDGETS),
+            1,
+            "and the control write landed — the serial door was open all along"
+        );
+        handle_request(
+            &manager,
+            &mut session,
+            Request::SetRuleSource { mode: rfdb::derive::RuleSource::Store },
+            &None,
+        );
+        assert_eq!(
+            wire_datalog_rows(&manager, &mut session, BOTH_RULES),
+            2,
+            "the rule still answers — 0 here would be the retraction going through"
+        );
+    }
+
     /// MECHANICAL GUARD for «no retract API exists».
     ///
     /// WHAT IT PROVES: the wire command set is PINNED. Any command added to
@@ -9557,8 +10291,10 @@ p(X) :- node(X, "CLASS")."#;
     /// * it cannot judge a name — `Compact` and `Clear` are in the list and are
     ///   destructive; what makes them not-retraction is argued below, by a
     ///   human, and re-argued whenever the list changes;
-    /// * the behavioural half of the criterion is carried by the four tests
-    ///   above, not by this one. This test is the alarm, they are the proof.
+    /// * the behavioural half of the criterion is carried by the tests above —
+    ///   the ones named by the classification below, one per behavioural claim
+    ///   made there — not by this one. This test is the alarm, they are the
+    ///   proof.
     #[test]
     fn the_wire_command_set_is_pinned_and_carries_no_rule_retraction_door() {
         let src = include_str!("rfdb_server.rs");
@@ -9608,9 +10344,16 @@ p(X) :- node(X, "CLASS")."#;
             found.len()
         );
 
-        // The pin. Sorted, complete, and every destructive member accounted for:
-        //   Clear, DropDatabase — destroy the whole database, not a rule inside
-        //     a living one; there is no «keep the graph, drop that rule» form.
+        // The pin. Sorted, complete, and every destructive member accounted for.
+        // Every clause below that makes a claim about BEHAVIOUR names the test
+        // that measured it — a classification argued only in prose is exactly
+        // the thing a reader re-reads and believes:
+        //   Clear — does NOT destroy the whole database: it wipes the graph and
+        //     carries the rule records across verbatim (`clear_durable` lifts
+        //     them out first), so the rules survive a clear in force. Measured
+        //     by `clear_wipes_the_graph_and_carries_the_rules_across`.
+        //   DropDatabase — destroys the database itself, file and all; there is
+        //     no surviving store in which a rule could have been retracted.
         //   Compact — merges segments and applies tombstones; it removes no
         //     record that is not already tombstoned.
         //   DatalogClearRules — resets the legacy in-memory rule set; inert for
@@ -9619,6 +10362,23 @@ p(X) :- node(X, "CLASS")."#;
         //     record and the reserved type (proved by the two tests above).
         //   DeleteEdge, DeleteEdgesByTypeAndSource — Projection T writes NODES
         //     only, so no edge door can reach a rule.
+        //   GetReflectedRules — a READ door, and the one that makes «history
+        //     intact» checkable: it reports what is in force, what was
+        //     superseded and by which claim. It takes no argument and removes
+        //     nothing; measured by
+        //     `the_wire_reads_back_the_superseded_rule_as_history`.
+        //   AddNodes, CommitBatch — the doors that retract without saying so.
+        //     A rule record is content-addressed and its id is readable with
+        //     `QueryNodesByFile`, so writing that id back with other content
+        //     would overwrite the clause out of existence. Both refuse it, and
+        //     refuse a hand-minted record of the reserved type; measured by
+        //     `the_wire_refuses_to_overwrite_a_rule_record_by_its_own_id`,
+        //     `the_wire_refuses_a_hand_written_rule_record` and
+        //     `a_commit_batch_cannot_overwrite_a_rule_record_by_its_own_id`.
+        //     CommitBatch has TWO commit paths (concurrent and serial) and the
+        //     guard sits on each, under the lock that path already holds — the
+        //     serial one is measured by
+        //     `a_commit_batch_on_the_serial_path_cannot_overwrite_a_rule_record_either`.
         // NOTHING in this list retracts a rule. A rule leaves force one way:
         // another rule supersedes it, and the superseded one stays.
         let pinned = [
@@ -9631,7 +10391,7 @@ p(X) :- node(X, "CLASS")."#;
             "EndBulkLoad", "ExecuteDatalog", "ExplainDatalogFact", "ExplainDatalogGap",
             "FindByAttr", "FindByType", "FindDependentFiles", "FindSnapshot", "Flush",
             "GetAllEdges", "GetEdgesByType", "GetIncomingEdges", "GetNode", "GetNodeIdentifier",
-            "GetOutgoingEdges", "GetRuleSource", "GetStats", "Hello", "IsEndpoint",
+            "GetOutgoingEdges", "GetReflectedRules", "GetRuleSource", "GetStats", "Hello", "IsEndpoint",
             "ListDatabases", "ListSnapshots", "MaterializeDatalog", "Neighbors", "NodeCount",
             "NodeExists", "OpenDatabase", "Ping", "QueryEdges", "QueryNodes", "QueryNodesByFile",
             "Reachability", "RebuildIndexes", "ReflectProgram", "SetRuleSource", "Shutdown",

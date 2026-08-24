@@ -243,8 +243,10 @@ async function spotCheckGaps(
 
 /** One database per seed, on its OWN connection.
  *
- *  Two reasons it cannot share the tier-0 connection and database. Reflection is additive
- *  with no retraction (`engine_v2.rs:1454-1456` ⟦rule is rule supersession⟧), so
+ *  Two reasons it cannot share the tier-0 connection and database. Reflection is additive —
+ *  a second program's rules land BESIDE the first, and only an explicit `supersedes`
+ *  directive takes one out of force (`engine_v2.rs:1455-1456`
+ *  ⟦ADDITIVE — reflecting a second program adds its rules beside the first⟧), so
  *  seed 8 would execute seed 7's rules as well as its own; and the 32-bit rule id would
  *  accumulate ~3000 clauses in one store, turning the collision gate from a formality into a
  *  real risk. The separate connection keeps the text pass's session pointed at the server's
@@ -302,7 +304,7 @@ function oracleFor(prog: GeneratedProgram, ctx: SeedContext): OracleEngine {
  *  Without it, "0 programs were unreflectable" is unfalsifiable: a door that refused nothing
  *  at all would produce the same zero. The annotation is the same one the bundled
  *  `depends.dl` opens with, so it PARSES — what comes back is Projection T's own gate and
- *  not a syntax error wearing its clothes (`rfdb_server.rs:8878-8882` ⟦A well-formed `@materialize` program — it PARSES⟧). */
+ *  not a syntax error wearing its clothes (`rfdb_server.rs:9094-9096` ⟦A well-formed `@materialize` program — it PARSES⟧). */
 const UNREFLECTABLE_CONTROL = '@materialize(edge_type="DEPENDS_ON")\np(X, Y) :- edge(X, Y, "IMPORTS_FROM").';
 
 /** Prove the refusal path is live before counting how many programs it refused. */
@@ -325,7 +327,7 @@ export async function assertRefusalDetectorWorks(store: StorePassContext): Promi
     );
   } finally {
     // Closing the last connection to an ephemeral database IS the deletion
-    // (`rfdb_server.rs:2900-2907` ⟦Cleanup ephemeral database if no connections remain⟧) —
+    // (`rfdb_server.rs:3060-3064` ⟦Cleanup ephemeral database if no connections remain⟧) —
     // measured: a dropDatabase after this close answers "Database … not found".
     await store.client.closeDatabase();
   }
@@ -488,7 +490,7 @@ export async function runSeedStorePass(
     return result;
   } finally {
     // The ephemeral database dies with its last connection
-    // (`rfdb_server.rs:2900-2907` ⟦Cleanup ephemeral database if no connections remain⟧);
+    // (`rfdb_server.rs:3060-3064` ⟦Cleanup ephemeral database if no connections remain⟧);
     // {@link runTier0} proves at the end of the pass that none of them survived.
     await store.client.closeDatabase();
   }

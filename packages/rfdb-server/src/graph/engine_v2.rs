@@ -1452,8 +1452,13 @@ impl GraphEngineV2 {
     ///
     /// The write is idempotent: a fact's node id is content-addressed over its canonical
     /// tuple, so reflecting the same program twice hits the same nodes. It is also
-    /// ADDITIVE — reflecting a second program adds its rules beside the first; removing a
-    /// rule is rule supersession, a separate line of work, deliberately not done here.
+    /// ADDITIVE — reflecting a second program adds its rules beside the first. Taking a
+    /// rule OUT of force goes through this same door and no other: a program may carry a
+    /// `supersedes(<rule id>)` directive beside the rule that replaces it, and the gate in
+    /// [`crate::derive::reflect::encode_rules_to_records_beside`] refuses a directive with
+    /// no replacement, an unknown victim, or a supersession cycle. The superseded rule is
+    /// not removed — it stays in the store and stays decodable
+    /// ([`Self::reflected_rule_catalogue`] is where it can be read back).
     ///
     /// The commit passes NO changed files: the reflected nodes live under the virtual file
     /// [`crate::derive::reflect::REFLECT_FILE`], so no re-analysis of a real source file
@@ -1498,6 +1503,24 @@ impl GraphEngineV2 {
         // is stale.
         self.reset_derive_caches();
         Ok(written)
+    }
+
+    /// The rule catalogue this database carries, decoded: what is IN FORCE, what has been
+    /// SUPERSEDED, and every supersession claim that put it there.
+    ///
+    /// The READ half of «supersede only». The write half is enforced
+    /// ([`Self::reflect_program`] holds the gate, and the delete doors on the wire refuse
+    /// a rule record), but «the superseded rule stays on record» is only a guarantee if
+    /// something can ASK for it. Without this door the record is on disk and out of
+    /// reach — a client sees the undecoded blobs of a `queryNodesByFile` and nothing that
+    /// says which rule they once were.
+    ///
+    /// Read-only, over the same pinned view the executor would take, so what it reports is
+    /// what a store-mode evaluation would run.
+    pub fn reflected_rule_catalogue(&self) -> crate::derive::reflect::DecodedRules {
+        let snapshot = self.snapshot();
+        let view = crate::derive::storage_glue::BorrowedLsmStorageView::new(&self.store, snapshot);
+        crate::derive::reflect::decode_rules(&view)
     }
 
     /// The cache / durable-pin key of a derive program.

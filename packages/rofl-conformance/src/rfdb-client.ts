@@ -114,10 +114,10 @@ export class RfdbClient {
   }
 
   /** Execute a derive program; returns rows of variable bindings for the FIRST
-   *  rule head's predicate (rfdb_server.rs:3062-3065 ⟦Some(program.rules()[0].head().clone())⟧ — callers hoist the wanted
+   *  rule head's predicate (rfdb_server.rs:3219-3222 ⟦Some(program.rules()[0].head().clone())⟧ — callers hoist the wanted
    *  predicate's first rule to the top). explain is ALWAYS false: explain=true
    *  silently reroutes to the legacy v1 query engine
-   *  (rfdb_server.rs:3061 ⟦if derive_engine_enabled() && !explain⟧). */
+   *  (rfdb_server.rs:3218 ⟦if derive_engine_enabled() && !explain⟧). */
   async executeDatalog(source: string): Promise<Record<string, string>[]> {
     const r = (await this.call({ cmd: 'executeDatalog', source, explain: false })) as { [k: string]: MpValue };
     if (typeof r['error'] === 'string') throw new RfdbError(r['error']);
@@ -197,10 +197,12 @@ export class RfdbClient {
 
   /** Create a database. `ephemeral` keeps it out of the server's data directory.
    *
-   *  Reflection is ADDITIVE and has no retraction (`engine_v2.rs:1454-1456`
-   *  ⟦rule is rule supersession⟧), and the rule source is a property of the
-   *  DATABASE — so a store-mode measurement over many programs needs one database per
-   *  program, or program N+1 executes program N's rules as well as its own. */
+   *  Reflection is ADDITIVE — a second program's rules land beside the first, and only an
+   *  explicit `supersedes` directive takes one out of force (`engine_v2.rs:1455-1456`
+   *  ⟦ADDITIVE — reflecting a second program adds its rules beside the first⟧). The rule
+   *  source is a property of the DATABASE — so a store-mode measurement over many programs
+   *  needs one database per program, or program N+1 executes program N's rules as well as
+   *  its own. */
   async createDatabase(name: string, ephemeral = false): Promise<void> {
     const r = (await this.call({ cmd: 'createDatabase', name, ephemeral })) as { [k: string]: MpValue };
     if (typeof r['error'] === 'string') throw new RfdbError(r['error']);
@@ -221,7 +223,7 @@ export class RfdbClient {
   /** Names of the databases the server currently holds.
    *
    *  Closing the last connection to an EPHEMERAL database removes it
-   *  (`rfdb_server.rs:2900-2907` ⟦Cleanup ephemeral database if no connections remain⟧), so this is
+   *  (`rfdb_server.rs:3060-3064` ⟦Cleanup ephemeral database if no connections remain⟧), so this is
    *  how a caller proves its per-seed databases went away instead of piling up behind it. */
   async listDatabases(): Promise<string[]> {
     const r = (await this.call({ cmd: 'listDatabases' })) as { [k: string]: MpValue };

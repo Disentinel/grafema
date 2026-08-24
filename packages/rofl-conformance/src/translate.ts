@@ -155,7 +155,7 @@ export function canonToTerm(s: string): Term {
 }
 
 /** Checked ground constant → its wire form for an `explain` key (the READ
- *  direction of the protocol's value surface, rfdb_server.rs:3424
+ *  direction of the protocol's value surface, rfdb_server.rs:3629
  *  ⟦resolves the bare-decimal ambiguity⟧): an
  *  atom is its bare name, an integer is `~int:N` (live-probed R15/P1f). */
 export function constToWireKey(t: Term): string {
@@ -458,9 +458,9 @@ export function renderDumpSource(t: Translation, rel: string): { source: string;
  *  NO rules and NO facts.
  *
  *  In store mode the engine ignores the request text as a program and decodes the rules
- *  out of Projection T (`derive/mod.rs:289-291` ⟦the rules are decoded⟧); the text is
+ *  out of Projection T (`derive/mod.rs:296-298` ⟦the rules are decoded⟧); the text is
  *  read for one thing only — naming the relation the answer is about
- *  (`rfdb_server.rs:3062-3071` ⟦if let Ok(program) = parse_program(source)⟧: a source with no rules falls through to `parse_query`
+ *  (`rfdb_server.rs:3219-3238` ⟦if let Ok(program) = parse_program(source)⟧: a source with no rules falls through to `parse_query`
  *  and targets the first literal's atom).
  *
  *  That is why this is a bare literal rather than {@link renderDumpSource}'s program,
