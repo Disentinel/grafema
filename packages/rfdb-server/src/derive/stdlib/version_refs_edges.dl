@@ -1,0 +1,52 @@
+% version_refs_edges.dl — edge half of the RFD-75 connascence-of-value
+% vertical. Joins the committed version:ref nodes (enricher-minted) against the
+% committed version:coord nodes (version_coords_nodes-minted) BY COORD NAME and
+% derives the REFERS_TO edge (ref → coord).
+%
+% MUST be declared AFTER version_coords_nodes in the pack runner: the minted
+% version:coord nodes are joined here as COMMITTED storage EDB (the
+% js_http_routes two-pack split — a @materialize edge endpoint must be a node-ID
+% column, and a same-run-minted node's id exists only as the BLAKE3 of the sid
+% string the nodes pack builds).
+%
+% PLANNING NOTE: node_attr is a POINT PROBE with NO generator mode (builtin.rs
+% NODE_ATTR_MODES = [B,B,F]/[B,B,B]). So:
+%   - R must be bound by node(R, "version:ref") (a generator) BEFORE
+%     node_attr(R, "coord", Coord) runs as a reader;
+%   - Coord_node must be bound by node(Coord_node, "version:coord") BEFORE its
+%     node_attr(Coord_node, "coord", Coord) runs.
+% The greedy planner leads with the small node generators, then the readers
+% bind/check Coord — every leg gets a supported mode.
+%
+% mode = "additive": REFERS_TO is shared vocabulary registered in
+% packages/types/src/edges.ts (RefersToEdge); additive matches the
+% http:route ROUTES_TO precedent and is the safe default for shared vocab.
+% Additive edges do not retract — a REFERS_TO edge whose coord node was retracted
+% by the (exclusive) nodes pack dangles until the next writer cleanup, the known
+% additive-vocabulary class.
+%
+% MAINTAIN ENVELOPE: pure positive joins, NO negation ⇒ incrementally
+% maintainable.
+%
+% ORDERING (CONSUMER): strictly after version_coords_nodes (committed-EDB
+% endpoint join), enforced by both pack registries.
+
+% Each side is its OWN derived relation, each LED by a node(...) generator (so
+% node_attr runs as a reader on a bound id). The two relations are then joined
+% on the shared Coord variable — a real equi-join, never a cross-join. (A single
+% rule with both node(...) generators is rejected by the planner's
+% GuardRejected: the second node(...) shares no bound variable with the
+% preceding body — the join key Coord is only a metadata field, and node_attr
+% has no generator mode to bridge two un-linked generators in one body.)
+ref_coord(R, Coord) :-
+    node(R, "version:ref"),
+    node_attr(R, "coord", Coord).
+
+coord_node(CN, Coord) :-
+    node(CN, "version:coord"),
+    node_attr(CN, "coord", Coord).
+
+@materialize(edge_type = "REFERS_TO", mode = "additive")
+refers_to(R, CN) :-
+    ref_coord(R, Coord),
+    coord_node(CN, Coord).

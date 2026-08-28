@@ -497,6 +497,26 @@ pub const JS_ENTRYPOINT_FEATURES_EDGES_DL: &str = concat!(
     include_str!("stdlib/js_entrypoint_features_edges.dl"),
 );
 
+// ── RFD-75 connascence-of-value vertical (version:ref → version:coord) ──────
+
+/// Node half of the RFD-75 version-consistency vertical: mints one
+/// `version:coord` node per DISTINCT `coord` carried by the `version:ref` nodes
+/// the versionRefEnricher committed (package.json version + @grafema/* dep pins
+/// + git tag + CHANGELOG top). sid = `version:coord::<coord>`; coord rides the
+/// node's own metadata (meta(coord)) so the edge pack reads it back via
+/// node_attr for the ref→coord join. Pure positive joins, no negation ⇒
+/// incrementally maintainable. PRODUCER of the version:coord nodes the edge
+/// pack joins — strictly before `version_refs_edges`.
+pub const VERSION_COORDS_NODES_DL: &str = include_str!("stdlib/version_coords_nodes.dl");
+
+/// Edge half of the RFD-75 vertical: REFERS_TO (version:ref → version:coord),
+/// joining the committed version:ref nodes against the committed version:coord
+/// nodes BY COORD NAME (node_attr equality on both sides). MUST run after
+/// `version_coords_nodes` (committed-EDB endpoint join). REFERS_TO is shared
+/// vocabulary (packages/types RefersToEdge) ⇒ mode = "additive". Pure positive
+/// joins, no negation ⇒ incrementally maintainable.
+pub const VERSION_REFS_EDGES_DL: &str = include_str!("stdlib/version_refs_edges.dl");
+
 // ── Java packs (the java-resolve migration, lang-spec-java.md) ─────────────
 
 /// Java import resolution — replaces `ImportResolution.hs` of `java-resolve`:
@@ -730,6 +750,14 @@ pub const STDLIB_PACKS: &[(&str, &str)] = &[
     // so they sit at the registry tail with js_http_routes.
     ("js_entrypoint_features_nodes", JS_ENTRYPOINT_FEATURES_NODES_DL),
     ("js_entrypoint_features_edges", JS_ENTRYPOINT_FEATURES_EDGES_DL),
+    // RFD-75 connascence-of-value vertical: version_coords_nodes MINTS the
+    // version:coord nodes (one per distinct coord) that version_refs_edges joins
+    // as committed EDB to derive REFERS_TO (strict nodes→edges order — the
+    // js_builtins two-pack split). Consume the enricher-minted version:ref EDB
+    // only and produce nothing any earlier pack reads, so they sit at the
+    // registry tail.
+    ("version_coords_nodes", VERSION_COORDS_NODES_DL),
+    ("version_refs_edges", VERSION_REFS_EDGES_DL),
 ];
 
 /// Look up a bundled pack by its wire name (the `<name>` in `"@stdlib/<name>"`).
@@ -857,6 +885,37 @@ mod tests {
             name: name.to_string(),
             file: file.to_string(),
         });
+    }
+
+    /// RFD-75 — a `version:ref` node (as the versionRefEnricher commits it):
+    /// value/locus/coord ride the metadata JSON (read via node_attr), `name` is
+    /// the value label. `sid` is the test handle (the enricher's real id scheme
+    /// is `<file>::version:ref::<locus>`; the helper id is arbitrary-but-stable).
+    fn ref_node(
+        v: &mut FixtureStorageView,
+        sid: &str,
+        value: &str,
+        locus: &str,
+        coord: &str,
+        file: &str,
+    ) {
+        named_node(v, sid, value, "version:ref", file);
+        v.put_node_metadata(
+            id_of(sid),
+            &serde_json::json!({ "value": value, "locus": locus, "coord": coord }).to_string(),
+        );
+    }
+
+    /// RFD-75 — a `version:coord` node (as version_coords_nodes commits it):
+    /// sid = `version:coord::<coord>`, `coord` rides the metadata JSON so the
+    /// edge pack reads it back via node_attr.
+    fn coord_node(v: &mut FixtureStorageView, coord: &str) {
+        let sid = format!("version:coord::{coord}");
+        named_node(v, &sid, coord, "version:coord", coord);
+        v.put_node_metadata(
+            id_of(&sid),
+            &serde_json::json!({ "coord": coord }).to_string(),
+        );
     }
 
     /// The bundled method-call rule pack reproduces the plugin's two resolution strategies
@@ -2008,6 +2067,8 @@ mod tests {
                 "js_http_routes_edges",
                 "js_entrypoint_features_nodes",
                 "js_entrypoint_features_edges",
+                "version_coords_nodes",
+                "version_refs_edges",
             ],
             "canonical run order: Wave-1 resolver packs → Wave-1b packs \
              (rust_cross_methods_ctor after rust_calls — the CALLS EDB seam; the \
@@ -2085,6 +2146,11 @@ mod tests {
             stdlib_pack("js_entrypoint_features_edges"),
             Some(JS_ENTRYPOINT_FEATURES_EDGES_DL)
         );
+        assert_eq!(
+            stdlib_pack("version_coords_nodes"),
+            Some(VERSION_COORDS_NODES_DL)
+        );
+        assert_eq!(stdlib_pack("version_refs_edges"), Some(VERSION_REFS_EDGES_DL));
         assert_eq!(stdlib_pack("nope"), None, "unknown pack name resolves to None");
     }
 
@@ -7829,5 +7895,259 @@ mod tests {
                 "go packs materialize edges only, no nodes"
             );
         }
+    }
+
+    /// RFD-75 — version_coords_nodes mints one `version:coord` node per DISTINCT
+    /// coord carried by the committed version:ref nodes' metadata, dedups
+    /// multiple refs → one coord, and projects `coord` into the minted node's
+    /// own metadata via meta(coord).
+    #[test]
+    fn version_coords_nodes_mints_one_per_distinct_coord() {
+        let mut v = FixtureStorageView::new(1);
+
+        // Three refs to the "release" coord (package.version, git.tag, changelog)
+        // + two refs to the "@grafema/x" coord (two packages pin it). Five refs,
+        // two distinct coords.
+        ref_node(&mut v, "r_pkg", "0.4.0", "package.version", "release", "package.json");
+        ref_node(&mut v, "r_tag", "0.4.0", "git.tag", "release", "<git>");
+        ref_node(&mut v, "r_chg", "0.4.0", "changelog", "release", "CHANGELOG.md");
+        ref_node(
+            &mut v,
+            "r_cli_x",
+            "0.4.0",
+            "optionalDeps[@grafema/x]",
+            "@grafema/x",
+            "packages/cli/package.json",
+        );
+        ref_node(
+            &mut v,
+            "r_meta_x",
+            "0.3.29",
+            "optionalDeps[@grafema/x]",
+            "@grafema/x",
+            "packages/meta/package.json",
+        );
+
+        let (eval, _specs, node_specs) = evaluate_with_materialize(
+            &v,
+            VERSION_COORDS_NODES_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("version_coords_nodes.dl evaluates");
+
+        // One vcoord fact per DISTINCT coord (sid, name, file, coord) — refs to
+        // the same coord collapse to one row (engine set semantics).
+        let minted: BTreeSet<(String, String, String, String)> = eval
+            .facts("vcoord")
+            .into_iter()
+            .map(|r| (r[0].as_str(), r[1].as_str(), r[2].as_str(), r[3].as_str()))
+            .collect();
+        assert_eq!(
+            minted,
+            BTreeSet::from([
+                (
+                    "version:coord::release".to_string(),
+                    "release".to_string(),
+                    "release".to_string(),
+                    "release".to_string()
+                ),
+                (
+                    "version:coord::@grafema/x".to_string(),
+                    "@grafema/x".to_string(),
+                    "@grafema/x".to_string(),
+                    "@grafema/x".to_string()
+                ),
+            ]),
+            "one version:coord per distinct coord; multiple refs → one coord dedup"
+        );
+
+        // Spec: exactly one node-materialized head, exclusive, meta(coord).
+        assert_eq!(node_specs.len(), 1, "exactly one node-materialized head");
+        let ns = &node_specs[0];
+        assert_eq!(ns.predicate, "vcoord");
+        assert_eq!(ns.node_type, "version:coord");
+        assert!(!ns.additive, "exclusive (provenance-scoped) node ownership");
+        assert_eq!(ns.meta, vec!["coord".to_string()]);
+    }
+
+    /// RFD-75 — version_refs_edges joins the committed version:ref nodes against
+    /// the committed version:coord nodes BY COORD NAME and derives REFERS_TO
+    /// (ref → coord). Every ref of a coord links to that coord; refs of distinct
+    /// coords never cross-link.
+    #[test]
+    fn version_refs_edges_joins_refs_to_coords_by_name() {
+        let mut v = FixtureStorageView::new(1);
+
+        // version:ref EDB (enricher-committed).
+        ref_node(&mut v, "r_pkg", "0.4.0", "package.version", "release", "package.json");
+        ref_node(&mut v, "r_tag", "0.4.0", "git.tag", "release", "<git>");
+        ref_node(
+            &mut v,
+            "r_cli_x",
+            "0.4.0",
+            "optionalDeps[@grafema/x]",
+            "@grafema/x",
+            "packages/cli/package.json",
+        );
+
+        // version:coord EDB (version_coords_nodes-committed; coord rides metadata).
+        coord_node(&mut v, "release");
+        coord_node(&mut v, "@grafema/x");
+
+        let (eval, specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            VERSION_REFS_EDGES_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("version_refs_edges.dl evaluates");
+
+        let edges: BTreeSet<(u128, u128)> = eval
+            .facts("refers_to")
+            .into_iter()
+            .map(|r| (r[0].as_id().expect("src id"), r[1].as_id().expect("dst id")))
+            .collect();
+        assert_eq!(
+            edges,
+            BTreeSet::from([
+                (id_of("r_pkg"), id_of("version:coord::release")),
+                (id_of("r_tag"), id_of("version:coord::release")),
+                (id_of("r_cli_x"), id_of("version:coord::@grafema/x")),
+            ]),
+            "each ref REFERS_TO its own coord; distinct coords never cross-link"
+        );
+
+        let spec = specs
+            .iter()
+            .find(|s| s.edge_type == "REFERS_TO")
+            .expect("REFERS_TO spec");
+        assert!(spec.additive, "REFERS_TO is shared vocabulary — additive");
+    }
+
+    /// RFD-75 — the `value-lockstep` guarantee TRIPS on connascence drift (two
+    /// refs to one coord with different values) and PASSES on lockstep. An
+    /// externally-ingested `binary.<name>` ref (the ops release-hook locus —
+    /// out of the enricher's scope) participates with NO rule change: the graph
+    /// side is uniform, a binary ref REFERS_TO the same coord as package.version.
+    #[test]
+    fn value_lockstep_guarantee_trips_on_drift_and_includes_binary_ref() {
+        // The guarantee rule, verbatim from .grafema/guarantees.yaml.
+        const VALUE_LOCKSTEP: &str = r#"
+violation(R) :- edge(R, C, "REFERS_TO"), edge(R2, C, "REFERS_TO"),
+  neq(R, R2),
+  node_attr(R, "value", V1), node_attr(R2, "value", V2),
+  neq(V1, V2).
+"#;
+
+        // ── Drift case: cli pins @grafema/x = 0.3.29, meta pins 0.4.0; both
+        //    REFERS_TO coord @grafema/x. Plus a matched "release" pair (pkg+tag
+        //    both 0.4.0) that must NOT trip. Plus a binary ref on "release"
+        //    that DOES drift (binary 0.3.29 vs package.version 0.4.0).
+        let mut v = FixtureStorageView::new(1);
+
+        ref_node(
+            &mut v,
+            "r_cli_x",
+            "0.3.29",
+            "optionalDeps[@grafema/x]",
+            "@grafema/x",
+            "packages/cli/package.json",
+        );
+        ref_node(
+            &mut v,
+            "r_meta_x",
+            "0.4.0",
+            "optionalDeps[@grafema/x]",
+            "@grafema/x",
+            "packages/meta/package.json",
+        );
+        ref_node(&mut v, "r_pkg", "0.4.0", "package.version", "release", "package.json");
+        ref_node(&mut v, "r_tag", "0.4.0", "git.tag", "release", "<git>");
+        // Externally-ingested binary ref (ops hook) — drifts on the release coord.
+        ref_node(&mut v, "r_bin", "0.3.29", "binary.grafema", "release", "<binary>");
+
+        coord_node(&mut v, "@grafema/x");
+        coord_node(&mut v, "release");
+
+        // Committed REFERS_TO edges (as version_refs_edges would produce).
+        edge(&mut v, "r_cli_x", "version:coord::@grafema/x", "REFERS_TO");
+        edge(&mut v, "r_meta_x", "version:coord::@grafema/x", "REFERS_TO");
+        edge(&mut v, "r_pkg", "version:coord::release", "REFERS_TO");
+        edge(&mut v, "r_tag", "version:coord::release", "REFERS_TO");
+        edge(&mut v, "r_bin", "version:coord::release", "REFERS_TO");
+
+        let eval = evaluate(
+            &v,
+            VALUE_LOCKSTEP,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("value-lockstep rule evaluates");
+
+        let violators: BTreeSet<u128> = eval
+            .facts("violation")
+            .into_iter()
+            .map(|r| r[0].as_id().expect("violation id"))
+            .collect();
+        // Drift trips for BOTH refs of each drifting pair (R bound to either side).
+        // @grafema/x pair: r_cli_x, r_meta_x. release: r_bin drifts vs r_pkg/r_tag,
+        // so r_bin, r_pkg, r_tag all appear (each is some R with a differing R2).
+        assert!(
+            violators.contains(&id_of("r_cli_x")) && violators.contains(&id_of("r_meta_x")),
+            "@grafema/x drift (0.3.29 vs 0.4.0) trips value-lockstep"
+        );
+        assert!(
+            violators.contains(&id_of("r_bin")),
+            "externally-ingested binary ref participates — drift vs package.version trips"
+        );
+        assert!(
+            !violators.is_empty(),
+            "the guarantee TRIPS on drift (not silently passing)"
+        );
+
+        // ── Lockstep case: every ref of each coord agrees → NO violation. ──────
+        let mut v2 = FixtureStorageView::new(1);
+        ref_node(
+            &mut v2,
+            "r_cli_x",
+            "0.4.0",
+            "optionalDeps[@grafema/x]",
+            "@grafema/x",
+            "packages/cli/package.json",
+        );
+        ref_node(
+            &mut v2,
+            "r_meta_x",
+            "0.4.0",
+            "optionalDeps[@grafema/x]",
+            "@grafema/x",
+            "packages/meta/package.json",
+        );
+        ref_node(&mut v2, "r_pkg", "0.4.0", "package.version", "release", "package.json");
+        ref_node(&mut v2, "r_bin", "0.4.0", "binary.grafema", "release", "<binary>");
+        coord_node(&mut v2, "@grafema/x");
+        coord_node(&mut v2, "release");
+        edge(&mut v2, "r_cli_x", "version:coord::@grafema/x", "REFERS_TO");
+        edge(&mut v2, "r_meta_x", "version:coord::@grafema/x", "REFERS_TO");
+        edge(&mut v2, "r_pkg", "version:coord::release", "REFERS_TO");
+        edge(&mut v2, "r_bin", "version:coord::release", "REFERS_TO");
+
+        let eval2 = evaluate(
+            &v2,
+            VALUE_LOCKSTEP,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("value-lockstep rule evaluates (lockstep)");
+        assert_eq!(
+            eval2.facts("violation").len(),
+            0,
+            "lockstep (all refs of each coord agree) PASSES — no violation"
+        );
     }
 }

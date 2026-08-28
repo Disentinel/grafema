@@ -665,3 +665,28 @@ guarantees:
     check: datalog
     rule: 'violation(F) :- node(F, "STATE_FIELD"), edge(_, F, "READS_STATE_TRUTHY"), edge(_, F, "WRITES_STATE_TRUTHY"), \+ edge(_, F, "WRITES_STATE_FALSY"), \+ edge(_, F, "WRITES_STATE_DYNAMIC").'
     severity: warning
+
+  # ============================================================
+  # CONNASCENCE OF VALUE (RFD-75)
+  # ============================================================
+
+  - name: value-lockstep
+    description: >
+      Any two version:ref nodes that refer to the same version:coord must carry
+      the same value. Two refs to one coord with different values is
+      connascence-of-value drift (e.g. a cli package's optionalDeps pinned to a
+      stale @grafema/x version while another package pins the current one, or a
+      package.version that has drifted from the git tag / CHANGELOG top entry).
+      value/locus/coord ride the version:ref metadata JSON, so the rule reads
+      `value` via the derive-engine `node_attr` builtin (NOT `attr`, which only
+      sees top-level node columns and would yield zero rows). R and R2 are bound
+      by the REFERS_TO generator legs before node_attr (a point probe with no
+      generator mode) runs. Generalizes verbatim to feature-flag / enum-case /
+      API-version DRY connascence — coord/ref/REFERS_TO is value-agnostic.
+    check: datalog
+    severity: error
+    rule: >-
+      violation(R) :- edge(R, C, "REFERS_TO"), edge(R2, C, "REFERS_TO"),
+        neq(R, R2),
+        node_attr(R, "value", V1), node_attr(R2, "value", V2),
+        neq(V1, V2).
